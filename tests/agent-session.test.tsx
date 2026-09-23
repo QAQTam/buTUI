@@ -4,8 +4,12 @@ import {
   type AgentEvent,
   type UiCommand,
   AgentView,
+  ContextMeter,
+  ReasoningLine,
   createSession,
+  formatTokens,
   initialState,
+  mergeUsage,
   reduce,
 } from "@butui/agent";
 import { flush } from "solid-js";
@@ -223,6 +227,141 @@ describe("会话 + Solid 组件", () => {
       }
     }
     expect(allow).toBeDefined();
+    app.unmount();
+  });
+});
+
+describe("token 用量（SPEC §11.3）", () => {
+  test("usage 事件累加增量，上下文占用取最近一次", () => {
+    const state = initialState();
+    reduce(state, { type: "usage", usage: { input: 1200, output: 300, cached: 800 } });
+    expect(state.usage).toEqual({ input: 1200, output: 300, cached: 800, contextTokens: 1200 });
+
+    reduce(state, {
+      type: "usage",
+      usage: { input: 2000, output: 400, cached: 1500, contextWindow: 128_000 },
+    });
+    expect(state.usage.input).toBe(3200); // 累计
+    expect(state.usage.output).toBe(700);
+    expect(state.usage.cached).toBe(2300);
+    expect(state.usage.contextTokens).toBe(2000); // 不是 3200 —— 上下文看的是最近一次
+    expect(state.usage.contextWindow).toBe(128_000);
+  });
+
+  test("mergeUsage：窗口只报一次也会被记住", () => {
+    const first = mergeUsage({ input: 0, output: 0 }, { input: 10, output: 1, contextWindow: 8000 });
+    const second = mergeUsage(first, { input: 20, output: 2 });
+    expect(second.contextWindow).toBe(8000);
+    expect(second.contextTokens).toBe(20);
+  });
+
+  test("mergeUsage 不产生 cached: 0（省得组件画一个 0%）", () => {
+    const merged = mergeUsage({ input: 1, output: 1 }, { input: 1, output: 1 });
+    expect("cached" in merged).toBe(false);
+  });
+});
+
+describe("ContextMeter / ReasoningLine", () => {
+  test("按窗口比例画占用条", () => {
+    const app = mount(
+      () => <ContextMeter usage={{ input: 0, output: 0, contextTokens: 32_000, contextWindow: 128_000 }} />,
+      { width: 40, height: 1 }
+    );
+    const text = app.text();
+    expect(text).toContain("32k/128k");
+    expect(text).toContain("███"); // 25% of 10
+    app.unmount();
+  });
+
+  test("占用超过 90% 转 danger 色", () => {
+    const app = mount(
+      () => <ContextMeter usage={{ input: 0, output: 0, contextTokens: 120_000, contextWindow: 128_000 }} />,
+      { width: 40, height: 1 }
+    );
+    const sgr = app.frame().lines[0].map(c => c.sgr).join("");
+    expect(sgr).toContain("38;2;248;113;113"); // theme.danger
+    app.unmount();
+  });
+
+  test("没有 contextWindow 时只报数，不画比例", () => {
+    const app = mount(() => <ContextMeter usage={{ input: 12_500, output: 900 }} />, {
+      width: 40,
+      height: 1,
+    });
+    expect(app.text()).toContain("12.5k");
+    expect(app.text()).not.toContain("/");
+    app.unmount();
+  });
+
+  test("formatTokens 分档", () => {
+    expect(formatTokens(0)).toBe("0");
+    expect(formatTokens(999)).toBe("999");
+    expect(formatTokens(1200)).toBe("1.2k");
+    expect(formatTokens(32_000)).toBe("32k");
+    expect(formatTokens(1_500_000)).toBe("1.5M");
+  });
+
+  test("ReasoningLine 默认折成一行（超长截断，不撑高转录）", () => {
+    const app = mount(
+      () => <ReasoningLine text={"思考".repeat(40)} streaming />,
+      { width: 20, height: 2 }
+    );
+    const text = app.text();
+    expect(text).toContain("思考中");
+    expect(text).toContain("…");
+    // 第二行是空的 —— 只占一行
+    expect(app.frame().lines[1].map(c => c.ch).join("").trim()).toBe("");
+    app.unmount();
+  });
+});
+
+describe("流式标记（regression）", () => {
+  test("text.delta 之后 message.streaming 必须为 true", () => {
+    const session = createSession({ width: () => 60, onCommand: () => {} });
+    session.dispatch({ type: "turn.start", turnId: "t1" });
+    session.dispatch({ type: "text.delta", turnId: "t1", delta: "hi" });
+    session.settle();
+    expect(session.state.messages[0]!.streaming).toBe(true);
+
+    const app = mount(() => <AgentView session={session} />, { width: 60, height: 8 });
+    expect(app.text()).toContain("streaming…");
+
+    session.dispatch({ type: "turn.end", turnId: "t1", reason: "completed" });
+    session.settle();
+    expect(session.state.messages[0]!.streaming).toBe(false);
+    app.unmount();
+  });
+});
+
+describe("思考流（ReasoningLine 的数据来源）", () => {
+  test("turn 内可取，turn.end 之后丢掉（不落库）", () => {
+    const session = createSession({ width: () => 60, onCommand: () => {} });
+    session.dispatch({ type: "turn.start", turnId: "t1" });
+    session.dispatch({ type: "reasoning.delta", turnId: "t1", delta: "先看 " });
+    session.dispatch({ type: "reasoning.delta", turnId: "t1", delta: "auth.ts" });
+    session.settle();
+
+    const source = session.reasoningFor("t1");
+    expect(source).toBeDefined();
+    expect(source!.tail()).toBe("先看 auth.ts");
+
+    session.dispatch({ type: "turn.end", turnId: "t1", reason: "completed" });
+    session.settle();
+    expect(session.reasoningFor("t1")).toBeUndefined();
+  });
+
+  test("MessageView 里能直接渲染思考行", () => {
+    const session = createSession({ width: () => 60, onCommand: () => {} });
+    session.dispatch({ type: "turn.start", turnId: "t1" });
+    session.dispatch({ type: "reasoning.delta", turnId: "t1", delta: "在想一件事" });
+    session.dispatch({ type: "text.delta", turnId: "t1", delta: "答案是 42" });
+    session.settle();
+
+    const app = mount(() => <AgentView session={session} />, { width: 60, height: 12 });
+    const text = app.text();
+    expect(text).toContain("思考中");
+    expect(text).toContain("在想一件事");
+    expect(text).toContain("答案是 42");
     app.unmount();
   });
 });

@@ -22,8 +22,9 @@ import {
   planEffects,
   planUndo,
 } from "@butui/undo";
-import { type StreamSource, createMarkdownStream } from "@butui/stream";
+import { type StreamSource, createMarkdownStream, createTextStream } from "@butui/stream";
 import { artifactsFromToolResult } from "./artifact-model.ts";
+import { mergeUsage } from "./protocol.ts";
 import type {
   AgentEvent,
   AgentMessage,
@@ -38,6 +39,7 @@ import type {
   Turn,
   UiCommand,
   UndoEffect,
+  Usage,
 } from "./protocol.ts";
 
 export type SessionStatus =
@@ -71,6 +73,11 @@ export interface SessionState {
   selectedMessage?: string;
   mode: SandboxMode;
   lastError?: string;
+  /**
+   * token 用量（SPEC §11.3）：`input`/`output`/`cached` 是会话累计，
+   * `contextTokens`/`contextWindow` 是最近一次报告的上下文占用与窗口上限。
+   */
+  usage: Usage;
   /** 下一个消息序号（分支 / undo 的锚点） */
   nextMsgId: number;
 }
@@ -93,6 +100,7 @@ export function initialState(branchId = "main"): SessionState {
     revertConflicts: [],
     selectedMessage: undefined,
     mode: "workspace-write",
+    usage: { input: 0, output: 0 },
     nextMsgId: 1,
   };
 }
@@ -121,6 +129,12 @@ export function reduce(state: SessionState, event: AgentEvent): void {
     case "reasoning.delta": {
       // reasoning 不建独立消息，只标 turn 在跑
       state.status = "running";
+      return;
+    }
+
+    case "usage": {
+      // 增量相加、上下文占用取最近一次 —— 见 protocol.ts 的 mergeUsage
+      state.usage = mergeUsage(state.usage, event.usage);
       return;
     }
 
@@ -300,6 +314,13 @@ export interface Session {
   send(command: UiCommand): void;
   /** 取某个消息的流式源（用于 <StreamMarkdown>） */
   sourceFor(messageId: string): StreamSource | undefined;
+  /**
+   * 取某个 turn 的**思考流**（SPEC §10.2 `ReasoningLine`）。
+   *
+   * 思考不落库：`turn.end` 之后这个 turn 的源就被丢掉，UI 的 `<Show>` 自然
+   * 收起。折叠态读 `source.tail()` 就是「正在想的那一行」，O(1)。
+   */
+  reasoningFor(turnId: string): StreamSource | undefined;
   /** 提交用户输入（建消息 + 发 user.submit） */
   submit(text: string): void;
   /** 回答权限请求 */
@@ -342,6 +363,8 @@ export interface Session {
 export function createSession(options: SessionOptions): Session {
   const [state, setState] = createStore<SessionState>(initialState(options.branchId));
   const sources = new Map<string, StreamSource>();
+  /** turnId → 思考流。**不落库**：turn.end 时整个丢掉（SPEC §7 的 reasoning 取舍） */
+  const reasoning = new Map<string, StreamSource>();
   const rawText = new Map<string, string>();
   /**
    * source 是懒建的（tool.start 先建消息、text.delta 才建 source），
@@ -379,6 +402,23 @@ export function createSession(options: SessionOptions): Session {
           const message = ensureAssistantMessage(s, event.turnId);
           ensureSource(message).push(event.delta);
           rawText.set(message.id, (rawText.get(message.id) ?? "") + event.delta);
+          // 还要走一遍 reduce：文本累积走了快路径，但 `streaming` 标记是
+          // reducer 推导出来的（少了这行，「streaming…」永远不亮）。
+          reduce(s, event);
+        });
+        return;
+      }
+
+      if (event.type === "reasoning.delta") {
+        setState(s => {
+          let source = reasoning.get(event.turnId);
+          if (!source) {
+            source = createTextStream({ width: Math.max(8, options.width()) });
+            reasoning.set(event.turnId, source);
+            setSourcesVersion(v => v + 1);
+          }
+          source.push(event.delta);
+          reduce(s, event);
         });
         return;
       }
@@ -406,6 +446,10 @@ export function createSession(options: SessionOptions): Session {
 
       if (event.type === "turn.end") {
         for (const [id, source] of sources) source.flush();
+        // 思考不落库：turn 一结束就丢掉，UI 的 <Show> 自动收起
+        reasoning.get(event.turnId)?.flush();
+        reasoning.delete(event.turnId);
+        setSourcesVersion(v => v + 1);
         setState(s => {
           for (const message of s.messages) {
             if (message.turnId === event.turnId) {
@@ -427,6 +471,11 @@ export function createSession(options: SessionOptions): Session {
     sourceFor(messageId) {
       sourcesVersion(); // 建立响应性依赖
       return sources.get(messageId);
+    },
+
+    reasoningFor(turnId) {
+      sourcesVersion(); // 同上：Map 本身没有响应性
+      return reasoning.get(turnId);
     },
 
     submit(text) {

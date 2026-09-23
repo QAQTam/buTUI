@@ -5,7 +5,7 @@
 当前状态：**M1/M2 骨架 + 流式渲染 O(1) + 事件协议驱动的 agent UI +
 分支式 Undo + WebUI remote attach + 图片子系统（Kitty / iTerm2 / Sixel /
 半块 / 占位符）+ Artifact Canvas + 列表 / 虚拟列表 + 滚动视口已跑通**，
-`bun test` 354 个用例全绿。
+`bun test` 365 个用例全绿。
 
 ```
 应用（你的 agent / 工具 / TUI）
@@ -295,7 +295,13 @@ SPEC §7；`reduce(state, event)` 是纯函数，所以**同一串事件必然�
 
 内置组件（SPEC §10.2）：`MessageList` / `MessageView` / `ToolCard` /
 `TodoPanel` / `PermissionDialog` / `AskUserForm` / `CheckpointMarker` /
-`UndoPreviewPanel` / `BranchTree` / `StatusBar`，以及组合好的 `AgentView`。
+`UndoPreviewPanel` / `BranchTree` / `StatusBar` / `ReasoningLine` /
+`ContextMeter`，以及组合好的 `AgentView`。
+
+用量走 `{ type: "usage" }` 事件 → `session.state.usage`（`input`/`output`/
+`cached` 是会话累计，`contextTokens`/`contextWindow` 是最近一次报告的上下文
+占用）；思考走 `session.reasoningFor(turnId)`，**turn 结束就丢**（思考是临时
+产物，不该撑爆上下文）。两者都见 SPEC §5.14。
 
 每个组件都把语义标识打在根节点上（SPEC §4.2），所以鼠标点击拿到的是
 `message:<id>` / `tool:<callId>` / `checkpoint:<id>`，不是行号：

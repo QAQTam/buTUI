@@ -14,6 +14,7 @@ import type {
   PermissionRequest,
   Todo,
   ToolCall,
+  Usage,
 } from "./protocol.ts";
 import type { Session } from "./session.ts";
 
@@ -76,6 +77,15 @@ export function MessageView(props: { session: Session; message: AgentMessage }) 
           <text color="warning">streaming…</text>
         </Show>
       </row>
+
+      <Show
+        when={props.session.reasoningFor(props.message.turnId)}
+        fallback={null}
+      >
+        {source => (
+          <ReasoningLine text={source().tail()} streaming={props.message.streaming} />
+        )}
+      </Show>
 
       <Show
         when={props.session.sourceFor(props.message.id)}
@@ -344,6 +354,101 @@ export function StatusBar(props: { session: Session }) {
       <text color="muted">branch: {props.session.state.activeBranch}</text>
       <Show when={props.session.state.lastError}>
         <text color="danger">{props.session.state.lastError}</text>
+      </Show>
+    </row>
+  );
+}
+
+/** `1234` → `1.2k`；`128000` → `128k`；`1500000` → `1.5M`（状态栏空间紧张，别写全数字） */
+export function formatTokens(value: number): string {
+  const n = Math.max(0, Math.round(value));
+  const trim = (scaled: number): string => scaled.toFixed(1).replace(/\.0$/, "");
+  if (n < 1000) return String(n);
+  if (n < 1_000_000) return `${trim(n / 1000)}k`;
+  return `${trim(n / 1_000_000)}M`;
+}
+
+/**
+ * `<ContextMeter>` —— 上下文占用条（SPEC §11.3）。
+ *
+ * ```tsx
+ * <ContextMeter usage={session.state.usage} />
+ * ```
+ *
+ * 占用取 `contextTokens ?? input`（**最近一次请求**的规模），不是会话累计 ——
+ * 拿累计值除窗口会立刻超过 100%。窗口未知时只报数、不画比例条。
+ */
+export function ContextMeter(props: {
+  usage: Usage;
+  /** 条宽（cell），默认 10 */
+  width?: number;
+  /** 超过这个比例转 warning，默认 0.7 */
+  warnAt?: number;
+  /** 超过这个比例转 danger，默认 0.9 */
+  dangerAt?: number;
+}) {
+  const used = (): number => props.usage.contextTokens ?? props.usage.input;
+  const window = (): number | undefined =>
+    props.usage.contextWindow && props.usage.contextWindow > 0
+      ? props.usage.contextWindow
+      : undefined;
+  const ratio = (): number => (window() ? Math.min(1, used() / window()!) : 0);
+  const color = (): string => {
+    const r = ratio();
+    if (r >= (props.dangerAt ?? 0.9)) return "danger";
+    if (r >= (props.warnAt ?? 0.7)) return "warning";
+    return "muted";
+  };
+  const barWidth = (): number => Math.max(1, Math.floor(props.width ?? 10));
+  const filled = (): number => Math.round(ratio() * barWidth());
+  const cachedPct = (): number | undefined => {
+    const cached = props.usage.cached ?? 0;
+    const total = used() + cached;
+    return total > 0 && cached > 0 ? Math.round((cached / total) * 100) : undefined;
+  };
+
+  return (
+    <row gap={1} semantic="context:meter">
+      <text color={color()}>
+        {"█".repeat(filled())}
+        {"░".repeat(barWidth() - filled())}
+      </text>
+      <text color="muted">
+        {formatTokens(used())}
+        {window() ? `/${formatTokens(window()!)}` : ""}
+      </text>
+      <Show when={cachedPct()}>
+        {pct => <text color="muted">cache {pct()}%</text>}
+      </Show>
+    </row>
+  );
+}
+
+/**
+ * `<ReasoningLine>` —— 思考链路（SPEC §10.2）。
+ *
+ * 刻意与正文分开：思考内容不落库、不回传、不进上下文，只用于实时展示。
+ * 默认折成**一行**（`truncate`），展开才多行 —— 转录里思考通常只值一行提示。
+ */
+export function ReasoningLine(props: {
+  text: string;
+  streaming?: boolean;
+  expanded?: boolean;
+}) {
+  return (
+    <row gap={1} semantic="reasoning:line">
+      <text color="reasoning">{props.streaming ? "✻ 思考中" : "✻ 思考"}</text>
+      <Show
+        when={props.expanded}
+        fallback={
+          <text color="muted" truncate>
+            {props.text.replace(/\s+/g, " ").trim()}
+          </text>
+        }
+      >
+        <text color="muted" dim>
+          {props.text}
+        </text>
       </Show>
     </row>
   );

@@ -116,12 +116,59 @@ export interface UndoEffect {
   irreversible?: boolean;
 }
 
+/**
+ * token 用量（SPEC §11.3 Context Inspector）。
+ *
+ * 两组数刻意分开，因为它们**不能互相推导**：
+ *
+ * - `input` / `output` / `cached` 是**这一次调用**的增量，累加起来才是会话
+ *   总账（计费 / 统计）。
+ * - `contextTokens` / `contextWindow` 是**当前**上下文占用与窗口上限（画占用
+ *   条）。上下文看的是「最近一次请求塞了多少」，不是会话累计 —— 拿累计值去除
+ *   窗口会立刻超过 100%。
+ *
+ * `contextTokens` 省略时按本次 `input` 估算（大多数 provider 就是这么报的）。
+ */
+export interface Usage {
+  input: number;
+  output: number;
+  /** 命中 provider 前缀缓存的 token 数（能拿到时才有） */
+  cached?: number;
+  /** 当前上下文占用（最近一次请求的输入规模） */
+  contextTokens?: number;
+  /** 上下文窗口上限 */
+  contextWindow?: number;
+}
+
+/**
+ * 累加一次 usage。
+ *
+ * 增量部分相加；上下文占用 / 窗口取**最近一次**报告的值。应用侧可以用它把
+ * provider 的分次上报合成会话总账（`Session` 内部也是这么做的）。
+ */
+export function mergeUsage(total: Usage, delta: Usage): Usage {
+  const merged: Usage = {
+    input: total.input + delta.input,
+    output: total.output + delta.output,
+  };
+  const cached = (total.cached ?? 0) + (delta.cached ?? 0);
+  if (cached > 0) merged.cached = cached;
+  // 上下文占用：优先用这次显式报的，其次退回本次 input，最后沿用上一次
+  const contextTokens = delta.contextTokens ?? delta.input;
+  const carried = contextTokens > 0 ? contextTokens : total.contextTokens;
+  if (carried !== undefined) merged.contextTokens = carried;
+  const window = delta.contextWindow ?? total.contextWindow;
+  if (window !== undefined) merged.contextWindow = window;
+  return merged;
+}
+
 // ── Agent → UI（SPEC §13.1）─────────────────────────────────────────────────
 
 export type AgentEvent =
   | { type: "turn.start"; turnId: string }
   | { type: "text.delta"; turnId: string; delta: string }
   | { type: "reasoning.delta"; turnId: string; delta: string }
+  | { type: "usage"; usage: Usage }
   | { type: "tool.start"; call: ToolCall }
   | { type: "tool.progress"; callId: string; chunk: string }
   | { type: "tool.result"; callId: string; result: ToolResult }

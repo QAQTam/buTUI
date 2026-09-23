@@ -567,6 +567,49 @@ createTuiApp({
   `<row><text truncate>长文本</text><text>右对齐</text></row>` 里右边那个直接
   消失。
 
+---
+
+### 5.14 用量与思考落地（v0.1 实现）
+
+**`usage` 事件（§11.3 Context Inspector 的数据面）。** 协议里原本只有
+`tool.result.workspace` 那种「顺带捎一段数据」的口子，没有 token 用量的位置，
+而 §11.3 要画上下文占用条。现在补成正式事件：
+
+```ts
+interface Usage {
+  input: number; output: number; cached?: number;   // 本次调用的增量
+  contextTokens?: number; contextWindow?: number;   // 当前上下文占用 / 窗口上限
+}
+```
+
+两组数**刻意分开**，因为不能互相推导：`input/output` 累加是会话总账（计费），
+`contextTokens/contextWindow` 是最近一次请求的规模（画条）。拿累计值除窗口会
+立刻超过 100%。`mergeUsage()` 把这两条规则写死在一处，`Session` 直接用它。
+
+`<ContextMeter usage={...}>` 画 `██████░░░░ 32k/128k`，超过 70% / 90% 转
+warning / danger；没有 `contextWindow` 时只报数不画比例（不假装知道）。
+
+**思考流不落库，但要有地方拿。** `reasoning.delta` 之前只把状态标成 running，
+文本直接丢掉 —— 于是 UI 根本没法显示「它在想什么」。现在 `Session` 给每个
+turn 建一个**纯文本流**（不是 markdown：思考里全是半截句子，按 markdown 解析
+只会闪）：
+
+```tsx
+<Show when={session.reasoningFor(message.turnId)}>
+  {source => <ReasoningLine text={source().tail()} streaming={message.streaming} />}
+</Show>
+```
+
+`turn.end` 时整个源被丢掉，`<Show>` 自动收起 —— 思考是临时产物，留着只会撑爆
+上下文和拖慢渲染（§7 的取舍）。折叠态读 `source.tail()` 是 O(1)。
+
+**顺手修掉一个一直没被发现的 bug：`streaming` 标记从来没亮过。**
+`text.delta` 走的是「只建消息 + 推进流」的快路径，绕过了 reducer —— 而
+`message.streaming = true` 是 reducer 推导的。结果是 `MessageView` 的
+「streaming…」和 `<Show when={message.streaming}>` 从来没显示过。快路径现在补
+一次 `reduce()`（消息查找是幂等的），并把这条写进了回归测试。
+
+
 
 ---
 
@@ -961,6 +1004,8 @@ P1：
 已实现（v0.1）：
 
 - `StreamText` / `StreamMarkdown`（`@butui/stream`，O(1) 追加）
+- `ReasoningLine`（思考流：`session.reasoningFor(turnId)`，turn 结束即丢）
+- `ContextMeter`（上下文占用条 + `formatTokens`）
 - `ToolCard`
 - `TodoPanel`
 - `PermissionDialog`
@@ -975,10 +1020,8 @@ P1：
 
 待做：
 
-- `ReasoningLine`
 - `BashProgress`
 - `FoldableOutput` / `DiffView`（现在 diff 渲染在 ArtifactCanvas 内部）
-- `ContextMeter`
 - `SessionTree`
 - `AgentTimeline`
 - `CommandPalette`
@@ -1286,6 +1329,7 @@ type AgentEvent =
   | { type: "turn.start"; turnId: string }
   | { type: "text.delta"; turnId: string; delta: string }
   | { type: "reasoning.delta"; turnId: string; delta: string }
+  | { type: "usage"; usage: Usage }
   | { type: "tool.start"; call: ToolCall }
   | { type: "tool.progress"; callId: string; chunk: string }
   | { type: "tool.result"; callId: string; result: ToolResult }

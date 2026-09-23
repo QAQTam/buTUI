@@ -247,6 +247,16 @@ session.send(command);         // UiCommand
 UI 不读 agent 内部状态、不调 agent 方法 —— 只消费事件、只发命令。所以回放 /
 remote attach / 多套渲染都是「换个传输层」。
 
+**用量与思考：**
+
+- `{ type: "usage", usage }` → `session.state.usage`：`input`/`output`/`cached`
+  是**会话累计**，`contextTokens`/`contextWindow` 是**最近一次**报告的上下文
+  占用与窗口上限（两者不能互相推导）。`<ContextMeter>` 直接吃这个对象。
+- `session.reasoningFor(turnId)` → 该 turn 的思考流（`StreamSource`）。
+  **思考不落库**：`turn.end` 之后源就被丢掉，`<Show>` 自动收起。折叠态读
+  `source.tail()` 就是「正在想的那一行」。
+- `message.streaming` 在 `text.delta` 期间为 `true`，`turn.end` 转 `false`。
+
 ## 5. 已知缺口（不要依赖，也不建议自己绕）
 
 - **列表只有单列 + 固定行高**：`itemHeight` 是常数，变高行（折行文本、展开的
