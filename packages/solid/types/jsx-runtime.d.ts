@@ -122,38 +122,6 @@ export namespace JSX {
     scrollOffset?: number;
   }
 
-  interface InputProps {
-    value?: string;
-    placeholder?: string;
-    focusable?: boolean;
-    disabled?: boolean;
-    fg?: string;
-    color?: string;
-    /** 光标字符，默认 `▏` */
-    cursor?: string;
-    semantic?: Semantic;
-    onInput?: (value: string) => void;
-    onSubmit?: (value: string) => void;
-    onKey?: (event: KeyEvent) => void;
-  }
-
-  interface MarkdownProps extends RefProp {
-    children?: Element;
-    /** markdown 源文本 */
-    source?: string;
-    width?: number;
-    color?: string;
-    semantic?: Semantic;
-  }
-
-  interface CodeProps extends RefProp {
-    children?: Element;
-    source?: string;
-    language?: string;
-    lineNumbers?: boolean;
-    color?: string;
-  }
-
   /**
    * 低层 `<image>` 节点（SPEC §12）。
    *
@@ -203,9 +171,6 @@ export namespace JSX {
     text: TextProps;
     spacer: SpacerProps;
     scrollbox: ScrollBoxProps;
-    input: InputProps;
-    markdown: MarkdownProps;
-    code: CodeProps;
     image: ImageNodeProps;
     /** 出流覆盖层：不参与 flow，按 (x, y) 合成到父节点之上 */
     layer: LayerProps;

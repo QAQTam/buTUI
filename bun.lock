@@ -63,6 +63,7 @@
       "dependencies": {
         "@butui/core": "workspace:*",
         "@butui/solid": "workspace:*",
+        "@butui/stream": "workspace:*",
         "solid-js": "2.0.0-rc.9",
       },
     },

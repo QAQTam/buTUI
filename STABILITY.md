@@ -210,7 +210,24 @@ const sel = createSelection({ count: () => filtered().length, onChange: i => pre
 **命令面板不需要新组件**：`<Input>` 聚焦时 `onKey={e => sel.handleKey(e)}`
 就让方向键归列表、字符归编辑器（`onKey` 先于编辑器）。
 
-### 4.9 选择类与结构化展示
+### 4.9 内容渲染：`<Markdown>` / `<Code>`
+
+```tsx
+<Markdown source={message.text} width={72} />
+<Code source={diff} language="ts" lineNumbers highlightLines={[3, 4]} />
+```
+
+- `<Markdown>` 走的是**和流式同一套引擎**，所以历史消息和流式消息长得一样。
+  `width` 要自己给（折行宽度决定块结构）。
+- `<Code>` 默认用内置的逐行高亮（无跨行状态），`highlight={...}` 可换成自己的
+  分词器；`maxLines` 截断、`highlightLines` 标改动行。
+
+**JSX intrinsic 只包含布局原语**（`box` / `row` / `column` / `text` / `spacer` /
+`scrollbox` / `layer` / `stream` / `image`）。内容渲染一律走组件 —— 以前
+`<input>` / `<markdown>` / `<code>` 只有类型没有实现，写下去会静默变成空盒子，
+现在从类型里删掉了。
+
+### 4.10 选择类与结构化展示
 
 ```tsx
 <Select options={[{ value: "a", label: "A", description: "…" }]} value={v()} onChange={setV} />
@@ -231,7 +248,7 @@ const sel = createSelection({ count: () => filtered().length, onChange: i => pre
   Enter 在叶子上触发 `onActivate`。内部就是「按展开状态拍平 + `<List>`」，
   所以虚拟化、滚动跟随、鼠标点击全都复用。
 
-### 4.10 弹窗与基础展示组件
+### 4.11 弹窗与基础展示组件
 
 ```tsx
 <Button tone="success" onPress={allow}>允许</Button>
@@ -255,7 +272,7 @@ const sel = createSelection({ count: () => filtered().length, onChange: i => pre
   （受控 `frame` 或自走）、`Badge`、`Divider`、`KeyHint`。颜色一律走主题
   token，语义色用 `tone`。
 
-### 4.11 滚动视口：`createScrollView`
+### 4.12 滚动视口：`createScrollView`
 
 ```tsx
 const view = createScrollView();
@@ -285,7 +302,7 @@ createTuiApp({
 前 / 后 N 行固定在视口两端。注意 `<layer>` 做不到这件事 —— 它相对父节点定位，
 父节点自己会被滚走。
 
-### 4.12 Agent 协议
+### 4.13 Agent 协议
 
 ```ts
 import { createSession, decodeNdjson, encodeNdjson } from "@butui/agent";

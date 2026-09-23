@@ -19,3 +19,6 @@ export * from "./modal.tsx";
 export * from "./select.tsx";
 export * from "./table.tsx";
 export * from "./tree.tsx";
+export * from "./highlight.ts";
+export * from "./code.tsx";
+export * from "./markdown.tsx";

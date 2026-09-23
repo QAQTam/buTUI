@@ -642,6 +642,37 @@ turn 建一个**纯文本流**（不是 markdown：思考里全是半截句子�
 
 ---
 
+### 5.16 Markdown / Code 落地（v0.1 实现）
+
+JSX 里原本声明了 `input` / `markdown` / `code` 三个 intrinsic element，但布局层
+根本没实现它们 —— 写 `<markdown>` 会被当成一个空盒子静默渲染。这是**类型在
+撒谎**，比缺功能更糟。现在：
+
+- **intrinsic 只留布局原语**：`box` / `row` / `column` / `text` / `spacer` /
+  `scrollbox` / `layer` / `stream` / `image`。`input` / `markdown` / `code`
+  从类型里删掉。
+- **内容渲染器一律是组件**：`<Input>` / `<Textarea>` / `<Markdown>` / `<Code>`。
+  理由：intrinsic 必须是「布局层认识的东西」；markdown 和代码高亮是**内容**
+  的事，塞进布局层只会让布局层认识 markdown 语法。
+
+**`<Markdown>` 复用流式引擎。** 静态 markdown 和流式 markdown 走同一个
+`createMarkdownStream`：块解析 + 行内样式一次做完，交给 `<stream>` 节点。于是
+「历史消息」和「正在流式的消息」画出来完全一样 —— 不会出现「流式时一种样子、
+定稿后另一种样子」。`width` 必须由调用方给（折行宽度决定块结构，而组件拿不到
+自己的列宽）。
+
+**`<Code>` 的高亮是可替换的。** 默认实现是逐行、无跨行状态的扫描器
+（`tokenizeLine`）：注释 / 字符串 / 数字 / 关键字 / 类型 / 函数 / 运算符各一色，
+`#` 注释按语言开关。
+
+不引 tree-sitter（opentui 走的路）是刻意的：那是原生依赖 + wasm 资产 + 每种
+语言一份 grammar，与 §2.2「默认零 native core」冲突；而 TUI 里的代码块通常就
+几十行、只求「一眼分得清」，逐行扫描还额外带来两个好处 —— **语法错误不会让
+整块失色**、**流式到达的每一行都能立刻上色**（跨行状态做不到这点）。
+需要更准的时候，`<Code highlight={...}>` 直接换实现。
+
+---
+
 ### 5.15 弹窗与遮罩落地（v0.1 实现）
 
 TUI 里「模态框」有三件事必须一起解决，缺一件就是错的：**画在视口上（不被
@@ -1083,6 +1114,9 @@ P1：
 - `Select` / `Tabs`：`<Select>`（↑↓ + Enter）与 `<Tabs>`（←→ 立即切换）
 - `Table`：列宽显式给或按内容算，支持左 / 中 / 右对齐
 - `Tree`：受控展开（`expanded` + `onToggle`），←→ 展开收起、→ 进子节点
+- `Markdown`：`<Markdown source width>`，走**和流式同一套引擎**（§5.7）
+- `Code`：`<Code source language lineNumbers highlightLines>`，轻量逐行高亮，
+  分词器可替换（见 §5.16）
 
 ### 10.2 Agent 组件
 
