@@ -94,6 +94,14 @@ interface AppendMeta {
   suffix: Line[];
   /** 单条内容行的水平装饰（padding / border / margin） */
   decorate: (line: Line) => Line;
+  /**
+   * 缓存时**自身**样式与内衬的指纹。
+   *
+   * 增量快路径只重测子节点，但每一行最后都要过一遍父节点自己的装饰 ——
+   * 而装饰里包含父节点自己的 SGR。父节点属性一变（比如选中行加背景），
+   * 复用的旧行就会带着上一套样式，所以指纹不一致时直接放弃快路径。
+   */
+  selfKey: string;
   /** 边框宽度上限；新行超过它就必须整体重排 */
   maxContentWidth: number;
   forcedHeight: number | undefined;
@@ -362,15 +370,22 @@ function getSegmenter(): Intl.Segmenter {
   return segmenter;
 }
 
-function blankLine(width: number, node: number, semantic?: string): Line {
+/**
+ * 空白填充 cell。
+ *
+ * `sgr` 默认空串（= 终端默认样式），但**容器自己撑出来的空白要带自己的
+ * 样式** —— 否则 `<box bg="accent">` 只有文字那一截是彩色的，右边补的空白
+ * 又变回默认背景。列表选中行整行高亮、状态栏、modal 遮罩都靠这个。
+ */
+function blankLine(width: number, node: number, semantic?: string, sgr = ""): Line {
   const cells: Line = [];
-  for (let i = 0; i < width; i++) cells.push({ ch: " ", width: 1, node, semantic, sgr: "" });
+  for (let i = 0; i < width; i++) cells.push({ ch: " ", width: 1, node, semantic, sgr });
   return cells;
 }
 
-function padLine(line: Line, width: number, node: number, semantic?: string): Line {
+function padLine(line: Line, width: number, node: number, semantic?: string, sgr = ""): Line {
   if (line.length >= width) return line;
-  return [...line, ...blankLine(width - line.length, node, semantic)];
+  return [...line, ...blankLine(width - line.length, node, semantic, sgr)];
 }
 
 function fitLine(line: Line, width: number): Line {
@@ -461,6 +476,8 @@ function measureRow(
   const gap = Number(node.props.gap ?? 0);
   const kids = node.children.filter(inFlow);
   if (kids.length === 0) return { lines: [], width: 0, height: 0, frozen: 0 };
+  // 容器自己撑出来的空白带自己的样式（bg 才会铺满整行）
+  const sgr = sgrOf(style, depth);
 
   const available = Math.max(0, innerWidth - gap * (kids.length - 1));
 
@@ -528,10 +545,10 @@ function measureRow(
 
   const lines: Line[] = [];
   for (let y = 0; y < height; y++) {
-    const line: Line = leading > 0 ? blankLine(leading, node.id, semantic) : [];
+    const line: Line = leading > 0 ? blankLine(leading, node.id, semantic, sgr) : [];
     for (let i = 0; i < columns.length; i++) {
       if (i > 0 && (gap > 0 || extraGap > 0)) {
-        line.push(...blankLine(gap + extraGap, node.id, semantic));
+        line.push(...blankLine(gap + extraGap, node.id, semantic, sgr));
       }
       const column = columns[i];
       // 交叉轴对齐
@@ -542,14 +559,38 @@ function measureRow(
             ? height - column.height
             : 0;
       const row = offset <= y ? column.lines[y - Math.max(0, offset)] : undefined;
-      if (row) line.push(...row, ...blankLine(sizes[i] - row.length, node.id, semantic));
-      else line.push(...blankLine(sizes[i], node.id, semantic));
+      if (row) line.push(...row, ...blankLine(sizes[i] - row.length, node.id, semantic, sgr));
+      else line.push(...blankLine(sizes[i], node.id, semantic, sgr));
     }
     lines.push(line);
   }
   // 一行由所有列拼成，只有所有列的这一行都冻结，整行才冻结
   const frozen = Math.min(height, ...columns.map(c => c.frozen));
   return { lines, width: Math.max(0, ...lines.map(l => l.length)), height: lines.length, frozen };
+}
+
+/**
+ * 节点「自身样式 + 内衬」的指纹（见 `AppendMeta.selfKey`）。
+ *
+ * 只包含**由这个节点自己的属性决定**的东西：SGR、padding / margin / border。
+ * 子节点怎么变都不影响它。
+ */
+function selfKeyOf(node: ElementNode, style: Style, depth: ColorDepth): string {
+  const padding = toInsets(node.props.padding);
+  const margin = toInsets(node.props.margin);
+  const border = node.props.border ? String(node.props.border) : "0";
+  return [
+    sgrOf(style, depth),
+    padding.top,
+    padding.right,
+    padding.bottom,
+    padding.left,
+    margin.top,
+    margin.right,
+    margin.bottom,
+    margin.left,
+    border,
+  ].join("|");
 }
 
 function growOf(node: Node): number {
@@ -598,23 +639,24 @@ function measureColumn(
   }
 
   const align = (node.props.align as string) ?? "start";
+  const alignSgr = sgrOf(style, depth);
   const alignLine = (line: Line): Line => {
     const slack = innerWidth - line.length;
     if (slack <= 0 || align === "start" || align === "stretch") {
-      return padLine(line, innerWidth, node.id, semantic);
+      return padLine(line, innerWidth, node.id, semantic, alignSgr);
     }
     const lead = align === "center" ? Math.floor(slack / 2) : slack;
     return [
-      ...blankLine(lead, node.id, semantic),
+      ...blankLine(lead, node.id, semantic, alignSgr),
       ...line,
-      ...blankLine(slack - lead, node.id, semantic),
+      ...blankLine(slack - lead, node.id, semantic, alignSgr),
     ];
   };
 
   const lines: Line[] = [];
   for (let i = 0; i < measured.length; i++) {
     if (i > 0 && gap > 0) {
-      for (let g = 0; g < gap; g++) lines.push(blankLine(innerWidth, node.id, semantic));
+      for (let g = 0; g < gap; g++) lines.push(blankLine(innerWidth, node.id, semantic, alignSgr));
     }
     lines.push(...measured[i].lines.map(alignLine));
   }
@@ -720,9 +762,10 @@ function measureNode(
   let contentLines = box.lines.map(line => fitLine(line, contentWidth));
   if (scrollOffset > 0) contentLines = contentLines.slice(scrollOffset);
   contentLines = contentLines.slice(0, contentHeight);
-  contentLines = contentLines.map(line => padLine(line, contentWidth, node.id, semantic));
+  const ownSgr = sgrOf(style, depth);
+  contentLines = contentLines.map(line => padLine(line, contentWidth, node.id, semantic, ownSgr));
   while (explicitHeight !== undefined && contentLines.length < contentHeight) {
-    contentLines.push(blankLine(contentWidth, node.id, semantic));
+    contentLines.push(blankLine(contentWidth, node.id, semantic, ownSgr));
   }
 
   // ── 组合：prefix + content + suffix ──────────────────────────────────────
@@ -806,6 +849,7 @@ function measureNode(
       lastChildFrozenToken: lastLines.frozenToken,
       suffix,
       decorate,
+      selfKey: selfKeyOf(node, style, depth),
       maxContentWidth: contentWidth,
       forcedHeight,
       childIndex: lastIndex,
@@ -889,6 +933,8 @@ function tryIncremental(
 ): Box | null {
   const meta = cached.append;
   if (!meta) return null;
+  // 自己的样式 / 内衬变了 → 旧行上的装饰不能再用
+  if (meta.selfKey !== selfKeyOf(node, style, depth)) return null;
   const kids = node.children.filter(inFlow);
   if (kids.length < meta.childCount) return null;
 

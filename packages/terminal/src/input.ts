@@ -230,12 +230,20 @@ export class InputDecoder {
       const [b, x, y] = body.slice(1).split(";").map(Number);
       const buttonBits = b & 0b11000011;
       const wheel = (b & 0b01000000) !== 0;
-      const mods = modifiersOf(1 + (b & 0b00011100));
+      // 鼠标的修饰键位是 4/8/16（shift/meta/ctrl），不是键盘那套 1/2/4；
+      // 直接 1 + (b & 0b11100) 会把 shift 认成 ctrl。
+      const mouseBits =
+        ((b & 0b00100) !== 0 ? 1 : 0) |
+        ((b & 0b01000) !== 0 ? 8 : 0) |
+        ((b & 0b10000) !== 0 ? 4 : 0);
+      const mods = modifiersOf(1 + mouseBits);
       let action: MouseEvent["action"] = final === "m" ? "release" : "press";
       let button: MouseEvent["button"] = "none";
+      let wheelDir: MouseEvent["wheel"];
       if (wheel) {
+        // 低位 0/1/2/3 = 上/下/左/右（xterm 的 64..67）
         action = "wheel";
-        button = (b & 1) === 0 ? "none" : "none";
+        wheelDir = (["up", "down", "left", "right"] as const)[b & 0b11];
       } else if (buttonBits === 0) button = "left";
       else if (buttonBits === 1) button = "middle";
       else if (buttonBits === 2) button = "right";
@@ -245,6 +253,7 @@ export class InputDecoder {
           type: "mouse" as const,
           action,
           button,
+          ...(wheelDir ? { wheel: wheelDir } : {}),
           x: Math.max(0, x - 1),
           y: Math.max(0, y - 1),
           modifiers: mods,

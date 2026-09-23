@@ -75,6 +75,27 @@ describe("终端输入解码（SPEC §9.3 / §9.4）", () => {
     const decoder = new InputDecoder();
     const events = feed(decoder, "\x1b[<64;1;1M\x1b[<65;1;1M");
     expect(events.every(e => e.type === "mouse" && e.action === "wheel")).toBe(true);
+    // 方向必须保留：64=上 65=下（以前两个分支都写死 "none"，滚不动）
+    expect(events.map(e => (e.type === "mouse" ? e.wheel : undefined))).toEqual(["up", "down"]);
+  });
+
+  test("水平滚轮 / 带修饰键的滚轮", () => {
+    const decoder = new InputDecoder();
+    const events = feed(decoder, "\x1b[<66;1;1M\x1b[<67;1;1M\x1b[<69;1;1M\x1b[<80;1;1M");
+    expect(events.map(e => (e.type === "mouse" ? e.wheel : undefined))).toEqual([
+      "left",
+      "right",
+      "down",
+      "up",
+    ]);
+    // 69 = 64 + 4(shift) + 1(down)
+    const shifted = events[2];
+    expect(shifted.type === "mouse" && shifted.modifiers.shift).toBe(true);
+    expect(shifted.type === "mouse" && shifted.modifiers.ctrl).toBe(false);
+    // 80 = 64 + 16(ctrl)
+    const ctrled = events[3];
+    expect(ctrled.type === "mouse" && ctrled.modifiers.ctrl).toBe(true);
+    expect(ctrled.type === "mouse" && ctrled.modifiers.shift).toBe(false);
   });
 
   test("bracketed paste 整体作为一个事件", () => {

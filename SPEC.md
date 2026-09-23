@@ -476,6 +476,52 @@ Solid 的 provider 在自己的 root 里延迟读取 `props.children`，直接�
 
 ---
 
+### 5.12 列表与虚拟化落地（v0.1 实现）
+
+§10.1 的 `List` / `VirtualList` 由 `@butui/components` 提供，拆成纯逻辑
+（`createSelection` / `followScroll`）和视图（`<List>` / `<VirtualList>`）。
+
+**为什么两者是同一份实现。** 只差「窗口开多大」：`List` 渲染全部条目、靠外层
+裁剪（几十行的菜单）；`VirtualList` 只渲染可见的 `viewport` 行（上万条的历史 /
+文件树）。渲染路径都用 Solid 2 的 `<Repeat count from>` —— 它在窗口整体平移时
+**复用重叠区间的节点**，所以往下滚一行是「建一行 + 销毁一行」，与总条数无关。
+`<For>` 做不到这点（每次都是全量 reconcile），流式渲染那边已经踩过一次。
+
+三条实测出来的约束：
+
+1. **不能按「创建时快照」渲染行。** `<Repeat>` 只在 `count` / `from` 变化时重跑
+   mapping；`items` 换了但长度没变时它一行都不重建。所以行内容必须读
+   `items()[index]` 这种**访问器**，让 Solid 自己追依赖 —— 写成
+   `renderItem(items[i])` 会让「同长度的过滤结果」显示成上一批数据（命令面板
+   输入一个字符就撞上）。
+2. **窗口顶部是组件自己的状态，不是从选中项推出来的。** 用户滚开之后，只要
+   不动选中项，窗口就不该被弹回去。`followScroll(selected, count, viewport, top)`
+   是个纯函数：只在选中项跑出窗口时移动，其余原样返回。
+3. **选中态是访问器不是布尔值。** 行节点只创建一次，`state.selected()` 让
+   「移动一格」只重算两行的文本节点。
+
+**顺手补掉的两个底层缺陷**（列表逼出来的，但都不是列表专属）：
+
+- **容器背景铺不满自己的盒子。** 布局层给容器补空白时用的是「默认样式」的
+  cell，于是 `<box bg="accent">` 只有文字那一截是彩色的，右边补的空白又变回
+  默认背景 —— 选中行整行高亮、状态栏、modal 遮罩全做不出来。现在容器自己撑
+  出来的空白（对齐、gap、显式高度填充、row 列补齐）带**自己的 sgr**。
+  这顺手暴露了增量布局的一个洞：快路径只重测子节点，但每行最后都要过一遍父
+  节点自己的装饰，而装饰里现在含父节点的 SGR。所以缓存里加了一份「自身样式
+  + 内衬」指纹（`selfKey`），不一致就放弃快路径 —— 否则「改自己的背景 + 最后
+  一个子节点变化」这一帧会复用带着旧样式的行。
+- **滚轮方向被解码后丢掉。** `MouseEvent` 没有方向字段，解码器里写着
+  `button = (b & 1) === 0 ? "none" : "none"` —— 两个分支同一个值，等于滚不动。
+  现在 `MouseEvent.wheel: "up" | "down" | "left" | "right"`（`action ===
+  "wheel"` 时有值）。同一段代码里鼠标修饰键位也修了：鼠标用 4/8/16
+  （shift/meta/ctrl），不是键盘那套 1/2/4，原来 shift 会被认成 ctrl。
+
+**命令面板形态（`<Input>` + `<List>`）不需要新 API。** `<Input onKey>` 先于
+编辑器，`onKey={e => selection.handleKey(e)}` 就够：方向键被列表消费，字符照常
+进编辑器。这是「组件组合」而不是「再造一个 CommandPalette 组件」。
+
+---
+
 ### 5.5 禁止事项
 
 - 不从 OpenTUI 复制 reconciler
@@ -852,6 +898,15 @@ P1：
 - Spinner
 - StatusBar
 - Badge
+
+已实现（v0.1）：
+
+- 布局原语 `Box` / `Row` / `Column` / `Spacer` / `Text`（`@butui/solid` 的
+  intrinsic elements，不是包装组件）
+- `ScrollBox`：`<box overflow="scroll" scrollOffset={n}>`（布局层实现）
+- `Input` / `Textarea`：`createTextEditor` + `<Input>`（`multiline` 即 Textarea）
+- `List` / `VirtualList`：`createSelection` + `<List>` / `<VirtualList>`
+  （见 §5.12）
 
 ### 10.2 Agent 组件
 

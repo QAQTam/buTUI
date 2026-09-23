@@ -36,7 +36,7 @@ const app = createTuiApp({
 | 布局 | `@butui/layout` | **稳定**（`Cell` / `Line` / `Frame` / `layout`） |
 | 渲染 | `@butui/renderer` | **稳定**（`Renderer` / `plainText` / `paintLine`） |
 | 终端 | `@butui/terminal` | **稳定**（`TerminalSession` / 输入解码 / 能力探测） |
-| 基础组件 | `@butui/components` | **稳定**（`createTextEditor` / `<Input>`） |
+| 基础组件 | `@butui/components` | **稳定**（`createTextEditor` / `<Input>` / `createSelection` / `<List>` / `<VirtualList>`） |
 | 流式文本 | `@butui/stream` | **稳定**（`StreamSource` / `<stream>`） |
 | 图片 | `@butui/image` | **稳定**（`createImage` / `ImageLayer` / `renderImage`） |
 | Agent 协议与组件 | `@butui/agent` | **稳定**（`AgentEvent` / `UiCommand` / `Session`） |
@@ -177,7 +177,36 @@ const editor = createTextEditor({ onSubmit: value => session.submit(value) });
 
 `<Input>` 的按键优先级：`props.onKey`（返回 true 即消费）→ 编辑器。
 
-### 4.8 Agent 协议
+### 4.8 列表与选择：`createSelection` + `<List>` / `<VirtualList>`
+
+```tsx
+const sel = createSelection({ count: () => filtered().length, onChange: i => preview(i) });
+
+<List
+  items={filtered()}
+  selection={sel}
+  height={12}                 // 给高度 = 裁剪 + 跟随滚动
+  renderItem={item => <text>{item}</text>}
+  onActivate={item => open(item)}
+/>
+```
+
+- `createSelection` 是纯逻辑：`index()` / `count()` / `setIndex` / `move` /
+  `home` / `end` / `page` / `handleKey` / `follow`。认 `↑↓ Home End
+  PageUp/PageDown Ctrl+P/N`（`vim: true` 再加 `j/k`）。`Enter` 不归它管。
+- `count` 可以是**访问器** —— 过滤结果一变，索引自动跟着夹取，不用手动同步。
+- `<List>` 渲染全部条目（几十行的菜单）；`<VirtualList>` 只渲染可见窗口
+  （上万条也行，行数恒定）。**不传 `height` 就没有视口**：退化成全渲染 +
+  交给父容器滚动。
+- 行内容请写成 `renderItem={item => ...}`（`item` 是访问器读出来的当前值）；
+  `state.selected()` 是**访问器**，不是布尔值。
+- 滚轮移动选中项（`wheelStep`，默认 1）；点击某行即选中，默认顺带把焦点交给
+  列表（`focusOnClick={false}` 关掉）。
+
+**命令面板不需要新组件**：`<Input>` 聚焦时 `onKey={e => sel.handleKey(e)}`
+就让方向键归列表、字符归编辑器（`onKey` 先于编辑器）。
+
+### 4.9 Agent 协议
 
 ```ts
 import { createSession, decodeNdjson, encodeNdjson } from "@butui/agent";
@@ -190,10 +219,11 @@ remote attach / 多套渲染都是「换个传输层」。
 
 ## 5. 已知缺口（不要依赖，也不建议自己绕）
 
-- **没有内建列表导航**：上下键选行、翻页、快捷键表都要应用自己写
-  （输入框内部的历史/词跳转已经有了，但那是编辑器的能力）。
+- **列表只有单列 + 固定行高**：`itemHeight` 是常数，变高行（折行文本、展开的
+  卡片）不支持；`MultiSelect` / `Tree` / `Table` 还没做。
 - **编辑器没有选区 / 剪贴板历史 / 撤销栈**：只有光标与历史。
-- **没有 scroll 容器的手势/惯性**：`scrollOffset` 是纯数值，滚轮要自己接。
+- **没有 scroll 容器的手势/惯性**：`scrollOffset` 是纯数值；滚轮只在 `<List>`
+  里接了（其他容器要自己接 `onWheel`，方向看 `event.wheel`）。
 - **没有布局调试工具**（类似 flexbox inspector）。
 - **焦点不会自动清理**：被移除的节点如果还是焦点，`focusedId()` 会保留它的
   id（下一次 tab 会自动跳到活着的节点）。组件里用 `isFocused` 不受影响。

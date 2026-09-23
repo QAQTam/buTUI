@@ -4,7 +4,8 @@
 
 当前状态：**M1/M2 骨架 + 流式渲染 O(1) + 事件协议驱动的 agent UI +
 分支式 Undo + WebUI remote attach + 图片子系统（Kitty / iTerm2 / Sixel /
-半块 / 占位符）+ Artifact Canvas 已跑通**，`bun test` 285 个用例全绿。
+半块 / 占位符）+ Artifact Canvas + 列表 / 虚拟列表已跑通**，`bun test` 327 个
+用例全绿。
 
 ```
 应用（你的 agent / 工具 / TUI）
@@ -17,7 +18,7 @@
               → 终端 ANSI
 
 按需叠加：
-  @butui/components  编辑器模型 + Input（光标 / 历史 / 词跳转）
+  @butui/components  编辑器模型 + Input + 选择模型 + List / VirtualList
   @butui/stream  增量折行 + 增量 markdown（O(delta) 定稿）
   @butui/image   Kitty / iTerm2 / Sixel / 半块 / 占位符 + 安全加载
   @butui/agent   事件协议 + Session + SPEC §10.2 组件 + Artifact Canvas
@@ -44,6 +45,34 @@ const app = createTuiApp({
 定时器、异步加载）都会自动合并到下一帧。
 
 接口契约（哪些稳定、怎么演进、已知缺口）见 **[STABILITY.md](./STABILITY.md)**。
+
+## 列表 / 虚拟列表
+
+```tsx
+import { createSelection, VirtualList } from "@butui/components";
+
+const sel = createSelection({ count: () => filtered().length });
+
+<VirtualList
+  items={filtered()}
+  selection={sel}
+  height={12}
+  renderItem={item => <text>{item}</text>}
+  onActivate={item => open(item)}
+/>
+```
+
+上下键 / Home / End / PageUp / PageDown / Ctrl+P,N 移动选择，滚轮移动选中项，
+点击即选中，`Enter` 激活 —— 应用不用自己写这套。`height` 给了就裁剪 + 跟随
+滚动；不给就全渲染、交给父容器滚。
+
+**保证：`<VirtualList>` 的节点数 = 视口行数，与总条数无关。** 窗口平移时
+Solid 2 的 `<Repeat count from>` 复用重叠区间的节点，所以「往下滚一行」是
+建一行 + 销毁一行；10 万条的列表和 10 条的列表建一样多的节点（测试里断言
+过）。这是 SPEC §5.7 那条 O(1) 在列表上的对应物。
+
+`<List>` 是同一份实现但不裁剪（几十行的菜单）；`<VirtualList>` 只是名字更
+直白。行内容请写成 `renderItem={item => ...}`，`state.selected()` 是访问器。
 
 ## 流式渲染 O(1)
 
@@ -391,7 +420,7 @@ Demo 的工作区是**内存实现**，但走的是完全一样的 journal / dif
 | `@butui/core` | 节点树、`rev` 失效传播、`childrenRevSum`、focus、事件冒泡、theme、ANSI 解析 |
 | `@butui/solid` | `@solidjs/universal` host ops、JSX 类型、Bun 编译插件 |
 | `@butui/runtime` | `createTuiApp`：终端、合帧重绘、事件分发 —— 应用作者的唯一入口 |
-| `@butui/components` | `createTextEditor`、`<Input>`（焦点可观察靠 `useFocus`） |
+| `@butui/components` | `createTextEditor`、`<Input>`、`createSelection`、`<List>` / `<VirtualList>`（焦点可观察靠 `useFocus`） |
 | `@butui/agent` | 事件协议（NDJSON）、Session reducer、SPEC §10.2 组件、Artifact Canvas |
 | `@butui/undo` | 工作区变更日志、行级 patch、undo 预览与执行（SPEC §8） |
 | `@butui/web` | WebUI：ANSI→HTML、DOM 组件、`mountWebUI`（复用同一个 Session） |
@@ -452,6 +481,11 @@ setStore(s => { s.lines.push(line); });   // 不是 setStore("lines", i, v)
 懒创建的资源（比如「消息先建、stream source 后建」）如果用普通 Map 存，
 `<Show when={getSource(id)}>` 永远停在第一次求值的结果上。要么把资源放进
 store，要么配一个版本信号让调用方建立依赖（`@butui/agent` 用的是后者）。
+
+同一个坑的另一副面孔：**`<Repeat>` 的行内容必须走访问器**。`<Repeat count from>`
+只在 `count` / `from` 变化时重跑 mapping，`items` 换了但长度没变时它一行都不
+重建 —— 写成 `renderItem(items[i])`（创建时快照）会让「同长度的过滤结果」显示
+成上一批数据。`<List>` 内部读的是 `items()[index]`，见 SPEC §5.12。
 
 ### 6. 读 store 必须在 setter **内部**
 
@@ -544,10 +578,12 @@ Bun.plugin(onLoad)
 
 ## 还没做
 
-- `@butui/components` 继续长（现在有 Input；Select / List / ScrollBox / Table 待做）
-- VirtualList / CommandPalette / ToolGraph / AgentTimeline（§10.2 剩余组件）
-- 编辑器还缺选区 / 剪贴板历史 / 撤销栈；列表导航（上下键选行）也没有内建
+- `@butui/components` 继续长（现在有 Input / List / VirtualList；Select /
+  ScrollBox / Table / Tree 待做）
+- CommandPalette / ToolGraph / AgentTimeline（§10.2 剩余组件；命令面板用
+  `<Input onKey={e => sel.handleKey(e)}>` + `<List>` 组合就够，不必再包一层）
+- 编辑器还缺选区 / 剪贴板历史 / 撤销栈；列表只支持单列 + 固定行高
 - Artifact Canvas：artifact 的持久化（现在只在 Session 内存里）、WebUI 侧的服务端图片路由
 - 图片子系统：半块图的终端背景透出、Kitty 图片随滚动的位置缓存
-- 虚拟列表、动画、Kitty keyboard protocol 的发送侧
+- 动画、Kitty keyboard protocol 的发送侧
 - `markdown` / `code` / `image` 三个 intrinsic element 目前只有类型，没有实现

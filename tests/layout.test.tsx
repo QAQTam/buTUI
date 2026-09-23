@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { mount } from "@butui/test";
+import { createSignal } from "solid-js";
 
 describe("布局引擎（SPEC §9.1 P0）", () => {
   test("bg 用背景序列（48;…），不是把前景色当背景用", () => {
@@ -16,6 +17,56 @@ describe("布局引擎（SPEC §9.1 P0）", () => {
     const sgr = app.frame().lines[0][0].sgr;
     expect(sgr).toContain("38;2;125;211;252");
     expect(sgr).toContain("48;2;15;23;42");
+    app.unmount();
+  });
+
+  test("容器自己撑出来的空白带自己的背景（整行铺满）", () => {
+    const app = mount(
+      () => (
+        <box width={10} bg="accent" height={1}>
+          <text>hi</text>
+        </box>
+      ),
+      { width: 10, height: 1 }
+    );
+    const line = app.frame().lines[0];
+    // 文字之后的填充 cell 也得是 accent 背景，否则高亮只到文字为止
+    expect(line[0].sgr).toContain("48;2;125;211;252");
+    expect(line[9].sgr).toContain("48;2;125;211;252");
+    app.unmount();
+  });
+
+  test("row 里没有背景的空白仍然是默认样式", () => {
+    const app = mount(
+      () => (
+        <row width={8}>
+          <text>ab</text>
+        </row>
+      ),
+      { width: 8, height: 1 }
+    );
+    expect(app.frame().lines[0][7].sgr).toBe("");
+    app.unmount();
+  });
+
+  test("自身样式变了 + 只有最后一个子节点变 → 不复用旧行（装饰不串味）", () => {
+    const [on, setOn] = createSignal(false);
+    const [tail, setTail] = createSignal("a");
+    const app = mount(
+      () => (
+        <box width={6} bg={on() ? "accent" : undefined}>
+          <text>head</text>
+          <text>{tail()}</text>
+        </box>
+      ),
+      { width: 6, height: 2 }
+    );
+    // 先铺一次缓存，再同时改「自己的样式」和「最后一个子节点」
+    expect(app.frame().lines[1][5].sgr).toBe("");
+    setOn(true);
+    setTail("b");
+    app.flush();
+    expect(app.frame().lines[1][5].sgr).toContain("48;2;125;211;252");
     app.unmount();
   });
   test("row 横向排列 + spacer 吃掉剩余空间", () => {

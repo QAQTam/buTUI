@@ -29,10 +29,20 @@ export interface KeyEvent {
   readonly defaultPrevented: boolean;
 }
 
+/** 滚轮方向（`action === "wheel"` 时才有值） */
+export type WheelDirection = "up" | "down" | "left" | "right";
+
 export interface MouseEvent {
   type: "mouse";
   action: "press" | "release" | "move" | "wheel";
   button: "left" | "middle" | "right" | "none";
+  /**
+   * 滚轮方向。
+   *
+   * 单独一个字段而不是塞进 `button`：`button` 的语义是「哪个键被按了」，
+   * 滚轮没有键。终端解码器从 SGR 的 button 低位拿方向（64/65/66/67）。
+   */
+  wheel?: WheelDirection;
   /** 屏幕坐标（0-based，cell 单位） */
   x: number;
   y: number;
