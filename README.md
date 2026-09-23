@@ -55,7 +55,8 @@ useKeyboard(event => {                   // 返回 true 即消费
 });
 ```
 
-接口契约（哪些稳定、怎么演进、已知缺口）见 **[STABILITY.md](./STABILITY.md)**。
+接口契约（哪些稳定、怎么演进、已知缺口）见 **[STABILITY.md](./STABILITY.md)**；
+接手开发、环境坑和下一步优先级见 **[HANDOFF.md](./HANDOFF.md)**。
 
 ## 列表 / 虚拟列表
 
