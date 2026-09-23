@@ -8,7 +8,7 @@
   ],
   "scripts": {
     "test": "bun --conditions=browser test",
-    "demo": "bun --conditions=browser run examples/agent-demo/src/main.ts",
+    "demo": "bun --conditions=browser run examples/agent-demo/src/main.tsx",
     "typecheck": "bun --conditions=browser x tsc --noEmit",
     "web": "bun --conditions=browser run examples/web-demo/src/server.ts"
   },
@@ -19,6 +19,7 @@
     "@butui/image": "workspace:*",
     "@butui/layout": "workspace:*",
     "@butui/renderer": "workspace:*",
+    "@butui/runtime": "workspace:*",
     "@butui/solid": "workspace:*",
     "@butui/stream": "workspace:*",
     "@butui/terminal": "workspace:*",

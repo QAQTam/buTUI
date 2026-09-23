@@ -70,6 +70,22 @@ export function currentRevision(): number {
   return revision;
 }
 
+/**
+ * 变更订阅 —— 任何 `touch()` 都会通知。
+ *
+ * 这是「应用不需要自己安排重绘」的基础设施：运行时订阅一次，之后不管变更来自
+ * 键盘、定时器、还是异步图片加载，都会自动合并到下一帧。没有它，每个 app 都要
+ * 手写 `schedulePaint` 并在每个可能改状态的地方记得调用（demo 里曾经有 6 处）。
+ *
+ * 回调必须是 O(1) 且不能改树 —— 它会在 `touch()` 的调用栈里同步执行。
+ */
+const mutationListeners = new Set<(node: Node) => void>();
+
+export function onMutation(listener: (node: Node) => void): () => void {
+  mutationListeners.add(listener);
+  return () => mutationListeners.delete(listener);
+}
+
 /** 把一个节点及其全部祖先标记为脏 */
 export function touch(node: Node): void {
   stats.touched++;
@@ -85,6 +101,7 @@ export function touch(node: Node): void {
     previousRev = parent.rev;
     cur = parent;
   }
+  for (const listener of mutationListeners) listener(node);
 }
 
 function base(kind: NodeKind): NodeBase {
@@ -201,5 +218,17 @@ export function semanticOf(node: Node | undefined): string | undefined {
     if (cur.semantic) return cur.semantic;
     cur = cur.parent ?? undefined;
   }
+  return undefined;
+}
+
+/**
+ * 按 id 找节点。
+ *
+ * 帧里存的是节点 id（hit test / 焦点都只记 id，不持有对象引用），
+ * 运行时要把 id 换回节点再派发事件，所以这个查找是一等公民。
+ */
+export function nodeById(root: Node, id: number | undefined): Node | undefined {
+  if (id === undefined) return undefined;
+  for (const node of walk(root)) if (node.id === id) return node;
   return undefined;
 }

@@ -7,7 +7,8 @@
 import { AgentView, ArtifactCanvas, type Session } from "@butui/agent";
 import { type ImageLayer, artifactImageRenderer } from "@butui/image";
 import { Show } from "solid-js";
-import { input, permission, size, status } from "./state.ts";
+import type { TuiSize } from "@butui/runtime";
+import { input, permission, status } from "./state.ts";
 
 /** 宽终端才开侧栏；窄终端里 artifact 面板会把对话挤没 */
 const PANEL_WIDTH = 42;
@@ -15,6 +16,8 @@ const PANEL_MIN_COLUMNS = 100;
 
 export interface AppProps {
   session: Session;
+  /** 由 @butui/runtime 提供：resize 后读到的就是新值 */
+  size: () => TuiSize;
   /** 图片 artifact 走 Kitty / iTerm2 / Sixel / 半块（SPEC §12），由图层统一摆放 */
   imageLayer?: ImageLayer;
   /** 图片是异步加载的：加载完要主动重绘一帧 */
@@ -23,6 +26,7 @@ export interface AppProps {
 
 export function App(props: AppProps) {
   const session = props.session;
+  const size = props.size;
   const showPanel = () => size().columns >= PANEL_MIN_COLUMNS && session.state.artifacts.length > 0;
   const renderArtifactImage = artifactImageRenderer({
     layer: props.imageLayer,

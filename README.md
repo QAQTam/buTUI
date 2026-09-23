@@ -4,22 +4,45 @@
 
 当前状态：**M1/M2 骨架 + 流式渲染 O(1) + 事件协议驱动的 agent UI +
 分支式 Undo + WebUI remote attach + 图片子系统（Kitty / iTerm2 / Sixel /
-半块 / 占位符）+ Artifact Canvas 已跑通**，`bun test` 236 个用例全绿。
+半块 / 占位符）+ Artifact Canvas 已跑通**，`bun test` 248 个用例全绿。
 
 ```
-Solid signal / store
-  → @butui/solid   (13 个 host ops，Solid 自带 reconciler)
-  → @butui/core    (节点树 / 失效传播 / focus / 事件冒泡 / theme / ANSI 解析)
-  → @butui/agent   (事件协议 reducer + Session + SPEC §10.2 组件)
-  → @butui/undo    (workspace 日志 + 行级 patch + 分支式 undo)
-  → @butui/web     (DOM 渲染，复用同一份 Session / 事件协议)
-  → @butui/stream  (增量折行 + 增量 markdown，O(delta) 定稿)
-  → @butui/image   (协议探测 + PNG 编解码 + 安全加载 + 图形图层)
-  → @butui/layout  (flex 子集 + 增量合成 + 视口窗口)
-  → @butui/renderer(cell buffer + 逐行差分 + SGR 状态机)
-  → @butui/terminal(raw mode / resize / 输入解码 / 能力探测)
-  → 终端 ANSI
+应用（你的 agent / 工具 / TUI）
+  → @butui/runtime  (createTuiApp：终端 + 合帧重绘 + 事件分发)
+    → @butui/solid  (13 个 host ops，Solid 自带 reconciler)
+      → @butui/core (节点树 / 失效传播 / focus / 事件冒泡 / theme / ANSI 解析)
+        → @butui/layout   (flex 子集 + 增量合成 + 视口窗口)
+          → @butui/renderer (cell buffer + 逐行差分 + SGR 状态机)
+            → @butui/terminal (raw mode / resize / 输入解码 / 能力探测)
+              → 终端 ANSI
+
+按需叠加：
+  @butui/stream  增量折行 + 增量 markdown（O(delta) 定稿）
+  @butui/image   Kitty / iTerm2 / Sixel / 半块 / 占位符 + 安全加载
+  @butui/agent   事件协议 + Session + SPEC §10.2 组件 + Artifact Canvas
+  @butui/undo    workspace 日志 + 行级 patch + 分支式 undo
+  @butui/web     DOM 渲染（实验层，复用同一份 Session / 事件协议）
 ```
+
+## 拿 buTUI 画 TUI
+
+```tsx
+import { createTuiApp } from "@butui/runtime";
+
+const app = createTuiApp({
+  view: runtime => (
+    <box border padding={1}>
+      <text>hello {runtime.size().columns}×{runtime.size().rows}</text>
+    </box>
+  ),
+});
+```
+
+终端、备用屏、raw mode、重绘调度、resize、tab 焦点、鼠标 hit test、ctrl+c
+退出全在 `createTuiApp` 里。**不需要自己调 paint** —— 任何节点变更（signal、
+定时器、异步加载）都会自动合并到下一帧。
+
+接口契约（哪些稳定、怎么演进、已知缺口）见 **[STABILITY.md](./STABILITY.md)**。
 
 ## 流式渲染 O(1)
 
@@ -333,7 +356,7 @@ bun install
 bun test
 
 # agent demo（需要真实终端）
-bun --conditions=browser run examples/agent-demo/src/main.ts
+bun --conditions=browser run examples/agent-demo/src/main.tsx
 
 # 流式基准
 bun --conditions=browser run scripts/stream-bench.tsx
@@ -366,6 +389,7 @@ Demo 的工作区是**内存实现**，但走的是完全一样的 journal / dif
 |---|---|
 | `@butui/core` | 节点树、`rev` 失效传播、`childrenRevSum`、focus、事件冒泡、theme、ANSI 解析 |
 | `@butui/solid` | `@solidjs/universal` host ops、JSX 类型、Bun 编译插件 |
+| `@butui/runtime` | `createTuiApp`：终端、合帧重绘、事件分发 —— 应用作者的唯一入口 |
 | `@butui/agent` | 事件协议（NDJSON）、Session reducer、SPEC §10.2 组件、Artifact Canvas |
 | `@butui/undo` | 工作区变更日志、行级 patch、undo 预览与执行（SPEC §8） |
 | `@butui/web` | WebUI：ANSI→HTML、DOM 组件、`mountWebUI`（复用同一个 Session） |

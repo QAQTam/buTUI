@@ -8,7 +8,13 @@
  * `@solidjs/compiler` 的 `generate: "universal"` 编译成 host ops 调用。
  */
 import type { Element as SolidElement, ArrayElement as SolidArrayElement } from "solid-js";
-import type { Node, KeyEvent, MouseEvent as BtnMouseEvent, PasteEvent } from "@butui/core";
+import type {
+  Node,
+  FocusEvent as BtnFocusEvent,
+  KeyEvent,
+  MouseEvent as BtnMouseEvent,
+  PasteEvent,
+} from "@butui/core";
 
 export namespace JSX {
   type Element = SolidElement | Node | SolidArrayElement;
@@ -82,6 +88,19 @@ export namespace JSX {
     truncate?: boolean;
     semantic?: Semantic;
     onClick?: (event: BtnMouseEvent) => void;
+    /**
+     * 交互属性与 `BoxProps` 对齐。
+     *
+     * `text` 是最常用的可聚焦单元（列表项、按钮、菜单行），不该逼着作者为了
+     * 「能 Tab 到」而多包一层 `<box>`。
+     */
+    focusable?: boolean;
+    disabled?: boolean;
+    onKey?: (event: KeyEvent) => void;
+    onFocus?: (event: BtnFocusEvent) => void;
+    onBlur?: (event: BtnFocusEvent) => void;
+    onPaste?: (event: PasteEvent) => void;
+    onWheel?: (event: BtnMouseEvent) => void;
   }
 
   interface SpacerProps {

@@ -5,11 +5,9 @@
  */
 import { type AgentEvent, AgentView, createSession, decodeNdjson } from "@butui/agent";
 import { mount } from "@butui/test";
-import { setSize } from "../examples/agent-demo/src/state.ts";
 
 const columns = Number(process.argv[2] ?? 72);
 const rows = Number(process.argv[3] ?? 24);
-setSize({ columns, rows });
 
 const RECORDING = [
   `{"type":"text.delta","turnId":"t1","delta":"先读一下 src/auth.ts 和 SPEC.md。"}`,

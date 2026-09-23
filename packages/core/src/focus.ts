@@ -3,7 +3,7 @@
  *
  * 只处理 Tab 顺序与 focus trap；键盘事件冒泡由事件层负责。
  */
-import { type Node, walk } from "./node.ts";
+import { type Node, nodeById, walk } from "./node.ts";
 
 export interface FocusState {
   /** 当前聚焦节点的 id */
@@ -21,6 +21,12 @@ export function getFocusState(root: Node): FocusState {
     states.set(root, state);
   }
   return state;
+}
+
+/** 当前聚焦的节点（没有就是 undefined）。键盘事件的默认目标。 */
+export function focusedNode(root: Node): Node | undefined {
+  const state = getFocusState(root);
+  return state.current === null ? undefined : nodeById(root, state.current);
 }
 
 /** 可聚焦判定：显式 `focusable` 为 true，且自身与祖先都不 disabled */

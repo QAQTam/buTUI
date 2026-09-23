@@ -11,6 +11,7 @@
         "@butui/image": "workspace:*",
         "@butui/layout": "workspace:*",
         "@butui/renderer": "workspace:*",
+        "@butui/runtime": "workspace:*",
         "@butui/solid": "workspace:*",
         "@butui/stream": "workspace:*",
         "@butui/terminal": "workspace:*",
@@ -84,6 +85,18 @@
         "@butui/layout": "workspace:*",
       },
     },
+    "packages/runtime": {
+      "name": "@butui/runtime",
+      "version": "0.1.0",
+      "dependencies": {
+        "@butui/core": "workspace:*",
+        "@butui/layout": "workspace:*",
+        "@butui/renderer": "workspace:*",
+        "@butui/solid": "workspace:*",
+        "@butui/terminal": "workspace:*",
+        "solid-js": "2.0.0-rc.9",
+      },
+    },
     "packages/solid": {
       "name": "@butui/solid",
       "version": "0.1.0",
@@ -155,6 +168,8 @@
     "@butui/layout": ["@butui/layout@workspace:packages/layout"],
 
     "@butui/renderer": ["@butui/renderer@workspace:packages/renderer"],
+
+    "@butui/runtime": ["@butui/runtime@workspace:packages/runtime"],
 
     "@butui/solid": ["@butui/solid@workspace:packages/solid"],
 

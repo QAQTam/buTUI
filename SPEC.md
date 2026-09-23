@@ -404,6 +404,47 @@ Remote attach（§16 v0.3）也一并跑通：服务端只发 NDJSON 事件、�
 
 ---
 
+### 5.11 应用运行时（v0.1 实现）
+
+buTUI 的定位是**底层**：应用（agent / 工具 / 自己的 TUI）不该自己糊终端、
+渲染器、重绘调度、resize、focus 循环。这些收敛成 `@butui/runtime` 的
+`createTuiApp`，应用只写「视图 + 键位策略」。
+
+**关键改动：core 增加变更通知。** `touch()` 现在会通知订阅者
+（`onMutation`），运行时订阅一次，之后任何节点变更都自动合并到下一帧：
+
+```text
+signal / 定时器 / 异步图片加载
+  → setProp / replaceText / insertNode
+  → touch()  → onMutation
+  → queueMicrotask(flush + layout + draw)
+```
+
+没有它，每个 app 都要手写 `schedulePaint`，并且在每个可能改状态的地方记得
+调用 —— demo 里曾经有 6 处，漏一处就是「界面不刷新」这种最难查的 bug。
+有了它，「忘了重绘」这个 bug 类别直接消失。
+
+**事件顺序是契约的一部分**（固定下来，不随实现漂）：
+
+```text
+键   onKey(应用级，返回 true 即消费) → ctrl+c / tab 焦点 → 焦点节点(冒泡)
+鼠标 hit test 命中节点 → 冒泡；没有节点处理才走 onMouse
+```
+
+鼠标这条顺序让「语义动作分发」和「组件自己的点击」不用互相打架：
+组件声明了 `onClick` 就归组件，没声明才落到应用级。
+
+**默认 `scroll: "bottom"`** —— 内容超出视口时贴底。这是聊天式转录的正确行为，
+也是 SPEC §17「只复制可视窗口」的另一半。固定布局传 `scroll: () => "top"`。
+
+顺带补齐了一个 JSX 类型的洞：`<text>` 之前没有 `focusable` / `onKey` 等交互
+属性，逼着作者为了「能 Tab 到」多包一层 `<box>`。列表项 / 菜单行 / 按钮都是
+text，现在 `TextProps` 与 `BoxProps` 的交互属性完全对齐。
+
+稳定性的完整契约见 **`STABILITY.md`**（哪些是稳定层、兼容规则、已知缺口）。
+
+---
+
 ### 5.5 禁止事项
 
 - 不从 OpenTUI 复制 reconciler
@@ -430,6 +471,9 @@ Remote attach（§16 v0.3）也一并跑通：服务端只发 NDJSON 事件、�
 
 @butui/solid
   @solidjs/universal 适配、jsx-runtime、Bun plugin、preload
+
+@butui/runtime
+  createTuiApp：终端 + 合帧重绘 + 事件分发 —— 应用作者的唯一入口
 
 @butui/image
   协议探测、PNG 编解码、Kitty/iTerm2/Sixel/半块/占位符、安全加载、图形图层

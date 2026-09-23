@@ -3,7 +3,6 @@ import { type AgentEvent, createSession } from "@butui/agent";
 import { ImageLayer, artifactImageRenderer } from "@butui/image";
 import { mount } from "@butui/test";
 import { App } from "../examples/agent-demo/src/app.tsx";
-import { setSize } from "../examples/agent-demo/src/state.ts";
 
 /**
  * demo 外壳（SPEC §11.1 的放置策略）。
@@ -28,7 +27,6 @@ const ARTIFACT_EVENTS: AgentEvent[] = [
 ];
 
 function setup(columns: number, rows: number) {
-  setSize({ columns, rows });
   const session = createSession({ width: () => columns - 6 });
   for (const event of ARTIFACT_EVENTS) session.dispatch(event);
   session.settle();
@@ -37,6 +35,7 @@ function setup(columns: number, rows: number) {
     () => (
       <App
         session={session}
+        size={() => ({ columns, rows })}
         imageLayer={imageLayer}
         onImageLoad={() => {}}
       />
@@ -71,11 +70,17 @@ describe("agent demo 外壳（artifact 面板放置）", () => {
   });
 
   test("没有 artifact 时不渲染面板（也不建图片图层）", () => {
-    setSize({ columns: 120, rows: 24 });
     const session = createSession({ width: () => 114 });
     const imageLayer = new ImageLayer();
     const app = mount(
-      () => <App session={session} imageLayer={imageLayer} onImageLoad={() => {}} />,
+      () => (
+        <App
+          session={session}
+          size={() => ({ columns: 120, rows: 24 })}
+          imageLayer={imageLayer}
+          onImageLoad={() => {}}
+        />
+      ),
       { width: 120, height: 24 }
     );
     expect(app.text()).not.toContain("artifacts");

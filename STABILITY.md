@@ -1,0 +1,165 @@
+# 稳定接口契约
+
+> buTUI 的定位是**底层**：应用（agent / 工具 / 自己的 TUI）依赖这份契约，
+> 我们负责渲染、布局、输入、增量更新这些脏活。
+>
+> 这份文档回答一个问题：**「我拿 buTUI 画 TUI，哪些东西可以放心依赖？」**
+
+## 0. 十行起步
+
+```tsx
+import { createTuiApp } from "@butui/runtime";
+
+const app = createTuiApp({
+  view: runtime => (
+    <box border padding={1}>
+      <text>hello {runtime.size().columns}×{runtime.size().rows}</text>
+    </box>
+  ),
+});
+```
+
+`createTuiApp` 负责：备用屏、raw mode、鼠标 / paste / focus 开关、root 节点、
+`render()`、合帧重绘、resize 重排、键盘 → 焦点节点、鼠标 → hit test、tab 循环
+焦点、ctrl+c 退出与终端还原。
+
+**不需要自己调 paint。** 任何节点变更（signal、定时器、异步图片加载）都会通知
+运行时并合并到下一帧。这是 §2 里唯一一条最重要的保证。
+
+## 1. 稳定 / 实验 / 内部
+
+| 层 | 包 | 状态 |
+|---|---|---|
+| 应用运行时 | `@butui/runtime` | **稳定**（v0.1 冻结） |
+| 节点 / 事件 / 焦点 / 主题 | `@butui/core` | **稳定** |
+| JSX 与编译 | `@butui/solid` | **稳定** |
+| 布局 | `@butui/layout` | **稳定**（`Cell` / `Line` / `Frame` / `layout`） |
+| 渲染 | `@butui/renderer` | **稳定**（`Renderer` / `plainText` / `paintLine`） |
+| 终端 | `@butui/terminal` | **稳定**（`TerminalSession` / 输入解码 / 能力探测） |
+| 流式文本 | `@butui/stream` | **稳定**（`StreamSource` / `<stream>`） |
+| 图片 | `@butui/image` | **稳定**（`createImage` / `ImageLayer` / `renderImage`） |
+| Agent 协议与组件 | `@butui/agent` | **稳定**（`AgentEvent` / `UiCommand` / `Session`） |
+| Undo | `@butui/undo` | **稳定**（journal / patch / plan） |
+| WebUI | `@butui/web` | 实验（DOM 渲染，接口可能动） |
+| 测试基建 | `@butui/test` | **仅测试用**，不保证兼容 |
+
+「稳定」= 按 §3 的兼容规则演进。除此之外的 `packages/*/src/**` 内部模块、
+布局缓存策略、`Box.frozen` 的具体取值都不属于契约。
+
+## 2. 运行时契约
+
+`createTuiApp(options)` 返回 `TuiApp`：
+
+```ts
+interface TuiApp {
+  readonly root: Node;
+  size(): TuiSize;                  // 响应式：resize 后读到新值
+  colorDepth(): ColorDepth;
+  start(): void;                    // autoStart 默认 true
+  stop(): void;                     // 幂等，还原终端
+  paint(): RenderStats;             // 立刻画一帧（一般不用调）
+  requestPaint(): void;             // 请求一帧，微任务合并
+  send(event: ButuiEvent): number;  // 自定义输入源 / 测试注入
+  frame(): Frame;                   // 最近一帧
+  dispose(): void;                  // stop + 解绑所有订阅
+}
+```
+
+**保证：**
+
+1. **自动重绘。** 任何 `touch()`（= 任何节点变更）都会合并到下一帧，同一 tick
+   内多次变更只画一次。异步变更不需要任何手动通知。
+2. **事件顺序固定**：`onKey`（应用级，返回 `true` 即消费）→ 内建（ctrl+c、
+   tab/shift+tab）→ 焦点节点（向上冒泡）。
+   鼠标：hit test 命中节点 → 冒泡；**没有节点处理**才走 `onMouse`。
+3. **resize 一定会整屏重画**（不是差分），`size()` 在重排前更新。
+4. **`dispose()` 之后不再写终端**，所有订阅解除。
+5. **默认 `scroll: "bottom"`**：内容超出视口时贴底（聊天式）。固定布局传
+   `scroll: () => "top"`。
+6. **`afterDraw`** 的返回值会拼在同一批写入里（原生图片协议挂这里）。
+
+**不保证：** 一帧内的重绘次数上限；`paint()` 之外的时序细节；`root` 的子结构。
+
+## 3. 兼容规则
+
+- **只增不改**：新增可选字段、新增事件 / 命令类型、新增组件属性 —— 都是小版本。
+- **不改语义**：已有字段的含义、事件的顺序、`AgentEvent` 的 reducer 结果不变。
+- **破坏性变更**：删字段 / 改语义 / 改默认值 → 大版本，并写进 `CHANGELOG`。
+- **协议兼容**：`AgentEvent` / `UiCommand` 是 NDJSON 上的线协议，按「未知字段
+  忽略、未知类型跳过」设计（`decodeNdjson` 对坏行不阻塞）。
+- **包边界**：`@butui/*` 的 `index.ts` 导出面就是契约；深路径导入
+  （`@butui/core/src/...`）不受支持。
+
+## 4. 应用作者会用到的具体 API
+
+### 4.1 视图与组件
+
+`<box>` `<row>` `<column>` `<text>` `<spacer>` `<scrollbox>` `<input>`
+`<layer>` `<stream>` `<image>` —— 类型见 `@butui/solid` 的
+`types/jsx-runtime.d.ts`（`jsxImportSource` 指向 `@butui/solid`）。
+
+通用属性：`width/height`（数字或 `"50%"`）、`padding/margin`、`gap`、`border`、
+`flexGrow`、`align/justify`、`overflow`、`semantic`、`focusable`、`disabled`、
+`onClick/onKey/onPaste/onWheel/onFocus/onBlur`。
+`<text>` 与 `<box>` 的交互属性**完全对齐**（列表项可以直接 Tab 到）。
+
+### 4.2 事件与焦点
+
+```ts
+import { createModifiers, dispatchEvent, focusNext, focusPrev, focusNode,
+         focusedNode, getFocusState, trapFocus, isFocusable } from "@butui/core";
+```
+
+`semantic` 是 hit test 的返回值（`message:m1` / `tool:c1` / 你自己的
+`artifact:<id>`）。鼠标事件自动带上 `event.semantic`，handler 不用自己算。
+
+### 4.3 主题与颜色
+
+`<text color="accent">` 里的 token 由 `@butui/core` 的 theme 解析；终端色深由
+运行时探测（`NO_COLOR` / `TERM` / `COLORTERM`），应用不用管。
+
+### 4.4 流式文本
+
+```ts
+import { createMarkdownStream, StreamMarkdown } from "@butui/stream";
+const source = createMarkdownStream({ width: 60 });
+source.push(delta);
+```
+
+契约：`source.lines` 只增不改（同一个数组引用）；每条 delta 的成本是
+`O(|delta| + W)`，与已累积长度无关（SPEC §5.7）。
+
+### 4.5 图片
+
+```ts
+import { ImageLayer, artifactImageRenderer, createImage } from "@butui/image";
+const layer = new ImageLayer();
+createTuiApp({ ..., afterDraw: (frame, stats) => layer.render(frame, stats.changed) });
+```
+
+### 4.6 Agent 协议
+
+```ts
+import { createSession, decodeNdjson, encodeNdjson } from "@butui/agent";
+session.dispatch(event);       // AgentEvent
+session.send(command);         // UiCommand
+```
+
+UI 不读 agent 内部状态、不调 agent 方法 —— 只消费事件、只发命令。所以回放 /
+remote attach / 多套渲染都是「换个传输层」。
+
+## 5. 已知缺口（不要依赖，也不建议自己绕）
+
+- **焦点样式没有内建**：`isFocused(root, node)` 存在，但组件里拿不到 `root`，
+  目前要自己用 signal 记「当前焦点在哪」（demo 就是这么做的）。
+- **没有内建键盘导航**：列表上下键、翻页、快捷键表都要应用自己写。
+- **没有 scroll 容器的手势/惯性**：`scrollOffset` 是纯数值，滚轮要自己接。
+- **`<input>` 是受控的**：值由应用持有（`value` + `onKey`），没有内建编辑模型
+  （光标、选区、撤销）。
+- **没有布局调试工具**（类似 flexbox inspector）。
+- **`@butui/web` 是实验层**：接口可能变。
+
+## 6. 版本
+
+当前 `0.1.x`：稳定层已冻结，按 §3 演进。破坏性变更等 `1.0` 再收口 —— 在
+`1.0` 之前，新增能力优先走「新增可选字段」，避免动已有形状。
