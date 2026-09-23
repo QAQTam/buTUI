@@ -6,7 +6,8 @@
  * 而不是行号。
  */
 import { For, Show } from "solid-js";
-import { StreamMarkdown } from "@butui/stream";
+import { Diff } from "@butui/components";
+import { StreamMarkdown, type DiffStream } from "@butui/stream";
 import type {
   AgentMessage,
   AskUserQuestion,
@@ -48,18 +49,23 @@ const TOOL_COLOR: Record<ToolCall["status"], string> = {
   cancelled: "muted",
 };
 
-export function ToolCard(props: { call: ToolCall }) {
+export function ToolCard(props: { call: ToolCall; diff?: DiffStream }) {
   return (
-    <row gap={1} semantic={`tool:${props.call.id}`}>
-      <text color={TOOL_COLOR[props.call.status]}>{TOOL_GLYPH[props.call.status]}</text>
-      <text color="tool">{props.call.name}</text>
-      <Show when={props.call.reversible === false}>
-        <text color="warning">不可撤销</text>
+    <box gap={0} semantic={`tool:${props.call.id}`}>
+      <row gap={1}>
+        <text color={TOOL_COLOR[props.call.status]}>{TOOL_GLYPH[props.call.status]}</text>
+        <text color="tool">{props.call.name}</text>
+        <Show when={props.call.reversible === false}>
+          <text color="warning">不可撤销</text>
+        </Show>
+        <Show when={props.call.status === "error"}>
+          <text color="danger">{props.call.output ?? "failed"}</text>
+        </Show>
+      </row>
+      <Show when={props.diff}>
+        {source => <Diff source={source()} height={12} lineNumbers />}
       </Show>
-      <Show when={props.call.status === "error"}>
-        <text color="danger">{props.call.output ?? "failed"}</text>
-      </Show>
-    </row>
+    </box>
   );
 }
 
@@ -96,7 +102,9 @@ export function MessageView(props: { session: Session; message: AgentMessage }) 
         )}
       </Show>
 
-      <For each={tools()}>{call => <ToolCard call={call} />}</For>
+      <For each={tools()}>
+        {call => <ToolCard call={call} diff={props.session.diffFor(call.id)} />}
+      </For>
 
       <Show when={props.session.state.selectedMessage === props.message.id}>
         <MessageActions

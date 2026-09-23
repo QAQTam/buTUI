@@ -32,14 +32,14 @@ const app = createTuiApp({
 |---|---|---|
 | 应用运行时 | `@butui/runtime` | **稳定**（v0.1 冻结） |
 | 节点 / 事件 / 焦点 / 主题 | `@butui/core` | **稳定** |
-| JSX 与编译 | `@butui/solid` | **稳定** |
+| JSX 与编译 | `@butui/solid` | **稳定**（含 `useAnimationFrame` / `AnimationScheduler`） |
 | 布局 | `@butui/layout` | **稳定**（`Cell` / `Line` / `Frame` / `layout`） |
 | 渲染 | `@butui/renderer` | **稳定**（`Renderer` / `plainText` / `paintLine`） |
 | 终端 | `@butui/terminal` | **稳定**（`TerminalSession` / 输入解码 / 能力探测） |
-| 基础组件 | `@butui/components` | **稳定**（编辑器 / 选择 / 列表 / 滚动 / 弹窗 / 展示组件） |
-| 流式文本 | `@butui/stream` | **稳定**（`StreamSource` / `<stream>`） |
+| 基础组件 | `@butui/components` | **稳定**（编辑器 / 选择 / 列表 / 滚动 / Diff / 弹窗 / 展示组件） |
+| 流式文本 | `@butui/stream` | **稳定**（`StreamSource` / `DiffStream` / `<stream>`） |
 | 图片 | `@butui/image` | **稳定**（`createImage` / `ImageLayer` / `renderImage`） |
-| Agent 协议与组件 | `@butui/agent` | **稳定**（`AgentEvent` / `UiCommand` / `Session`） |
+| Agent 协议与组件 | `@butui/agent` | **稳定**（`AgentEvent` / `UiCommand` / `Session` / `tool.diff`） |
 | Undo | `@butui/undo` | **稳定**（journal / patch / plan） |
 | WebUI | `@butui/web` | 实验（DOM 渲染，接口可能动） |
 | 测试基建 | `@butui/test` | **仅测试用**，不保证兼容 |
@@ -376,6 +376,50 @@ remote attach / 多套渲染都是「换个传输层」。
   `source.tail()` 就是「正在想的那一行」。
 - `message.streaming` 在 `text.delta` 期间为 `true`，`turn.end` 转 `false`。
 
+### 4.16 流式 Diff：`DiffStream` + `<Diff>` + `tool.diff`
+
+后端负责 diff 算法，前端只消费行级 patch：
+
+```ts
+session.dispatch({
+  type: "tool.diff",
+  callId: "c1",
+  patch: {
+    ops: [{
+      op: "upsert",
+      lines: [{ id: "a1", kind: "add", text: "const x", newLine: 1, stable: false }],
+    }],
+  },
+});
+
+<Diff source={session.diffFor("c1")!} height={12} lineNumbers />
+```
+
+契约：
+
+- `DiffLine.id` 必须在同一逻辑行的所有修订中稳定；重复 upsert 同一 id 是
+  **更新**，不是追加。
+- `upsert` 是正常路径，O(1) 定位；`replaceTail` 只用于修正最后 N 行。
+  v0.1 不支持任意位置删除 / splice。
+- `stable: false` 只标仍可能变化的那一行；`final:true`、`tool.result`、
+  `turn.end` 会自动定稿。
+- `<Diff height>` 只创建视口行；长行固定 `truncate`，一行只占一个 cell row。
+- 行更新使用逐行版本信号；改一行不会重新计算整个 diff 的文本 / token。
+- `highlight` 只对 context 行做轻量语法高亮；add / remove 始终保持红绿语义。
+
+### 4.17 动画：`AnimationScheduler` / `useAnimationFrame`
+
+```tsx
+const time = useAnimationFrame({ enabled: () => source.streaming() });
+```
+
+- 进程内共享调度器默认 30fps，只有存在订阅者时才启动；全部退订后停止。
+- `tick(time)` 可手动驱动，测试和未来的 runtime render clock 不依赖墙钟。
+- `TERM=dumb` 或 `BUTUI_REDUCED_MOTION=1|true` 时调用方应关闭动画；
+  `<Diff>` 已按这个规则降级。
+- 动画只应更新仍在变化的少量行。不要把 shimmer 铺到完整 diff / markdown，
+  否则每帧都会制造大量样式变化和重绘。
+
 ## 5. 已知缺口（不要依赖，也不建议自己绕）
 
 - **列表只有单列 + 固定行高**：`itemHeight` 是常数，变高行（折行文本、展开的
@@ -385,6 +429,11 @@ remote attach / 多套渲染都是「换个传输层」。
 - **文本选择是视口坐标且不会自动滚动**：拖到屏幕边缘不会继续滚，滚动 /
   内容重排后选区指向同一屏幕位置；需要稳定内容锚点时要由应用保存。
 - **OSC 52 没有确认通道**：终端可忽略；严格剪贴板需求要接平台实现。
+- **流式 Diff 不支持任意位置删除 / splice**：后端应把重算限制在尾部；需要完整
+  重排时新建一个 `DiffStream`。目前也没有 word-level diff、折叠 hunk 和
+  “视口外有新行”提示。
+- **动画只有共享时钟与 Diff 游标**：还没有 tween / spring / timeline /
+  stagger，也没有 shimmer 组件；不要假设 60fps。
 - **`flexShrink` 没有实现**：row 里只有显式 `truncate` / `wrap={false}` 的
   text 会让位给兄弟节点；普通的折行文本仍然先按自然宽度拿满。
 - **`ScrollView` 的翻页步长按整屏高度算**：有固定页眉 / 页脚时会多滚固定区

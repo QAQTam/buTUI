@@ -691,6 +691,65 @@ resize 会清除。稳定锚点需要应用把语义节点 / 文本保存到 `on
 
 ---
 
+### 5.19 流式 Diff（v0.1 实现）
+
+模型按 SSE chunk 输出到 tool call 时，**不能把半截 unified diff 丢给前端解析**。
+后端负责 diff 算法；线协议只发结构化的行级修订：
+
+```ts
+type DiffPatchOp =
+  | { op: "upsert"; lines: DiffLine[] }
+  | { op: "replaceTail"; lines: DiffLine[] };
+
+interface DiffLine {
+  id: string;                 // 同一逻辑行跨修订稳定
+  kind: "meta" | "file" | "hunk" | "context" | "add" | "remove";
+  text: string;               // 不含 +/-/@@ 前缀
+  oldLine?: number;
+  newLine?: number;
+  stable?: boolean;           // false = 仍可能被后续 chunk 改写
+}
+```
+
+Agent 事件：
+
+```ts
+{ type: "tool.diff", callId, patch, final?: boolean }
+```
+
+**为什么是 upsert 而不是 unified diff 文本。** chunk 可能落在任意 token 中间，
+后端每拿到更多上下文都会重算“当前这一行”；如果前端只能追加文本，就必须维护
+解析器、行号映射、hunk 回滚，而且每块都可能 O(N) 重排。稳定 id 的 upsert 把
+这件事变成 O(1) 行定位 + 一次行更新。
+
+推荐 id 由后端生成，例如 `fileId:hunkId:kind:oldLine:newLine`；如果行号在流式
+早期还不知道，就用后端自己的逻辑行 token id。**不要用数组下标或文本 hash 当
+id** —— 前者在插入后漂移，后者会在每个 chunk 都变成新行。
+
+**为什么只允许 replaceTail。** 正常 diff 是 append-only；只有尾部 hunk 的上下文
+还没稳定时才需要重算最后 N 行。允许任意位置 splice 会让虚拟列表索引、选中区、
+滚动锚点全部失效。真正重排时应该新建一个 DiffStream，而不是原地改历史。
+
+**前端粒度：**
+
+- `DiffStream.count()` 只负责结构版本；
+- 每一行有自己的版本号，`<Diff>` 只读视口行的版本；
+- 只创建视口内的 `<row>`；长行 `truncate`，绝不折行改变行高；
+- context 行可以逐行语法高亮，add / remove 保持红绿语义；
+- `stable:false` 显示流式游标；`final:true` / `tool.result` / `turn.end`
+  自动定稿。
+
+**动画边界。** 动画只允许落在仍在变化的行；新增共享 `AnimationScheduler`
+（30fps、有订阅者才启动、全部退订即停）和 `useAnimationFrame`。`<Diff>` 的
+游标只在 `stable:false` 时订阅，定稿后自动停止；`TERM=dumb` 或
+`BUTUI_REDUCED_MOTION=1|true` 不启动。不要把 shimmer 铺到整个 diff 或整条
+markdown —— 那会让每帧产生大面积样式变化，和 §17「流式输出不整屏闪烁」冲突。
+
+**已知边界：** 没有 word-level diff、任意位置删除、hunk 折叠或“滚开时有新行”
+提示；后端要把重算范围限制在尾部。
+
+---
+
 ### 5.17 应用上下文（v0.1 实现）
 
 组件要能问「现在多宽 / 什么色深 / 我想订一个全局键」，但既不该认识 runtime，
@@ -1087,7 +1146,7 @@ P1：
 - 行号
 - 代码高亮
 - Markdown
-- Diff
+- ~~Diff~~ ✅ 见 §5.19
 - 超链接
 - 选中与复制
 
@@ -1128,8 +1187,8 @@ P1：
 - easing
 - sequence
 - stagger
-- reduced motion
-- 只在需要时启动帧循环
+- ~~reduced motion~~ ✅
+- ~~只在需要时启动帧循环~~ ✅ 共享 `AnimationScheduler`，见 §5.19
 
 ---
 
@@ -1191,6 +1250,8 @@ P1：
 - `Markdown`：`<Markdown source width>`，走**和流式同一套引擎**（§5.7）
 - `Code`：`<Code source language lineNumbers highlightLines>`，轻量逐行高亮，
   分词器可替换（见 §5.16）
+- `Diff`：`<Diff source={DiffStream} height lineNumbers>`，只渲染视口行，
+  支持稳定 id upsert、尾行替换和 `stable:false` 流式游标（见 §5.19）
 
 ### 10.2 Agent 组件
 
@@ -1214,7 +1275,7 @@ P1：
 待做：
 
 - `BashProgress`
-- `FoldableOutput` / `DiffView`（现在 diff 渲染在 ArtifactCanvas 内部）
+- `FoldableOutput`（通用折叠；ToolCard 已接流式 Diff）
 - `SessionTree`
 - `AgentTimeline`
 - `CommandPalette`
@@ -1525,6 +1586,7 @@ type AgentEvent =
   | { type: "usage"; usage: Usage }
   | { type: "tool.start"; call: ToolCall }
   | { type: "tool.progress"; callId: string; chunk: string }
+  | { type: "tool.diff"; callId: string; patch: DiffPatch; final?: boolean }
   | { type: "tool.result"; callId: string; result: ToolResult }
   | { type: "permission.request"; request: PermissionRequest }
   | { type: "ask_user.request"; questions: AskUserQuestion[] }

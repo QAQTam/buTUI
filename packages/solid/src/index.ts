@@ -13,4 +13,5 @@ assertSolidClientBuild();
 export * from "./renderer.ts";
 export * from "./focus-context.ts";
 export * from "./app-context.ts";
+export * from "./animation.ts";
 export { assertSolidClientBuild, checkSolidRuntime, CONDITIONS_HINT } from "./runtime-check.ts";

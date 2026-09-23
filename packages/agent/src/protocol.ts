@@ -8,6 +8,7 @@
  * 传输格式用 **NDJSON**（SPEC §18 第 9 问）：一行一个 JSON，天然支持流式读写、
  * 断行恢复、以及 `git diff` 式的可读回放。
  */
+import type { DiffPatch } from "@butui/stream";
 
 // ── 数据模型（SPEC §7）──────────────────────────────────────────────────────
 
@@ -171,6 +172,7 @@ export type AgentEvent =
   | { type: "usage"; usage: Usage }
   | { type: "tool.start"; call: ToolCall }
   | { type: "tool.progress"; callId: string; chunk: string }
+  | { type: "tool.diff"; callId: string; patch: DiffPatch; final?: boolean }
   | { type: "tool.result"; callId: string; result: ToolResult }
   | { type: "permission.request"; request: PermissionRequest }
   | { type: "ask_user.request"; questions: AskUserQuestion[] }

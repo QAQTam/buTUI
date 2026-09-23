@@ -13,6 +13,18 @@ describe("事件协议 NDJSON 编解码（SPEC §13 / §18-9）", () => {
       { type: "turn.start", turnId: "t1" },
       { type: "text.delta", turnId: "t1", delta: "你好 **世界**" },
       { type: "tool.start", call: { id: "c1", turnId: "t1", name: "read_file", args: {}, status: "running", reversible: true } },
+      {
+        type: "tool.diff",
+        callId: "c1",
+        patch: {
+          ops: [
+            {
+              op: "upsert",
+              lines: [{ id: "a1", kind: "add", text: "const x = 1", newLine: 1, stable: false }],
+            },
+          ],
+        },
+      },
       { type: "permission.request", request: { id: "p1", tool: "bash", detail: "rm -rf x", irreversible: true } },
       { type: "turn.end", turnId: "t1", reason: "completed" },
     ];

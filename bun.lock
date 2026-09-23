@@ -51,6 +51,7 @@
       "name": "@butui/agent",
       "version": "0.1.0",
       "dependencies": {
+        "@butui/components": "workspace:*",
         "@butui/core": "workspace:*",
         "@butui/solid": "workspace:*",
         "@butui/stream": "workspace:*",

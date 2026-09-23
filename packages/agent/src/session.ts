@@ -22,7 +22,13 @@ import {
   planEffects,
   planUndo,
 } from "@butui/undo";
-import { type StreamSource, createMarkdownStream, createTextStream } from "@butui/stream";
+import {
+  type DiffStream,
+  type StreamSource,
+  createDiffStream,
+  createMarkdownStream,
+  createTextStream,
+} from "@butui/stream";
 import { artifactsFromToolResult } from "./artifact-model.ts";
 import { mergeUsage } from "./protocol.ts";
 import type {
@@ -314,6 +320,8 @@ export interface Session {
   send(command: UiCommand): void;
   /** 取某个消息的流式源（用于 <StreamMarkdown>） */
   sourceFor(messageId: string): StreamSource | undefined;
+  /** 取某个 tool call 的流式 diff 源（用于 <Diff>） */
+  diffFor(callId: string): DiffStream | undefined;
   /**
    * 取某个 turn 的**思考流**（SPEC §10.2 `ReasoningLine`）。
    *
@@ -363,6 +371,7 @@ export interface Session {
 export function createSession(options: SessionOptions): Session {
   const [state, setState] = createStore<SessionState>(initialState(options.branchId));
   const sources = new Map<string, StreamSource>();
+  const diffs = new Map<string, DiffStream>();
   /** turnId → 思考流。**不落库**：turn.end 时整个丢掉（SPEC §7 的 reasoning 取舍） */
   const reasoning = new Map<string, StreamSource>();
   /** 已经结束的 turn：之后的 delta 属于协议违规，忽略而不是崩 */
@@ -428,6 +437,23 @@ export function createSession(options: SessionOptions): Session {
         return;
       }
 
+      if (event.type === "tool.diff") {
+        let source = diffs.get(event.callId);
+        if (!source) {
+          source = createDiffStream({ id: event.callId });
+          diffs.set(event.callId, source);
+          setSourcesVersion(v => v + 1);
+        }
+        source.apply(event.patch);
+        if (event.final) source.flush();
+        return;
+      }
+
+      if (event.type === "tool.result") {
+        // 工具结束即定稿；后端仍可显式发 final:true，幂等。
+        diffs.get(event.callId)?.flush();
+      }
+
       if (event.type === "tool.result" && event.result.workspace?.length) {
         // 工具执行器报告了工作区变更 → 记录进 journal（SPEC §8.4）
         //
@@ -464,6 +490,9 @@ export function createSession(options: SessionOptions): Session {
               sources.get(message.id)?.flush();
             }
           }
+          for (const call of s.toolCalls) {
+            if (call.turnId === event.turnId) diffs.get(call.id)?.flush();
+          }
           reduce(s, event);
         });
         return;
@@ -479,6 +508,11 @@ export function createSession(options: SessionOptions): Session {
     sourceFor(messageId) {
       sourcesVersion(); // 建立响应性依赖
       return sources.get(messageId);
+    },
+
+    diffFor(callId) {
+      sourcesVersion(); // Map 本身没有响应性
+      return diffs.get(callId);
     },
 
     reasoningFor(turnId) {

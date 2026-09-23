@@ -5,7 +5,8 @@
 当前状态：**M1/M2 骨架 + 流式渲染 O(1) + 事件协议驱动的 agent UI +
 分支式 Undo + WebUI remote attach + 图片子系统（Kitty / iTerm2 / Sixel /
 半块 / 占位符）+ Artifact Canvas + 列表 / 虚拟列表 / 滚动视口 / 弹窗 / 表格 /
-树 + 鼠标选区 / OSC 52 已跑通**，`bun test` 478 个用例全绿。
+树 + 鼠标选区 / OSC 52 + 流式 Diff / 共享动画时钟已跑通**，
+`bun test` 495 个用例全绿。
 
 ```
 应用（你的 agent / 工具 / TUI）
@@ -136,6 +137,45 @@ app.clearSelection();
 
 OSC 52 是**尽力而为**：终端可以不支持、也可以静默忽略，协议没有确认通道。
 需要严格系统剪贴板确认时，应用应在 `onSelection` 里接平台剪贴板实现。
+
+## 流式 Diff
+
+后端负责 diff 算法；前端消费结构化的行 upsert，不解析半截 unified diff：
+
+```ts
+session.dispatch({
+  type: "tool.diff",
+  callId: "c1",
+  patch: {
+    ops: [{
+      op: "upsert",
+      lines: [
+        { id: "a1", kind: "add", text: "const x", newLine: 1, stable: false },
+      ],
+    }],
+  },
+});
+```
+
+```tsx
+const source = session.diffFor("c1");
+<Diff source={source} height={12} lineNumbers language="ts" />
+```
+
+- 同一 `id` 重复 upsert = 更新那一行；不重复追加，也不重排整份 diff。
+- 只有 hunk 尾部需要修正时用 `replaceTail`；前端不做任意位置 splice。
+- `stable:false` 的行显示流式游标；`final:true`、`tool.result` 或 `turn.end`
+  会自动定稿。
+- `<Diff>` 只创建视口内的行，长行固定截断；一行变化只 bump 那一行的版本。
+- 游标走共享 30fps 时钟，全部行稳定后自动退订。`TERM=dumb` /
+  `BUTUI_REDUCED_MOTION=1` 下不启动。
+
+**不要把 shimmer 铺在整份 diff 或整条 markdown 上。** 流式 diff 的注意力
+只需要落在仍在变化的行；稳定行保持完全静止，否则每次 chunk 都会造成大范围
+重绘，也会让用户无法阅读。
+
+`bun --conditions=browser run scripts/diff-demo.tsx` 可以直接观察同一行被多次
+upsert、游标闪烁和最终定稿。
 
 ## 流式渲染 O(1)
 
@@ -460,6 +500,9 @@ bun --conditions=browser run examples/agent-demo/src/main.tsx
 # 流式基准
 bun --conditions=browser run scripts/stream-bench.tsx
 
+# 流式 Diff（同一行反复 upsert）
+bun --conditions=browser run scripts/diff-demo.tsx
+
 # 图片子系统自检（不需要真终端）
 bun --conditions=browser run scripts/image-demo.tsx
 
@@ -487,13 +530,13 @@ Demo 的工作区是**内存实现**，但走的是完全一样的 journal / dif
 | 包 | 职责 |
 |---|---|
 | `@butui/core` | 节点树、`rev` 失效传播、`childrenRevSum`、focus、事件冒泡、theme、ANSI 解析 |
-| `@butui/solid` | `@solidjs/universal` host ops、JSX 类型、Bun 编译插件 |
+| `@butui/solid` | `@solidjs/universal` host ops、JSX 类型、Bun 编译插件、共享动画帧时钟 |
 | `@butui/runtime` | `createTuiApp`：终端、合帧重绘、事件分发、鼠标选区 / OSC 52 —— 应用作者的唯一入口 |
-| `@butui/components` | `createTextEditor` / `<Input>` / `<Textarea>` / `<Markdown>` / `<Code>`、`createSelection` / `<List>` / `<VirtualList>`、`createScrollView`、`<Select>` / `<Tabs>` / `<Table>` / `<Tree>`、`<Button>` / `<Dialog>` / `<Modal>`、`ProgressBar` / `Spinner` / `Badge` / `Divider` / `KeyHint` |
-| `@butui/agent` | 事件协议（NDJSON）、Session reducer、SPEC §10.2 组件、Artifact Canvas |
+| `@butui/components` | `createTextEditor` / `<Input>` / `<Textarea>` / `<Markdown>` / `<Code>` / `<Diff>`、`createSelection` / `<List>` / `<VirtualList>`、`createScrollView`、`<Select>` / `<Tabs>` / `<Table>` / `<Tree>`、`<Button>` / `<Dialog>` / `<Modal>`、`ProgressBar` / `Spinner` / `Badge` / `Divider` / `KeyHint` |
+| `@butui/agent` | 事件协议（NDJSON）、Session reducer、流式 diff 事件、SPEC §10.2 组件、Artifact Canvas |
 | `@butui/undo` | 工作区变更日志、行级 patch、undo 预览与执行（SPEC §8） |
 | `@butui/web` | WebUI：ANSI→HTML、DOM 组件、`mountWebUI`（复用同一个 Session） |
-| `@butui/stream` | 增量折行、增量 markdown、Solid 绑定与组件 |
+| `@butui/stream` | 增量折行、增量 markdown、增量 diff patch、Solid 绑定与组件 |
 | `@butui/image` | 协议探测、PNG 编解码、Kitty/iTerm2/Sixel/半块/占位符、安全加载、图形图层 |
 | `@butui/layout` | flex 子集 → cell 网格，带 `frozen` 的增量合成、视口窗口、选区提取 |
 | `@butui/renderer` | cell → ANSI，逐行差分 + SGR / 选区状态机 |
@@ -661,12 +704,13 @@ Bun.plugin(onLoad)
 
 ## 还没做
 
-- `@butui/components` 继续长：Diff / ScrollBar / Slider / ASCIIFont /
+- `@butui/components` 继续长：ScrollBar / Slider / ASCIIFont /
   LineNumberRenderable 等；CommandPalette 用 `<Input onKey={e => sel.handleKey(e)}>`
   + `<List>` 组合就够，不必再包一层
 - 编辑器模型还缺内部选区 / 剪贴板历史 / 撤销栈（全局鼠标选区已由 runtime 提供）；
   列表只支持单列 + 固定行高
 - Artifact Canvas：artifact 的持久化（现在只在 Session 内存里）、WebUI 侧的服务端图片路由
 - 图片子系统：半块图的终端背景透出、Kitty 图片随滚动的位置缓存
-- 动画、Kitty keyboard protocol 的发送侧
+- 动画目前只有共享时钟 + Diff 流式游标；shimmer / tween / timeline 还没做
+- Kitty keyboard protocol 的发送侧
 - `flexShrink` 没实现：row 里只有显式 `truncate` / `wrap={false}` 的 text 会让位

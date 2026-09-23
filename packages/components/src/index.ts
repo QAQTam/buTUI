@@ -20,5 +20,6 @@ export * from "./select.tsx";
 export * from "./table.tsx";
 export * from "./tree.tsx";
 export * from "./highlight.ts";
+export * from "./diff.tsx";
 export * from "./code.tsx";
 export * from "./markdown.tsx";
