@@ -498,6 +498,10 @@ function measureInline(
 /** 出流节点（overlay/portal）不参与常规 flow，最后单独合成 */
 function inFlow(child: Node): boolean {
   if (child.kind === "sentinel") return false;
+  // 空文本节点不参与布局：`<Show>` 关掉、`{cond && "x"}` 为假时都会留下一个
+  // `""` 的文本节点。它本身画不出东西，但会**占一份 gap 和宽度预算** ——
+  // 表现是「同一行里其它文字莫名少一个字符」。
+  if (child.kind === "text" && child.value === "") return false;
   return !(isElement(child) && child.tag === "layer");
 }
 

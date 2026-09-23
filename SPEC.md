@@ -516,6 +516,13 @@ Solid 的 provider 在自己的 root 里延迟读取 `props.children`，直接�
   "wheel"` 时有值）。同一段代码里鼠标修饰键位也修了：鼠标用 4/8/16
   （shift/meta/ctrl），不是键盘那套 1/2/4，原来 shift 会被认成 ctrl。
 
+**选择模型的两个扩展**（写 `<Select>` / `<Tree>` 时补的）：
+
+- `isSelectable(i)`：↑↓ 跳过不可选项（分隔线 / 分组标题 / disabled），
+  Home/End 落在第一个 / 最后一个可选项上，初始下标会吸附到最近的可用项。
+- `<List activateOnClick>`：点击是否等同于 Enter。默认只选中（列表语义），
+  `<Select>` / `<Tree>` 打开它（菜单 / 树语义）。
+
 **命令面板形态（`<Input>` + `<List>`）不需要新 API。** `<Input onKey>` 先于
 编辑器，`onKey={e => selection.handleKey(e)}` 就够：方向键被列表消费，字符照常
 进编辑器。这是「组件组合」而不是「再造一个 CommandPalette 组件」。
@@ -566,6 +573,10 @@ createTuiApp({
   第一轮测量：先让别的兄弟拿走自己要的宽度，剩下的才归它。否则
   `<row><text truncate>长文本</text><text>右对齐</text></row>` 里右边那个直接
   消失。
+- **空文本节点会吃掉一个字符的宽度。** `<Show>` 关掉、`{cond && "x"}` 为假时
+  都会留下一个 `""` 的文本节点：它画不出东西，却仍然占一份 gap 和宽度预算。
+  表现是「同一行里其它文字莫名少一个字符」（写 `<Select>` 时撞出来的：
+  `feature` 显示成 `featur`）。现在 `inFlow` 直接把它当不存在。
 - **空的条件渲染会留空行。** `<box gap={1}>` 里几个 `<Show>` 一关，屏幕上就
   凭空多出几行空白 —— 因为 gap 是按「子节点个数」算的，而关掉的 Show 仍然
   留下了一个空盒子。现在只有**真正有内容的**子节点才占 gap（`<spacer/>` 这种
@@ -1060,6 +1071,9 @@ P1：
   trap，见 §5.15）
 - `Button`：`<Button>`（Enter / 空格 / 点击，焦点态自亮）
 - `ProgressBar` / `Spinner` / `Badge` / `Divider` / `KeyHint`：展示组件
+- `Select` / `Tabs`：`<Select>`（↑↓ + Enter）与 `<Tabs>`（←→ 立即切换）
+- `Table`：列宽显式给或按内容算，支持左 / 中 / 右对齐
+- `Tree`：受控展开（`expanded` + `onToggle`），←→ 展开收起、→ 进子节点
 
 ### 10.2 Agent 组件
 

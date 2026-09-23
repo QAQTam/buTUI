@@ -199,3 +199,56 @@ describe("Selection.handleKey", () => {
     expect(sel.index()).toBe(0);
   });
 });
+
+describe("isSelectable：跳过分隔线 / disabled 项", () => {
+  // 0 可选，1 是分隔线，2 可选，3 不可选，4 可选
+  const skippable = { count: 5, isSelectable: (i: number) => i !== 1 && i !== 3 };
+
+  test("初始下标落在不可选项上时会吸附到最近的", () => {
+    expect(createSelection({ ...skippable, index: 1 }).index()).toBe(2); // 先往后找
+    expect(createSelection({ ...skippable, index: 3 }).index()).toBe(4);
+    expect(createSelection({ ...skippable, index: 9 }).index()).toBe(4);
+  });
+
+  test("移动会跳过不可选项", () => {
+    const sel = createSelection(skippable);
+    expect(sel.index()).toBe(0);
+    sel.move(1);
+    expect(sel.index()).toBe(2); // 跳过 1
+    sel.move(1);
+    expect(sel.index()).toBe(4); // 跳过 3
+    sel.move(1);
+    expect(sel.index()).toBe(4); // 到头停住
+    sel.move(-1);
+    expect(sel.index()).toBe(2);
+  });
+
+  test("Home / End 落在第一个 / 最后一个可选项上", () => {
+    const sel = createSelection({ count: 5, index: 2, isSelectable: (i: number) => i !== 0 && i !== 4 });
+    sel.home();
+    expect(sel.index()).toBe(1);
+    sel.end();
+    expect(sel.index()).toBe(3);
+  });
+
+  test("翻页按可选项计数", () => {
+    const sel = createSelection({ count: 10, isSelectable: (i: number) => i % 2 === 0, pageSize: 3 });
+    sel.page(1);
+    expect(sel.index()).toBe(6); // 0 → 2 → 4 → 6
+  });
+
+  test("全都不可选时不动", () => {
+    const sel = createSelection({ count: 3, isSelectable: () => false });
+    expect(sel.index()).toBe(0);
+    sel.move(1);
+    expect(sel.index()).toBe(0);
+  });
+
+  test("wrap 时也能跳过（转一圈回到自己）", () => {
+    const sel = createSelection({ count: 3, wrap: true, isSelectable: (i: number) => i !== 1 });
+    sel.move(1);
+    expect(sel.index()).toBe(2);
+    sel.move(1);
+    expect(sel.index()).toBe(0);
+  });
+});

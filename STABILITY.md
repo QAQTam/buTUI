@@ -206,7 +206,28 @@ const sel = createSelection({ count: () => filtered().length, onChange: i => pre
 **命令面板不需要新组件**：`<Input>` 聚焦时 `onKey={e => sel.handleKey(e)}`
 就让方向键归列表、字符归编辑器（`onKey` 先于编辑器）。
 
-### 4.9 弹窗与基础展示组件
+### 4.9 选择类与结构化展示
+
+```tsx
+<Select options={[{ value: "a", label: "A", description: "…" }]} value={v()} onChange={setV} />
+<Tabs items={[{ value: "chat", label: "对话" }, { value: "diff", label: "改动", badge: "3" }]}
+      value={tab()} onChange={setTab} />
+<Table columns={[{ key: "file", title: "文件", width: 20 },
+                 { key: "add", title: "+", width: 4, align: "right" }]}
+       rows={rows} />
+<Tree nodes={files} expanded={open()} onToggle={toggle} onActivate={openFile} />
+```
+
+- `<Select>`：竖排选项，↑↓ 移动、Enter / 点击确认；`heading` / `disabled`
+  项照常显示但跳过（不参与键盘导航）。`value` 变化会同步高亮。
+- `<Tabs>`：横排分段控件，←→ **立即**切换（不用再按 Enter）。
+- `<Table>`：列宽显式给或按内容算；`align` 用 left / center / right。
+  不画竖线（终端里浪费列宽，复制出来也难看）。
+- `<Tree>`：**受控**展开（`expanded` + `onToggle`），←→ 展开收起 / 进出子节点，
+  Enter 在叶子上触发 `onActivate`。内部就是「按展开状态拍平 + `<List>`」，
+  所以虚拟化、滚动跟随、鼠标点击全都复用。
+
+### 4.10 弹窗与基础展示组件
 
 ```tsx
 <Button tone="success" onPress={allow}>允许</Button>
@@ -230,7 +251,7 @@ const sel = createSelection({ count: () => filtered().length, onChange: i => pre
   （受控 `frame` 或自走）、`Badge`、`Divider`、`KeyHint`。颜色一律走主题
   token，语义色用 `tone`。
 
-### 4.10 滚动视口：`createScrollView`
+### 4.11 滚动视口：`createScrollView`
 
 ```tsx
 const view = createScrollView();
@@ -260,7 +281,7 @@ createTuiApp({
 前 / 后 N 行固定在视口两端。注意 `<layer>` 做不到这件事 —— 它相对父节点定位，
 父节点自己会被滚走。
 
-### 4.11 Agent 协议
+### 4.12 Agent 协议
 
 ```ts
 import { createSession, decodeNdjson, encodeNdjson } from "@butui/agent";

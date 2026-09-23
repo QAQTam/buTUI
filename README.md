@@ -4,8 +4,8 @@
 
 当前状态：**M1/M2 骨架 + 流式渲染 O(1) + 事件协议驱动的 agent UI +
 分支式 Undo + WebUI remote attach + 图片子系统（Kitty / iTerm2 / Sixel /
-半块 / 占位符）+ Artifact Canvas + 列表 / 虚拟列表 + 滚动视口已跑通**，
-`bun test` 369 个用例全绿。
+半块 / 占位符）+ Artifact Canvas + 列表 / 虚拟列表 / 滚动视口 / 弹窗 / 表格 / 树已跑通**，
+`bun test` 425 个用例全绿。
 
 ```
 应用（你的 agent / 工具 / TUI）
@@ -18,7 +18,7 @@
               → 终端 ANSI
 
 按需叠加：
-  @butui/components  编辑器 / Input / 选择模型 / List / 滚动视口 / 弹窗 / 展示组件
+  @butui/components  编辑器 / Input / List / Tree / Table / Tabs / 滚动 / 弹窗 / 展示组件
   @butui/stream  增量折行 + 增量 markdown（O(delta) 定稿）
   @butui/image   Kitty / iTerm2 / Sixel / 半块 / 占位符 + 安全加载
   @butui/agent   事件协议 + Session + SPEC §10.2 组件 + Artifact Canvas
@@ -451,7 +451,7 @@ Demo 的工作区是**内存实现**，但走的是完全一样的 journal / dif
 | `@butui/core` | 节点树、`rev` 失效传播、`childrenRevSum`、focus、事件冒泡、theme、ANSI 解析 |
 | `@butui/solid` | `@solidjs/universal` host ops、JSX 类型、Bun 编译插件 |
 | `@butui/runtime` | `createTuiApp`：终端、合帧重绘、事件分发 —— 应用作者的唯一入口 |
-| `@butui/components` | `createTextEditor` / `<Input>`、`createSelection` / `<List>` / `<VirtualList>`、`createScrollView`、`<Button>` / `<Dialog>` / `<Modal>`、`ProgressBar` / `Spinner` / `Badge` / `Divider` / `KeyHint` |
+| `@butui/components` | `createTextEditor` / `<Input>`、`createSelection` / `<List>` / `<VirtualList>`、`createScrollView`、`<Select>` / `<Tabs>` / `<Table>` / `<Tree>`、`<Button>` / `<Dialog>` / `<Modal>`、`ProgressBar` / `Spinner` / `Badge` / `Divider` / `KeyHint` |
 | `@butui/agent` | 事件协议（NDJSON）、Session reducer、SPEC §10.2 组件、Artifact Canvas |
 | `@butui/undo` | 工作区变更日志、行级 patch、undo 预览与执行（SPEC §8） |
 | `@butui/web` | WebUI：ANSI→HTML、DOM 组件、`mountWebUI`（复用同一个 Session） |

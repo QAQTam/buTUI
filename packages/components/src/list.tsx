@@ -79,6 +79,8 @@ export interface ListProps<T> {
   autoFocus?: boolean;
   /** 点击某行是否顺带把焦点交给列表，默认 true */
   focusOnClick?: boolean;
+  /** 点击某行是否等同于 Enter（选中 + 激活），默认 false（只选中） */
+  activateOnClick?: boolean;
   /** 滚轮一次移动几格，默认 1 */
   wheelStep?: number;
   /** Enter 激活 */
@@ -169,15 +171,22 @@ export function List<T>(props: ListProps<T>) {
       if (item === undefined) return null;
       return props.renderItem(item, index, { selected });
     };
+    /** 同上：列表缩短的那一瞬间，这一行可能还没有 item */
+    const semantic = (): string => {
+      const item = items()[index];
+      if (item === undefined || !props.itemSemantic) return `list-item:${index}`;
+      return props.itemSemantic(item, index);
+    };
     return (
       <row
         width="100%"
         height={itemHeight()}
         bg={selected() ? props.selectedBg : undefined}
-        semantic={props.itemSemantic ? props.itemSemantic(items()[index], index) : `list-item:${index}`}
+        semantic={semantic()}
         onClick={() => {
           focusList();
           props.selection.setIndex(index);
+          if (props.activateOnClick) activate(index);
         }}
       >
         <text color={selected() ? (props.selectedColor ?? "focus") : (props.color ?? "muted")}>

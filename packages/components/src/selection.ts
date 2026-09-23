@@ -31,6 +31,13 @@ export interface SelectionOptions {
   vim?: boolean;
   /** PageUp / PageDown 的步长，默认 10 */
   pageSize?: number;
+  /**
+   * 这一项能不能被选中（默认全都能）。
+   *
+   * 用来跳过**分隔线 / 分组标题 / disabled 选项**：↑↓ 会越过它们，
+   * Home/End 落在第一个 / 最后一个可选项上。它们仍然照常显示。
+   */
+  isSelectable?: (index: number) => boolean;
   onChange?: (index: number, previous: number) => void;
 }
 
@@ -92,10 +99,42 @@ export function createSelection(options: SelectionOptions = {}): Selection {
   const readCount: () => number = typeof source === "function" ? source : () => source ?? 0;
 
   // 真值（同步）；signal 只是给渲染用的镜像
-  let at = Math.max(0, Math.floor(options.index ?? 0));
   const [rev, bump] = createSignal(0);
 
   const count = (): number => Math.max(0, Math.floor(readCount()));
+  const selectable = (i: number): boolean => {
+    const size = count();
+    if (size === 0) return false;
+    return options.isSelectable ? options.isSelectable(clampIndex(i, size)) : true;
+  };
+  /** 从 `from` 出发找到最近的可选项（先往后、再往前）；找不到返回 undefined */
+  const snap = (from: number): number | undefined => {
+    const size = count();
+    if (size === 0) return undefined;
+    const start = clampIndex(from, size);
+    for (let d = 0; d < size; d++) {
+      const ahead = start + d;
+      if (ahead < size && selectable(ahead)) return ahead;
+      const behind = start - d;
+      if (behind >= 0 && selectable(behind)) return behind;
+    }
+    return undefined;
+  };
+  /** 走一步，跳过不可选项；走到头就停在原地 */
+  const seek = (from: number, step: 1 | -1): number => {
+    const size = count();
+    if (size === 0) return from;
+    let cursor = from;
+    for (let i = 0; i < size; i++) {
+      cursor += step;
+      if (wrap) cursor = ((cursor % size) + size) % size;
+      else if (cursor < 0 || cursor >= size) return from;
+      if (selectable(cursor)) return cursor;
+    }
+    return from;
+  };
+
+  let at = snap(Math.max(0, Math.floor(options.index ?? 0))) ?? 0;
   const index = (): number => (rev(), clampIndex(at, count()));
 
   const setIndex = (next: number): void => {
@@ -107,9 +146,9 @@ export function createSelection(options: SelectionOptions = {}): Selection {
       return;
     }
     const previous = clampIndex(at, size);
-    const target = wrap
-      ? (((Math.floor(next) % size) + size) % size)
-      : clampIndex(next, size);
+    const raw = wrap ? (((Math.floor(next) % size) + size) % size) : clampIndex(next, size);
+    const target = selectable(raw) ? raw : snap(raw);
+    if (target === undefined) return; // 全不可选：不动
     at = target;
     if (target !== previous) {
       bump(n => n + 1);
@@ -119,7 +158,14 @@ export function createSelection(options: SelectionOptions = {}): Selection {
 
   const move = (delta: number): void => {
     if (delta === 0) return;
-    setIndex(index() + delta);
+    const step: 1 | -1 = delta > 0 ? 1 : -1;
+    let cursor = index();
+    for (let i = 0; i < Math.abs(delta); i++) {
+      const next = seek(cursor, step);
+      if (next === cursor) break;
+      cursor = next;
+    }
+    setIndex(cursor);
   };
 
   return {
