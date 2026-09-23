@@ -16,10 +16,24 @@ export interface FrameWriter {
 export interface RenderStats {
   /** 重绘的行数 */
   changedLines: number;
+  /** 重绘的行号（原生图形图层用它判断要不要重放图片） */
+  changed: number[];
   /** 实际写出的字节数 */
   bytes: number;
   /** 是否整屏重绘（尺寸变化 / 首次绘制） */
   full: boolean;
+}
+
+/**
+ * 渲染钩子。
+ *
+ * `afterDraw` 在文字差分之后、写终端之前调用，返回值会被拼进同一批写入。
+ * 原生图片协议（Kitty / iTerm2 / Sixel）靠它挂到网格之上，而渲染器本身
+ * 不需要知道任何图片协议的存在 —— 这是 SPEC §6 分层的关键：renderer 依赖
+ * layout，不依赖 image。
+ */
+export interface RenderHooks {
+  afterDraw?(frame: Frame, stats: RenderStats): string;
 }
 
 const ESC = "\x1b[";
@@ -40,7 +54,7 @@ function cellsEqual(a: Line | undefined, b: Line | undefined): boolean {
   for (let i = 0; i < a.length; i++) {
     const x = a[i];
     const y = b[i];
-    if (x.ch !== y.ch || x.sgr !== y.sgr) return false;
+    if (x.ch !== y.ch || x.sgr !== y.sgr || x.graphic !== y.graphic) return false;
   }
   return true;
 }
@@ -81,13 +95,13 @@ export class Renderer {
   private width = 0;
   private height = 0;
 
-  constructor(private readonly write: FrameWriter) {}
+  constructor(private readonly write: FrameWriter, private readonly hooks?: RenderHooks) {}
 
   /** 输出一帧，返回本次差分统计 */
   draw(frame: Frame): RenderStats {
     const full = this.previous.length === 0 || this.width !== frame.width || this.height !== frame.height;
     let out = "";
-    let changedLines = 0;
+    const changed: number[] = [];
 
     if (full) {
       out += CLEAR_SCREEN + CURSOR_HOME;
@@ -96,7 +110,7 @@ export class Renderer {
     for (let y = 0; y < frame.lines.length; y++) {
       const line = frame.lines[y];
       if (!full && cellsEqual(this.previous[y], line)) continue;
-      changedLines++;
+      changed.push(y);
       out += moveTo(y, 0) + paintLine(line) + ERASE_TO_END;
     }
 
@@ -104,15 +118,25 @@ export class Renderer {
     if (frame.lines.length < this.previous.length) {
       for (let y = frame.lines.length; y < this.previous.length; y++) {
         out += moveTo(y, 0) + ERASE_TO_END;
-        changedLines++;
+        changed.push(y);
       }
     }
+
+    const stats: RenderStats = {
+      changedLines: changed.length,
+      changed,
+      bytes: out.length,
+      full,
+    };
+
+    if (this.hooks?.afterDraw) out += this.hooks.afterDraw(frame, stats);
 
     if (out) this.write(out);
     this.previous = frame.lines;
     this.width = frame.width;
     this.height = frame.height;
-    return { changedLines, bytes: out.length, full };
+    stats.bytes = out.length;
+    return stats;
   }
 
   /** 强制下一帧整屏重绘（resize 后调用） */

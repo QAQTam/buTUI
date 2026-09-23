@@ -258,11 +258,28 @@ setStore(s => { s.lines.push(line); });   // 不是 setStore("lines", i, v)
 
 **5.6.6 Bun 侧缺口**
 
-- `Bun.Image` 没有 raw pixel 出口 → Kitty / iTerm2 协议可直接用，sixel 与
-  half-block 降级路径需要自带 PNG 解码（`Bun.inflateSync` 可用）
+- `Bun.Image` 没有 raw pixel 出口 → 见 §12.4：用「Bun.Image 解码缩放 →
+  `.png()` → 自带 PNG 解析」绕开，重活仍然在 Bun 的 SIMD 内核里
 - 鼠标 SGR 解析、Kitty keyboard protocol、focus events、bracketed paste、
   终端能力探测全部需要自己实现（`@butui/terminal` 已实现）
 - `Bun.Terminal`（PTY）可用于 PTY 冒烟与回放测试
+
+**5.6.7 `Bun.deflateSync` / `Bun.inflateSync` 默认是 raw deflate**
+
+`bun-types` 里 `windowBits` 的文档说 `9..15` 出 zlib 头、`-9..-15` 出 raw
+deflate，但 1.4.2 实测：
+
+```ts
+Bun.deflateSync(data, { windowBits: 15 })   // 头仍然是 cb48 = raw deflate，参数被忽略
+Bun.inflateSync(zlibStream)                 // 报 "invalid stored block lengths"
+Bun.inflateSync(zlibStream, { windowBits: 15 })  // 正确
+```
+
+所以任何要跟外部格式对齐的地方（PNG 的 IDAT 就是 zlib 流）都得自己拼/拆：
+
+- 压缩：`0x78 0x9c` + raw deflate + Adler-32 大端（`@butui/image` 的
+  `zlibCompress`）
+- 解压：显式 `{ windowBits: 15 }`；先做头校验，不合法再退回 `-15`
 
 ---
 
@@ -285,6 +302,16 @@ setStore(s => { s.lines.push(line); });   // 不是 setStore("lines", i, v)
    是否未变），`Box` 增加 `frozen`（前 N 行永不再变）。父容器据此只重建尾部。
 4. **视口窗口**：每帧只复制可视行。
 
+`frozen` 的成立前提是「那段前缀真的没变」，而父容器没法在 O(1) 里验证它。
+所以 `Box` 上还有一个 `frozenToken`：父容器只在 token 一致时才复用旧行。
+
+- `<stream>` 用 `lines` 数组本身当 token —— 同一个数组只增不改；换数组就是
+  全量重建，旧前缀一行都不能信
+- `<image>` 直接声明 `frozen: 0` —— 图片是全有全无的叶子，重渲染时每一行
+  都可能变（换图、resize、协议降级）
+
+这条约束是 2026-09-23 做图片子系统时踩出来的：少了它，「先布局 → 改属性 →
+再布局」会稳定地读到上一帧的内容，而且只在**布局过一次**之后才复现。
 **明确不用 `<For>` 渲染流。** 实测 Solid 的 `For` 每次都对数组做 O(N)
 reconcile（N=9000 时 4.4 ms/push）。`createStore(..., { shallow: true })` 能让
 它变常数，但 shallow store 的子数组不再被代理、`push` 不触发更新，是假象。
@@ -403,6 +430,9 @@ Remote attach（§16 v0.3）也一并跑通：服务端只发 NDJSON 事件、�
 
 @butui/solid
   @solidjs/universal 适配、jsx-runtime、Bun plugin、preload
+
+@butui/image
+  协议探测、PNG 编解码、Kitty/iTerm2/Sixel/半块/占位符、安全加载、图形图层
 
 @butui/components
   Box / Text / Input / Select / ScrollBox / Overlay / Code / Diff
@@ -925,6 +955,87 @@ bugent attach <session>
 - 不信任 terminal escape
 - 远程图片默认需要授权
 
+### 12.4 图片子系统落地（v0.1 实现）
+
+`@butui/image` 已实现 §12.1 的五条路径。核心边界是**谁做什么**：
+
+```text
+Bun.Image（原生解码 + SIMD 重采样 + PNG 编码）
+  → decodePng（TS：PNG → RGBA，只处理小图）
+  → 协议编码器（TS：纯函数，字符串进字符串出）
+  → <image> 节点（cell 协议）或 ImageLayer（原生协议）
+```
+
+**为什么是这条管线。** `Bun.Image` 没有 raw pixel 出口（§5.6.6），但它有
+编码出口。于是：`new Bun.Image(bytes).resize(320,160).png()` 拿回一张小 PNG，
+再由 ~200 行的 TS 解码器转成 RGBA。好处是重活（JPEG 解码、1/8 IDCT 降采样、
+lanczos3）全在 Bun 的 C 侧，TS 只碰几十 KB 的小图。
+
+**两条渲染路径。** 这是整个子系统最关键的分层：
+
+| 路径 | 协议 | 产物 | 谁画 |
+|---|---|---|---|
+| cell | half-block / 占位符 | ANSI 行（`▀` + 24bit fg/bg） | 普通布局 + 渲染器差分 |
+| 原生 | Kitty / iTerm2 / Sixel | 占位 cell + 图形序列 | 终端，`ImageLayer` 负责摆放 |
+
+原生协议走 `Cell.graphic` 标记：布局只在占位 cell 上盖一个图片 id，
+`ImageLayer` 扫帧把同一 id 的 cell 聚成矩形，**只在矩形所在行被重绘或矩形移动时**
+才重发图形序列。实测无变化帧写出 0 字节 —— 图片不参与逐帧重传。
+
+**协议选择**（`pickProtocol`）只看环境变量，不发查询序列（查询会跟输入解码器
+抢字节）：Kitty（`KITTY_WINDOW_ID` / `*kitty*` / ghostty / konsole≥22.04）>
+iTerm2（iTerm / WezTerm / VS Code / `LC_TERMINAL`）> Sixel（`*sixel*` /
+mintty / foot / contour / VTE≥3.79）> half-block > 占位符。tmux / screen 之下
+原生协议一律降级（需要 `allow-passthrough` 才透传）。
+
+**几何**：`CELL_ASPECT = 2`（一个 cell 高 = 两个 cell 宽），所有换算先折算到
+「正方形像素」再算比例，否则 contain/cover 会把图拉长一倍。`contain` 居中留白，
+`cover` 放大后中心裁剪（裁剪在 RGBA 上做，因为 Bun.Image 没有 crop）。
+
+**API**：
+
+```tsx
+const shot = createImage(() => "./shots/a.png", { policy, layer, cols: 40 });
+<Image source={shot} width={40} alt="screenshot" />
+
+// 或一步到位
+const image = await renderImageFrom(path, { protocol, cols, depth, fit });
+```
+
+`createImage` 用 `createEffect(compute, effect)`（§5.6.3 的两参数形式）跟踪
+source，加载中 / 失败时自动退化成纯文本占位符 —— 图片画不出来不该让 TUI 挂掉。
+
+**安全**（对应 §12.3 五条）：路径走 `roots` 白名单 + `realpath`（symlink 逃逸
+会被拦下）；MIME 只看魔数不看扩展名；`maxBytes` 在读取前检查、远程流式读取时
+超限即中断；`maxPixels` 交给 `Bun.Image` 做解压炸弹防护；远程默认关闭，开启后
+还要过 `authorizeRemote` 逐次授权。**绝不把用户可控字符串交给
+`new Bun.Image(path)`** —— 那是任意文件读取原语。
+
+**实测数字**（`scripts/image-demo.tsx`，96×48 测试图 → 40×10 cell）：
+
+```text
+协议        box(cell)  负载        说明
+kitty       40×10      24.5 KiB    320×160 PNG（真彩）
+iterm2      40×10      24.5 KiB    同一张 PNG，换 OSC 1337 包装
+sixel       40×10      21.5 KiB    6×6×6 固定调色板 + 行程编码
+halfblock   40×10      —           10 行 ANSI，每 cell 两个像素
+placeholder 40×10      —           纯文本，NO_COLOR 兜底
+```
+
+`quantize: true` 打开 256 色调色板 PNG，同一张图 24.5 → 10.2 KiB（约 2.4×）。
+对照片/截图收益明显，对平滑渐变反而可能变大 —— 用之前先量。
+
+**已知取舍**：
+
+- Sixel 用固定 6×6×6 调色板（确定性优先，不引入 k-means）；照片偏色，照片
+  该走 Kitty / iTerm2
+- iTerm2 协议**没有删除指令**，图片是画在 cell 上的，所以它依赖「占位 cell
+  始终空白 + 重绘时重发」；Kitty 有 `a=d` 可以精确删除
+- PNG 解码不支持 Adam7 交错（Bun 的编码器不产出；遇到会明确报错而不是画花屏）
+- 半块图把 alpha 混到背景色上，不做终端背景透出
+- 图片渲染是**一次性**成本（几十 ms），不进每帧路径；每帧只做 O(图片数 × 视口 cell)
+  的矩形扫描
+
 ---
 
 ## 13. 事件协议
@@ -1035,7 +1146,7 @@ ask_user
 - Workspace reverse patch
 - Agent Timeline
 - Context Inspector
-- Kitty / iTerm2 / Sixel
+- ~~Kitty / iTerm2 / Sixel~~ ✅ 已提前到 v0.1（§12.4）
 - Artifact Canvas
 
 ### v0.3

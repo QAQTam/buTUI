@@ -8,6 +8,7 @@
         "@butui/agent": "workspace:*",
         "@butui/core": "workspace:*",
         "@butui/example-web-demo": "workspace:*",
+        "@butui/image": "workspace:*",
         "@butui/layout": "workspace:*",
         "@butui/renderer": "workspace:*",
         "@butui/solid": "workspace:*",
@@ -57,6 +58,16 @@
     "packages/core": {
       "name": "@butui/core",
       "version": "0.1.0",
+    },
+    "packages/image": {
+      "name": "@butui/image",
+      "version": "0.1.0",
+      "dependencies": {
+        "@butui/core": "workspace:*",
+        "@butui/layout": "workspace:*",
+        "@butui/solid": "workspace:*",
+        "solid-js": "2.0.0-rc.9",
+      },
     },
     "packages/layout": {
       "name": "@butui/layout",
@@ -138,6 +149,8 @@
     "@butui/example-agent-demo": ["@butui/example-agent-demo@workspace:examples/agent-demo"],
 
     "@butui/example-web-demo": ["@butui/example-web-demo@workspace:examples/web-demo"],
+
+    "@butui/image": ["@butui/image@workspace:packages/image"],
 
     "@butui/layout": ["@butui/layout@workspace:packages/layout"],
 

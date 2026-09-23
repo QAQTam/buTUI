@@ -125,13 +125,27 @@ export namespace JSX {
     color?: string;
   }
 
-  interface ImageProps {
-    /** 只允许白名单路径或明确授权的 URL（SPEC §12.3） */
-    src?: string;
-    alt?: string;
-    width?: number;
-    height?: number;
-    fit?: "contain" | "cover" | "fill";
+  /**
+   * 低层 `<image>` 节点（SPEC §12）。
+   *
+   * 它不是给人直接写的 —— 用 `@butui/image` 的 `<Image src=… />` 组件。
+   * 组件负责异步加载 + 编码，产出的就是这里两种形态之一：
+   *
+   *   - cell 协议（half-block / 占位符）→ `lines`，走普通 cell 渲染
+   *   - 原生协议（Kitty / iTerm2 / Sixel）→ `graphic` + `rect`，
+   *     布局只补空白占位 cell 并打标记，真正的图形由 ImageLayer 叠加
+   */
+  interface ImageNodeProps {
+    /** 每行一个 ANSI 字符串；行内 SGR 会被布局解析成 per-cell 样式 */
+    lines?: readonly string[];
+    /** 原生图形 id；布局把它盖在 `rect` 覆盖的 cell 上 */
+    graphic?: string;
+    /** 绘制区相对节点左上角的偏移与尺寸（contain 时用于居中） */
+    rect?: { left: number; top: number; cols: number; rows: number };
+    /** 节点占位尺寸（cell） */
+    cols?: number;
+    rows?: number;
+    semantic?: Semantic;
   }
 
   interface StreamProps {
@@ -163,7 +177,7 @@ export namespace JSX {
     input: InputProps;
     markdown: MarkdownProps;
     code: CodeProps;
-    image: ImageProps;
+    image: ImageNodeProps;
     /** 出流覆盖层：不参与 flow，按 (x, y) 合成到父节点之上 */
     layer: LayerProps;
     /** 流式文本节点：O(1) 追加 */

@@ -29,6 +29,14 @@ export interface Cell {
   semantic?: string;
   /** 完整 SGR 序列（含 reset），空串表示默认样式 */
   sgr: string;
+  /**
+   * 原生图形标记（SPEC §12）。
+   *
+   * 占位 cell 上盖一个图片 id，`ImageLayer` 扫帧时把同一 id 的 cell 聚成矩形，
+   * 再把 Kitty / iTerm2 / Sixel 序列放到那个位置。cell 网格本身完全不知道
+   * 协议细节 —— 它只知道「这块地方属于某张图」。
+   */
+  graphic?: string;
 }
 
 export type Line = Cell[];
@@ -42,8 +50,13 @@ export interface Box {
    *
    * 这是增量布局的核心契约：父容器只信任子节点的冻结前缀，因此可以在
    * 「最后一个子节点长大」时只重建尾部，而不是重新合成全部行。
+   *
+   * 前提是那个前缀**真的**没变。`frozenToken` 就是这个前提的凭证：父容器
+   * 只在 token 一致时才复用旧行。比如 `<stream>` 用 `lines` 数组本身当
+   * token —— 同一个数组只增不改，换一个数组就是全量重建，旧前缀不能再用。
    */
   frozen: number;
+  frozenToken?: unknown;
 }
 
 export interface LayoutContext {
@@ -75,6 +88,8 @@ interface AppendMeta {
   lastChildLines: number;
   /** 缓存时该子节点的 frozen（父数组里已有内容的冻结边界） */
   lastChildFrozen: number;
+  /** 缓存时该子节点冻结前缀的凭证；不一致就不能复用旧行 */
+  lastChildFrozenToken: unknown;
   /** 内容区之后的行（对象复用，重新追加即可） */
   suffix: Line[];
   /** 单条内容行的水平装饰（padding / border / margin） */
@@ -112,6 +127,72 @@ interface StreamCache {
 
 const streamCache = new WeakMap<Node, StreamCache>();
 
+interface ImageCache {
+  rev: number;
+  width: number;
+  box: Box;
+}
+
+const imageCache = new WeakMap<Node, ImageCache>();
+
+interface GraphicRect {
+  left: number;
+  top: number;
+  cols: number;
+  rows: number;
+}
+
+/**
+ * `<image>` 节点。
+ *
+ * 组件侧已经把图片**烤成**两样东西之一：
+ *   - `lines`：ANSI 字符串数组（half-block / 占位符），走普通 cell 渲染
+ *   - `graphic` + `rect`：原生协议，只占位 + 打标记，真正的图形由 ImageLayer 叠加
+ *
+ * 所以布局这边不需要知道任何图片协议，成本也只是把已经算好的行转成 cell；
+ * 并且按 `(rev, width)` 缓存 —— 图片不重渲染就不会重复解析。
+ */
+function measureImageNode(node: ElementNode, width: number, semantic: string | undefined): Box {
+  const cached = imageCache.get(node);
+  if (cached && cached.rev === node.rev && cached.width === width) return cached.box;
+
+  const lines = (node.props.lines as readonly string[] | undefined) ?? [];
+  const graphic = typeof node.props.graphic === "string" ? node.props.graphic : undefined;
+  const rect = node.props.rect as GraphicRect | undefined;
+  const cols = Math.max(0, Math.round(Number(node.props.cols ?? 0)));
+  const rows = Math.max(
+    lines.length,
+    Math.round(Number(node.props.rows ?? 0)),
+    graphic && rect ? rect.top + rect.rows : 0
+  );
+
+  const cells: Line[] = [];
+  let maxWidth = 0;
+  for (let y = 0; y < rows; y++) {
+    const text = lines[y];
+    const line: Line = text !== undefined ? toCells(text, node, "", semantic) : blankLine(cols, node.id, semantic);
+    if (graphic && rect && y >= rect.top && y < rect.top + rect.rows) {
+      let column = 0;
+      for (const cell of line) {
+        if (column >= rect.left && column < rect.left + rect.cols) cell.graphic = graphic;
+        column += cell.width === 0 ? 0 : cell.width;
+      }
+    }
+    if (line.length > maxWidth) maxWidth = line.length;
+    cells.push(line);
+  }
+
+  // frozen = 0：图片是**全有全无**的叶子。
+  //
+  // 父容器的增量快路径会「保留子节点已冻结的前缀、只重新追加尾巴」。图片没有
+  // 可以逐行信任的前缀 —— 重新渲染（换图 / resize / 协议降级）会让**所有**行
+  // 一起变。声明 frozen = 0 让父容器老老实实整块替换，代价只是 O(图片行数)，
+  // 换来的是「先布局、再更新、再布局」不会读到上一张图。
+  const box: Box = { lines: cells, width: maxWidth, height: cells.length, frozen: 0 };
+  imageCache.set(node, { rev: node.rev, width, box });
+  return box;
+}
+
 function measureStreamNode(node: ElementNode, width: number, semantic: string | undefined): Box {
   const lines = (node.props.lines as readonly { text: string }[] | undefined) ?? [];
   let entry = streamCache.get(node);
@@ -148,6 +229,8 @@ function measureStreamNode(node: ElementNode, width: number, semantic: string | 
     width: Math.max(entry.maxWidth, ...entry.tailCells.map(l => l.length), 0),
     height: out.length,
     frozen: entry.converted,
+    // lines 数组本身即凭证：同一个数组只增不改，换数组 = 全量重建
+    frozenToken: entry.linesRef,
   };
 }
 
@@ -597,6 +680,8 @@ function measureNode(
     box = { lines: [], width: Number(node.props.size ?? 0), height: 0, frozen: 0 };
   } else if (node.tag === "stream") {
     box = measureStreamNode(node, innerWidth, semantic);
+  } else if (node.tag === "image") {
+    box = measureImageNode(node, innerWidth, semantic);
   } else {
     box = measureColumn(node, innerWidth, innerHeight, style, depth, ctx, semantic);
   }
@@ -615,9 +700,10 @@ function measureNode(
     : targetHeight;
   const scrollOffset = Number(node.props.scrollOffset ?? 0);
 
-  // stream 节点的内容行已经是最终形态；没有装饰时直接返回，避免 O(N) 的通用组合
+  // stream / image 节点的内容行已经是最终形态；没有装饰时直接返回，
+  // 避免 O(N) 的通用组合
   if (
-    node.tag === "stream" &&
+    (node.tag === "stream" || node.tag === "image") &&
     !node.props.border &&
     node.props.padding === undefined &&
     node.props.margin === undefined &&
@@ -717,6 +803,7 @@ function measureNode(
       lastChildRev: kids[kids.length - 1].rev,
       lastChildLines: lastLines.lines.length,
       lastChildFrozen: lastLines.frozen,
+      lastChildFrozenToken: lastLines.frozenToken,
       suffix,
       decorate,
       maxContentWidth: contentWidth,
@@ -848,7 +935,10 @@ function tryIncremental(
   const childBox = measureNode(last, innerWidth, innerHeight, style, depth, ctx, semantic);
   // 关键：截断点必须用**父数组里已有的**那部分（旧 frozen），而不是子节点
   // 现在的新 frozen —— 子节点的冻结前缀会增长，多出来的那些行父数组里还没有。
-  const keepFromChild = Math.min(meta.lastChildFrozen, meta.lastChildLines);
+  // 冻结前缀的凭证变了（例如 <stream> 换了一个 lines 数组）→ 旧行一行都不能信
+  const reusableFrozen =
+    meta.lastChildFrozenToken === childBox.frozenToken ? meta.lastChildFrozen : 0;
+  const keepFromChild = Math.min(reusableFrozen, meta.lastChildLines);
   const keep = meta.lastChildStart + keepFromChild;
   if (keep > lines.length) return null;
   lines.length = keep;
@@ -859,6 +949,7 @@ function tryIncremental(
   meta.contentEnd = keep + (childBox.lines.length - keepFromChild);
   meta.lastChildLines = childBox.lines.length;
   meta.lastChildFrozen = childBox.frozen;
+  meta.lastChildFrozenToken = childBox.frozenToken;
   meta.lastChildRev = last.rev;
   meta.childrenRevSum = node.childrenRevSum;
   cached.box.height = lines.length;

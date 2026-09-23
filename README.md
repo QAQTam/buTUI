@@ -3,7 +3,8 @@
 > 面向 coding agent 的 Agent UI Runtime。设计文档见 [SPEC.md](./SPEC.md)。
 
 当前状态：**M1/M2 骨架 + 流式渲染 O(1) + 事件协议驱动的 agent UI +
-分支式 Undo + WebUI remote attach 已跑通**，`bun test` 139 个用例全绿。
+分支式 Undo + WebUI remote attach + 图片子系统（Kitty / iTerm2 / Sixel /
+半块 / 占位符）已跑通**，`bun test` 206 个用例全绿。
 
 ```
 Solid signal / store
@@ -13,6 +14,7 @@ Solid signal / store
   → @butui/undo    (workspace 日志 + 行级 patch + 分支式 undo)
   → @butui/web     (DOM 渲染，复用同一份 Session / 事件协议)
   → @butui/stream  (增量折行 + 增量 markdown，O(delta) 定稿)
+  → @butui/image   (协议探测 + PNG 编解码 + 安全加载 + 图形图层)
   → @butui/layout  (flex 子集 + 增量合成 + 视口窗口)
   → @butui/renderer(cell buffer + 逐行差分 + SGR 状态机)
   → @butui/terminal(raw mode / resize / 输入解码 / 能力探测)
@@ -89,6 +91,65 @@ N=9000  → 4.40 ms/push
 所以 `@butui/stream` 用**一个 `<stream>` 节点**：Solid 侧每次 push 只产生一次
 `setProp`，布局侧只把新增行转成 cell。这才是真正的 O(1)，而且仍然是细粒度的
 —— 变化被限制在一个属性上，不重建任何子树。
+
+## 图片子系统（SPEC §12）
+
+五条路径全部落地，按 §12.1 的优先级自动选：
+
+```tsx
+import { Image, ImageLayer, createImage } from "@butui/image";
+
+const layer = new ImageLayer();
+const shot = createImage(() => "./shots/a.png", {
+  layer,                 // 原生协议：图形由图层叠加
+  policy: { roots: ["./shots"] },
+  cols: 40,
+  alt: "screenshot",
+});
+
+<Image source={shot} width={40} />
+```
+
+管线把重活全交给 `Bun.Image`，TS 只碰小图：
+
+```text
+Bun.Image 解码 + SIMD 缩放 + PNG 编码
+  → decodePng（TS：PNG → RGBA）
+  → 协议编码器（纯函数）
+  → <image> 节点（cell 协议）或 ImageLayer（原生协议）
+```
+
+| 路径 | 协议 | 产物 | 谁画 |
+|---|---|---|---|
+| cell | half-block | ANSI 行（`▀` + 24bit fg/bg） | 布局 + 渲染器差分 |
+| cell | 占位符 | 纯文本框 + alt | 同上，NO_COLOR 兜底 |
+| 原生 | Kitty | 分块 base64 PNG | 终端，`ImageLayer` 摆放 |
+| 原生 | iTerm2 | OSC 1337 | 同上 |
+| 原生 | Sixel | 6×6×6 调色板 + RLE | 同上 |
+
+**每帧成本与图片大小无关**：布局只在占位 cell 上盖一个 `graphic` id，
+`ImageLayer` 扫帧聚成矩形，只有矩形所在行被重绘时才重发序列。实测无变化帧
+写出 **0 字节**。
+
+```bash
+bun --conditions=browser run scripts/image-demo.tsx
+```
+
+```text
+协议        box(cell)  负载        说明
+kitty       40×10      24.5 KiB    320×160 PNG（真彩）
+iterm2      40×10      24.5 KiB    同一张 PNG，换 OSC 1337 包装
+sixel       40×10      21.5 KiB    固定调色板 + 行程编码
+halfblock   40×10      —           10 行 ANSI，每 cell 两个像素
+placeholder 40×10      —           纯文本
+```
+
+`quantize: true` 用 256 色调色板 PNG，同一张图 24.5 → 10.2 KiB。
+
+安全（§12.3）：路径走白名单 + `realpath`（symlink 逃逸拦下）、MIME 只看魔数、
+`maxBytes` 读前检查 + 远程流式超限中断、`maxPixels` 防解压炸弹、远程默认关闭
+且需要逐次授权。**绝不把用户可控字符串交给 `new Bun.Image(path)`**（任意文件
+读取原语）。
 
 ## 事件协议驱动的 agent UI
 
@@ -236,6 +297,9 @@ bun --conditions=browser run examples/agent-demo/src/main.ts
 # 流式基准
 bun --conditions=browser run scripts/stream-bench.tsx
 
+# 图片子系统自检（不需要真终端）
+bun --conditions=browser run scripts/image-demo.tsx
+
 # WebUI（remote attach demo）
 bun run web
 
@@ -262,6 +326,7 @@ Demo 的工作区是**内存实现**，但走的是完全一样的 journal / dif
 | `@butui/undo` | 工作区变更日志、行级 patch、undo 预览与执行（SPEC §8） |
 | `@butui/web` | WebUI：ANSI→HTML、DOM 组件、`mountWebUI`（复用同一个 Session） |
 | `@butui/stream` | 增量折行、增量 markdown、Solid 绑定与组件 |
+| `@butui/image` | 协议探测、PNG 编解码、Kitty/iTerm2/Sixel/半块/占位符、安全加载、图形图层 |
 | `@butui/layout` | flex 子集 → cell 网格，带 `frozen` 的增量合成与视口窗口 |
 | `@butui/renderer` | cell → ANSI，逐行差分 + SGR 状态机 |
 | `@butui/terminal` | raw mode、备用屏、输入解码、能力探测 |
@@ -349,6 +414,27 @@ session.settle();          // 提交
 
 回放、快照、测试注入都属于这种场景。
 
+### 9. `Bun.deflateSync` / `inflateSync` 默认是 **raw deflate**
+
+`bun-types` 文档说 `windowBits: 15` 会输出带 zlib 头的流，但 1.4.2 实测参数被
+忽略，永远输出 raw deflate；`Bun.inflateSync` 反过来默认按 raw 解，喂 zlib 流
+会报 `invalid stored block lengths`。要跟外部格式（PNG 的 IDAT 就是 zlib 流）
+对齐就得自己拼/拆：
+
+```ts
+// 压缩：0x78 0x9c + raw deflate + Adler-32 大端
+const zlib = zlibCompress(raw);            // @butui/image
+
+// 解压：显式 zlib 模式
+Bun.inflateSync(zlibStream, { windowBits: 15 });
+```
+
+### 10. 增量布局的 `frozen` 需要 `frozenToken` 兜底
+
+父容器复用子节点「已冻结前缀」时，必须能 O(1) 确认那段前缀真的没变。`<stream>`
+用 `lines` 数组本身当凭证；`<image>` 声明 `frozen: 0`（图片是全有全无的叶子）。
+少了这个凭证，「先布局 → 改属性 → 再布局」会稳定读到上一帧内容。
+
 ## 编译管线
 
 `@butui/solid/plugin` 实现 SPEC §5.3：
@@ -372,7 +458,9 @@ Bun.plugin(onLoad)
 | Markdown → 终端 | `Bun.markdown.ansi(s, { columns, colors })` |
 | Markdown → 语义节点 | `Bun.markdown.render(s, callbacks)`（22 个元素回调） |
 | 颜色 | `Bun.color(x, "ansi-256" \| "ansi-16m")` |
-| 图片解码 / 缩放 | `Bun.Image`（**无 raw pixel 出口**，sixel/half-block 要自带解码） |
+| 图片解码 / 缩放 / 编码 | `Bun.Image`（**无 raw pixel 出口** → 编码成 PNG 后自己解析） |
+| PNG 的 zlib 层 | `Bun.deflateSync` / `Bun.inflateSync`（注意默认是 raw deflate，见坑 9） |
+| CRC32 | `Bun.hash.crc32`（PNG 块校验） |
 | PTY | `Bun.Terminal` + `Bun.spawn({ terminal })` |
 | raw mode / resize | `process.stdin.setRawMode` / `SIGWINCH` |
 | grapheme 切分 | `Intl.Segmenter` |
@@ -386,11 +474,9 @@ Bun.plugin(onLoad)
 
 ## 还没做
 
-- `@butui/undo`：checkpoint / branch / revert 的**执行**（SPEC §8）——
-  协议与展示已经就位，缺的是 workspace patch / conflict 检测
-- **图片子系统**（SPEC §12）：Kitty / iTerm2 好做，sixel 需要补 PNG 解码
-- `@butui/components` / `@butui/agent` 的 ArtifactCanvas / CommandPalette / ToolGraph
-- 事件协议（SPEC §13 NDJSON）与 `@butui/web` adapter
-- 图片子系统（SPEC §12）：Kitty / iTerm2 好做，sixel 需要补 PNG 解码
+- `@butui/components` 独立成包（Box / Text / Input 等 primitive 现在散在 layout 里）
+- ArtifactCanvas（SPEC §11.1）：把图片/diff/日志/表格统一成 artifact
+- VirtualList / CommandPalette / ToolGraph / AgentTimeline（§10.2 剩余组件）
+- 图片子系统：半块图的终端背景透出、Kitty 图片随滚动的位置缓存
 - 虚拟列表、动画、Kitty keyboard protocol 的发送侧
 - `markdown` / `code` / `image` 三个 intrinsic element 目前只有类型，没有实现

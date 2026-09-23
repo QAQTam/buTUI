@@ -16,6 +16,7 @@
     "@butui/agent": "workspace:*",
     "@butui/core": "workspace:*",
     "@butui/example-web-demo": "workspace:*",
+    "@butui/image": "workspace:*",
     "@butui/layout": "workspace:*",
     "@butui/renderer": "workspace:*",
     "@butui/solid": "workspace:*",
