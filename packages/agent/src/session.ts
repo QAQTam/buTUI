@@ -365,6 +365,8 @@ export function createSession(options: SessionOptions): Session {
   const sources = new Map<string, StreamSource>();
   /** turnId → 思考流。**不落库**：turn.end 时整个丢掉（SPEC §7 的 reasoning 取舍） */
   const reasoning = new Map<string, StreamSource>();
+  /** 已经结束的 turn：之后的 delta 属于协议违规，忽略而不是崩 */
+  const endedTurns = new Set<string>();
   const rawText = new Map<string, string>();
   /**
    * source 是懒建的（tool.start 先建消息、text.delta 才建 source），
@@ -396,6 +398,9 @@ export function createSession(options: SessionOptions): Session {
 
     dispatch(event) {
       if (event.type === "text.delta") {
+        // turn 已经结束还继续吐字 = 协议违规。忽略，而不是把整个 UI 打崩
+        // （StreamSource flush 之后 push 会抛）。
+        if (endedTurns.has(event.turnId)) return;
         // 全部在 setter 里做：Solid 的写入是延迟到 flush 的，setState 之后
         // 立刻读 state 读不到新消息。
         setState(s => {
@@ -445,7 +450,7 @@ export function createSession(options: SessionOptions): Session {
       }
 
       if (event.type === "turn.end") {
-        for (const [id, source] of sources) source.flush();
+        endedTurns.add(event.turnId);
         // 思考不落库：turn 一结束就丢掉，UI 的 <Show> 自动收起
         reasoning.get(event.turnId)?.flush();
         reasoning.delete(event.turnId);
@@ -454,6 +459,9 @@ export function createSession(options: SessionOptions): Session {
           for (const message of s.messages) {
             if (message.turnId === event.turnId) {
               message.text = rawText.get(message.id) ?? message.text;
+              // 只定稿**这个 turn** 的流。以前这里是「flush 所有 source」，
+              // 于是 A 轮结束会把还在流的 B 轮一起封掉，B 的下一个 delta 直接抛。
+              sources.get(message.id)?.flush();
             }
           }
           reduce(s, event);

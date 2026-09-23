@@ -10,15 +10,21 @@
  * 它们都在 `createTuiApp` 里。这里只剩「视图 + 键位策略」。
  */
 import { type AgentEvent, type UiCommand, createSession } from "@butui/agent";
-import { createTextEditor } from "@butui/components";
+import { createScrollView, createTextEditor } from "@butui/components";
 import { ImageLayer } from "@butui/image";
 import { type TuiApp, createTuiApp } from "@butui/runtime";
-import { App } from "./app.tsx";
+import { App, FOOTER_ROWS } from "./app.tsx";
 import { createMemoryWorkspace, createMockAgent } from "./mock-agent.ts";
 import { permission, setPermission, setStatus } from "./state.ts";
 
 /** 原生图片协议（Kitty / iTerm2 / Sixel）不进 cell 网格，由 ImageLayer 叠加 */
 const imageLayer = new ImageLayer();
+
+/**
+ * 转录的滚动视口（SPEC §5.13）：默认贴底；PageUp / 滚轮往回翻之后，新内容
+ * 不会把视口拽回去；End（或滚回底部）自动恢复跟随。
+ */
+const view = createScrollView();
 
 /**
  * 输入框的编辑模型：光标、词跳转、历史、提交全在里面。
@@ -59,10 +65,19 @@ const app: TuiApp = createTuiApp({
       onImageLoad={() => runtime.requestPaint()}
     />
   ),
-  scroll: () => "bottom",
-  afterDraw: (frame, stats) => imageLayer.render(frame, stats.changed),
+  scroll: view,
+  // 输入栏 + 状态栏钉在底部（它们就在视图 flow 的末尾）
+  stickyBottom: FOOTER_ROWS,
+  afterDraw: (frame, stats) => {
+    // 先把这一帧的真实位置收回来（夹取后的 top/total），再画图片图层
+    view.measure(frame);
+    return imageLayer.render(frame, stats.changed);
+  },
   onKey: event => {
     const { name, modifiers } = event;
+
+    // PageUp / PageDown 翻转录（↑↓ 留给输入框的历史 —— 键位策略在应用这边）
+    if (name === "pageup" || name === "pagedown") return view.handleKey(event);
 
     // ctrl+u：对最后一条 assistant 消息做 undo 预览（SPEC §8.3）
     if (modifiers.ctrl && name === "u") {
@@ -92,6 +107,8 @@ const app: TuiApp = createTuiApp({
     return false;
   },
   onMouse: event => {
+    // 滚轮翻转录（没有节点处理时才会走到这里）
+    if (event.action === "wheel" && view.handleWheel(event)) return true;
     const semantic = event.semantic ?? "";
     if (semantic.endsWith(":allow")) {
       const request = session.state.permissions[0];

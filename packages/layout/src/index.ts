@@ -603,11 +603,16 @@ function measureRow(
   const lines: Line[] = [];
   for (let y = 0; y < height; y++) {
     const line: Line = leading > 0 ? blankLine(leading, node.id, semantic, sgr) : [];
+    let placed = 0;
     for (let i = 0; i < columns.length; i++) {
-      if (i > 0 && (gap > 0 || extraGap > 0)) {
+      const column = columns[i];
+      // 空列（条件渲染关掉 / 空数组）不占 gap、也不占宽度 —— 同 measureColumn。
+      // 注意 `<spacer/>` 也是「没有行」的，但它有分配到的宽度，不能跳过。
+      if (column.lines.length === 0 && sizes[i] === 0) continue;
+      if (placed > 0 && (gap > 0 || extraGap > 0)) {
         line.push(...blankLine(gap + extraGap, node.id, semantic, sgr));
       }
-      const column = columns[i];
+      placed++;
       // 交叉轴对齐
       const offset =
         align === "center"
@@ -711,18 +716,26 @@ function measureColumn(
   };
 
   const lines: Line[] = [];
-  for (let i = 0; i < measured.length; i++) {
-    if (i > 0 && gap > 0) {
+  // 空子节点（`<Show>` 关掉、`<For>` 空数组、空字符串）不占 gap。
+  // 否则 `<box gap={1}>` 里几个条件渲染一关，屏幕上就凭空多出几行空白。
+  let placed = 0;
+  for (const box of measured) {
+    if (box.lines.length === 0) continue;
+    if (placed > 0 && gap > 0) {
       for (let g = 0; g < gap; g++) lines.push(blankLine(innerWidth, node.id, semantic, alignSgr));
     }
-    lines.push(...measured[i].lines.map(alignLine));
+    placed++;
+    lines.push(...box.lines.map(alignLine));
   }
-  // 累积到第一个「还有易变尾部」的子节点为止
+  // 累积到第一个「还有易变尾部」的子节点为止（口径与上面一致）
   let frozen = 0;
-  for (let i = 0; i < measured.length; i++) {
-    if (i > 0) frozen += gap;
-    frozen += measured[i].frozen;
-    if (measured[i].frozen < measured[i].lines.length) break;
+  let counted = 0;
+  for (const box of measured) {
+    if (box.lines.length === 0) continue;
+    if (counted > 0) frozen += gap;
+    counted++;
+    frozen += box.frozen;
+    if (box.frozen < box.lines.length) break;
   }
   return { lines, width: innerWidth, height: lines.length, frozen };
 }

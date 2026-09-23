@@ -3,7 +3,7 @@ import { type AgentEvent, createSession } from "@butui/agent";
 import { createTextEditor } from "@butui/components";
 import { ImageLayer } from "@butui/image";
 import { mount } from "@butui/test";
-import { App } from "../examples/agent-demo/src/app.tsx";
+import { App, FOOTER_ROWS } from "../examples/agent-demo/src/app.tsx";
 
 /**
  * demo 外壳（SPEC §11.1 的放置策略）。
@@ -42,7 +42,8 @@ function setup(columns: number, rows: number) {
         onImageLoad={() => {}}
       />
     ),
-    { width: columns, height: rows }
+    // 和 main.tsx 里 createTuiApp 的配置一致：贴底 + 底部固定 4 行
+    { width: columns, height: rows, scroll: "bottom", stickyBottom: FOOTER_ROWS }
   );
   return { app, session };
 }
@@ -68,6 +69,35 @@ describe("agent demo 外壳（artifact 面板放置）", () => {
     const { app } = setup(80, 30);
     const text = app.text();
     expect(text).not.toContain("artifacts 2");
+    app.unmount();
+  });
+
+  test("转录贴底：消息很多时最后一条可见，输入栏仍钉在底部", () => {
+    const session = createSession({ width: () => 74 });
+    const events: AgentEvent[] = [{ type: "turn.start", turnId: "t1" }];
+    for (let i = 0; i < 40; i++) {
+      events.push({ type: "text.delta", turnId: "t1", delta: `第 ${i} 行\n` });
+    }
+    events.push({ type: "turn.end", turnId: "t1", reason: "completed" });
+    for (const event of events) session.dispatch(event);
+    session.settle();
+
+    const app = mount(
+      () => (
+        <App
+          session={session}
+          size={() => ({ columns: 80, rows: 16 })}
+          editor={createTextEditor()}
+          imageLayer={new ImageLayer()}
+          onImageLoad={() => {}}
+        />
+      ),
+      { width: 80, height: 16, scroll: "bottom", stickyBottom: FOOTER_ROWS }
+    );
+    const text = app.text();
+    expect(text).toContain("第 39 行"); // 跟底
+    expect(text).not.toContain("第 0 行"); // 老内容滚上去了
+    expect(text).toContain("说点什么…"); // 输入栏还在（sticky）
     app.unmount();
   });
 

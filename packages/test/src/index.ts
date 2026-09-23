@@ -28,6 +28,15 @@ export interface MountOptions {
   width?: number;
   height?: number;
   depth?: ColorDepth;
+  /**
+   * 视口位置，默认 `0`（顶部）。`"bottom"` 就是聊天式贴底 —— 组件测试要验
+   * 「转录跟着长」时必须给这个，否则永远看到第一屏。
+   */
+  scroll?: number | "bottom";
+  /** 固定页眉行数（SPEC §5.13） */
+  stickyTop?: number;
+  /** 固定页脚行数 */
+  stickyBottom?: number;
 }
 
 export interface Mounted {
@@ -81,7 +90,13 @@ export function mount(component: () => unknown, options: MountOptions = {}): Mou
     output += chunk;
   });
 
-  const frame = () => layout(root, columns, rows, { depth });
+  const frame = () =>
+    layout(root, columns, rows, {
+      depth,
+      scrollTop: options.scroll ?? 0,
+      stickyTop: options.stickyTop ?? 0,
+      stickyBottom: options.stickyBottom ?? 0,
+    });
 
   return {
     root,

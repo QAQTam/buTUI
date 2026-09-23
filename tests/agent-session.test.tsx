@@ -333,6 +333,47 @@ describe("流式标记（regression）", () => {
   });
 });
 
+describe("并发 turn（regression：turn.end 不能封掉别的 turn 的流）", () => {
+  test("A 轮结束时，B 轮还在流的 source 不受影响", () => {
+    const session = createSession({ width: () => 60, onCommand: () => {} });
+    session.dispatch({ type: "turn.start", turnId: "t1" });
+    session.dispatch({ type: "turn.start", turnId: "t2" });
+    session.dispatch({ type: "text.delta", turnId: "t2", delta: "B 先说" });
+    session.settle();
+
+    // A 轮结束（它没有任何文本）—— 以前这里会把 t2 的 source 一起 flush
+    session.dispatch({ type: "turn.end", turnId: "t1", reason: "completed" });
+    session.settle();
+
+    expect(() => {
+      session.dispatch({ type: "text.delta", turnId: "t2", delta: "，B 继续说" });
+      session.settle();
+    }).not.toThrow();
+
+    const b = session.state.messages.find(m => m.turnId === "t2")!;
+    expect(session.textOf(b.id)).toBe("B 先说，B 继续说");
+    expect(session.sourceFor(b.id)).toBeDefined();
+
+    session.dispatch({ type: "turn.end", turnId: "t2", reason: "completed" });
+    session.settle();
+    expect(session.state.messages.find(m => m.turnId === "t2")!.text).toBe("B 先说，B 继续说");
+  });
+
+  test("turn.end 之后又来的 delta 被忽略（不崩）", () => {
+    const session = createSession({ width: () => 60, onCommand: () => {} });
+    session.dispatch({ type: "turn.start", turnId: "t1" });
+    session.dispatch({ type: "text.delta", turnId: "t1", delta: "完成" });
+    session.dispatch({ type: "turn.end", turnId: "t1", reason: "completed" });
+    session.settle();
+
+    expect(() => {
+      session.dispatch({ type: "text.delta", turnId: "t1", delta: "（迟到）" });
+      session.settle();
+    }).not.toThrow();
+    expect(session.state.messages[0]!.text).toBe("完成");
+  });
+});
+
 describe("思考流（ReasoningLine 的数据来源）", () => {
   test("turn 内可取，turn.end 之后丢掉（不落库）", () => {
     const session = createSession({ width: () => 60, onCommand: () => {} });

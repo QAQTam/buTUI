@@ -566,6 +566,11 @@ createTuiApp({
   第一轮测量：先让别的兄弟拿走自己要的宽度，剩下的才归它。否则
   `<row><text truncate>长文本</text><text>右对齐</text></row>` 里右边那个直接
   消失。
+- **空的条件渲染会留空行。** `<box gap={1}>` 里几个 `<Show>` 一关，屏幕上就
+  凭空多出几行空白 —— 因为 gap 是按「子节点个数」算的，而关掉的 Show 仍然
+  留下了一个空盒子。现在只有**真正有内容的**子节点才占 gap（`<spacer/>` 这种
+  「没有行但有宽度」的例外单独判）。AgentView 里 6 个条件面板曾经一次贡献
+  6 行空白。
 
 ---
 
@@ -603,11 +608,18 @@ turn 建一个**纯文本流**（不是 markdown：思考里全是半截句子�
 `turn.end` 时整个源被丢掉，`<Show>` 自动收起 —— 思考是临时产物，留着只会撑爆
 上下文和拖慢渲染（§7 的取舍）。折叠态读 `source.tail()` 是 O(1)。
 
-**顺手修掉一个一直没被发现的 bug：`streaming` 标记从来没亮过。**
-`text.delta` 走的是「只建消息 + 推进流」的快路径，绕过了 reducer —— 而
-`message.streaming = true` 是 reducer 推导的。结果是 `MessageView` 的
-「streaming…」和 `<Show when={message.streaming}>` 从来没显示过。快路径现在补
-一次 `reduce()`（消息查找是幂等的），并把这条写进了回归测试。
+**顺手修掉的两个一直没被发现的 bug：**
+
+- **`turn.end` 会把所有流一起封掉。** 之前是 `for (const [id, source] of sources)
+  source.flush()` —— 于是「A 轮结束」会把还在流的 B 轮一起封死，B 的下一个
+  delta 直接抛 `stream 已经 flush，不能再 push`（demo 里真实崩过一次：greet
+  的 turn 还没结束，用户就发了下一条）。现在只定稿**这个 turn 的**流，并且
+  turn 结束之后迟到的 delta 直接忽略（协议违规不该把 UI 打崩）。
+- **`streaming` 标记从来没亮过。**
+  `text.delta` 走的是「只建消息 + 推进流」的快路径，绕过了 reducer —— 而
+  `message.streaming = true` 是 reducer 推导的。结果是 `MessageView` 的
+  「streaming…」和 `<Show when={message.streaming}>` 从来没显示过。快路径现在补
+  一次 `reduce()`（消息查找是幂等的），并把这条写进了回归测试。
 
 
 

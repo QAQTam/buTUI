@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { mount } from "@butui/test";
-import { createSignal } from "solid-js";
+import { Show, createSignal } from "solid-js";
 
 describe("布局引擎（SPEC §9.1 P0）", () => {
   test("bg 用背景序列（48;…），不是把前景色当背景用", () => {
@@ -98,6 +98,31 @@ describe("布局引擎（SPEC §9.1 P0）", () => {
     );
     const text = app.frame().lines[0].map(c => c.ch).join("");
     expect(text.endsWith("END")).toBe(true);
+    app.unmount();
+  });
+
+
+  test("条件渲染关掉时不留空行（gap 只算真正有内容的子节点）", () => {
+    const [show, setShow] = createSignal(false);
+    const app = mount(
+      () => (
+        <box gap={1}>
+          <text>a</text>
+          <Show when={show()}>
+            <text>b</text>
+          </Show>
+          <Show when={false}>
+            <text>c</text>
+          </Show>
+          <text>d</text>
+        </box>
+      ),
+      { width: 10, height: 6 }
+    );
+    expect(app.text()).toBe("a\n\nd");
+    setShow(true);
+    app.flush();
+    expect(app.text()).toBe("a\n\nb\n\nd");
     app.unmount();
   });
 
