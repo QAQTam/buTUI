@@ -14,6 +14,7 @@ import {
   type Node,
   type TextNode,
   isElement,
+  parseAnsiRuns,
   resolveColor,
 } from "@butui/core";
 
@@ -36,17 +37,119 @@ export interface Box {
   lines: Line[];
   width: number;
   height: number;
+  /**
+   * `lines[0..frozen)` 保证不会再变。
+   *
+   * 这是增量布局的核心契约：父容器只信任子节点的冻结前缀，因此可以在
+   * 「最后一个子节点长大」时只重建尾部，而不是重新合成全部行。
+   */
+  frozen: number;
 }
 
 export interface LayoutContext {
   depth: ColorDepth;
+  /**
+   * 视口顶部对应的内容行号。`"bottom"` 表示贴底（聊天记录的标准行为）。
+   * 只有可视窗口会被复制成帧，因此每帧成本是 O(视口高度) 而不是 O(总行数)。
+   */
+  scrollTop?: number | "bottom";
   /** 调试用：统计测量次数 */
   stats?: { measured: number; reused: number };
 }
 
 const DEFAULT_CONTEXT: LayoutContext = { depth: "truecolor" };
 
-const cache = new WeakMap<Node, { rev: number; width: number; height: number; box: Box }>();
+interface AppendMeta {
+  /** 缓存时的 flow 子节点数 */
+  childCount: number;
+  /** 缓存时的 node.childrenRevSum */
+  childrenRevSum: number;
+  /** 最后一个 flow 子节点在 node.children 中的下标 */
+  childIndex: number;
+  /** 内容区在 box.lines 中的 [start, end) */
+  contentStart: number;
+  contentEnd: number;
+  /** 最后一个子节点在 box.lines 中的起点 */
+  lastChildStart: number;
+  lastChildRev: number;
+  lastChildLines: number;
+  /** 缓存时该子节点的 frozen（父数组里已有内容的冻结边界） */
+  lastChildFrozen: number;
+  /** 内容区之后的行（对象复用，重新追加即可） */
+  suffix: Line[];
+  /** 单条内容行的水平装饰（padding / border / margin） */
+  decorate: (line: Line) => Line;
+  /** 边框宽度上限；新行超过它就必须整体重排 */
+  maxContentWidth: number;
+  forcedHeight: number | undefined;
+}
+
+interface CacheEntry {
+  rev: number;
+  width: number;
+  height: number;
+  box: Box;
+  append?: AppendMeta;
+}
+
+const cache = new WeakMap<Node, CacheEntry>();
+
+/**
+ * `stream` 节点的缓存。
+ *
+ * `lines` 是一个**只增不改**的数组（同一个引用），所以这里只要记住「已经转换
+ * 到第几行」，每次只需要把新增的行转成 cell —— 与已累积行数无关。
+ */
+interface StreamCache {
+  linesRef: readonly { text: string }[] | undefined;
+  converted: number;
+  cells: Line[];
+  tailText: string | undefined;
+  tailCells: Line[];
+  width: number;
+  maxWidth: number;
+}
+
+const streamCache = new WeakMap<Node, StreamCache>();
+
+function measureStreamNode(node: ElementNode, width: number, semantic: string | undefined): Box {
+  const lines = (node.props.lines as readonly { text: string }[] | undefined) ?? [];
+  let entry = streamCache.get(node);
+  if (!entry || entry.linesRef !== lines || entry.width !== width) {
+    entry = { linesRef: lines, converted: 0, cells: [], tailText: undefined, tailCells: [], width, maxWidth: 0 };
+    streamCache.set(node, entry);
+  }
+
+  // 只转换新增的行，并增量维护最大宽度（不能用 Math.max(...map) —— 那是 O(N)）
+  for (let i = entry.converted; i < lines.length; i++) {
+    const line = toCells(lines[i].text, node, "", semantic);
+    entry.cells.push(line);
+    if (line.length > entry.maxWidth) entry.maxWidth = line.length;
+  }
+  entry.converted = lines.length;
+
+  // 尾部：丢掉旧 tail，重新接上
+  const tailText = typeof node.props.tail === "string" ? node.props.tail : "";
+  if (entry.tailText !== tailText) {
+    entry.tailText = tailText;
+    entry.tailCells =
+      tailText === ""
+        ? []
+        : Bun.wrapAnsi(tailText, Math.max(1, width), { hard: true, wordWrap: true, trim: false })
+            .split("\n")
+            .map(text => toCells(text, node, "", semantic));
+  }
+  const out = entry.cells;
+  out.length = entry.converted;
+  for (const line of entry.tailCells) out.push(line);
+
+  return {
+    lines: out,
+    width: Math.max(entry.maxWidth, ...entry.tailCells.map(l => l.length), 0),
+    height: out.length,
+    frozen: entry.converted,
+  };
+}
 
 /** 主题 / 样式继承下来的可见样式 */
 interface Style {
@@ -136,7 +239,12 @@ function sgrOf(style: Style, depth: ColorDepth): string {
   return out;
 }
 
-/** 把一个字符串按显示宽度切成 cell（Bun.stringWidth 负责 CJK / emoji） */
+/**
+ * 把一个字符串按显示宽度切成 cell（Bun.stringWidth 负责 CJK / emoji）。
+ *
+ * 会先摘掉 ANSI 转义序列，把它转成每个 cell 的 SGR —— 否则 `\x1b[1m`
+ * 会被当成 4 个可见字符算进宽度。
+ */
 function toCells(
   text: string,
   node: Node,
@@ -146,17 +254,20 @@ function toCells(
   const cells: Line = [];
   // Intl.Segmenter 按 grapheme 切，组合字符 / ZWJ emoji 不会被拆散
   const segmenter = getSegmenter();
-  for (const { segment } of segmenter.segment(text)) {
-    const width = Bun.stringWidth(segment);
-    if (width === 0) {
-      // 组合字符附着到前一格
-      const last = cells[cells.length - 1];
-      if (last) last.ch += segment;
-      continue;
-    }
-    cells.push({ ch: segment, width, node: node.id, semantic, sgr });
-    for (let i = 1; i < width; i++) {
-      cells.push({ ch: "", width: 0, node: node.id, semantic, sgr });
+  for (const run of parseAnsiRuns(text)) {
+    const runSgr = sgr + run.sgr;
+    for (const { segment } of segmenter.segment(run.text)) {
+      const width = Bun.stringWidth(segment);
+      if (width === 0) {
+        // 组合字符附着到前一格
+        const last = cells[cells.length - 1];
+        if (last) last.ch += segment;
+        continue;
+      }
+      cells.push({ ch: segment, width, node: node.id, semantic, sgr: runSgr });
+      for (let i = 1; i < width; i++) {
+        cells.push({ ch: "", width: 0, node: node.id, semantic, sgr: runSgr });
+      }
     }
   }
   return cells;
@@ -206,12 +317,13 @@ function measureText(
   semantic: string | undefined
 ): Box {
   const sgr = sgrOf(style, depth);
-  if (node.value === "") return { lines: [], width: 0, height: 0 };
-  if (width <= 0) return { lines: [], width: 0, height: 0 };
+  if (node.value === "") return { lines: [], width: 0, height: 0, frozen: 0 };
+  if (width <= 0) return { lines: [], width: 0, height: 0, frozen: 0 };
   // Bun.wrapAnsi：ANSI 感知 + CJK/emoji 感知折行，原生实现
   const wrapped = Bun.wrapAnsi(node.value, width, { hard: true, wordWrap: true, trim: false });
   const lines = wrapped.split("\n").map(text => toCells(text, node, sgr, semantic));
-  return { lines, width: Math.max(0, ...lines.map(l => l.length)), height: lines.length };
+  // 文本节点一变就是整体重算，所以没有任何前缀可以保证
+  return { lines, width: Math.max(0, ...lines.map(l => l.length)), height: lines.length, frozen: 0 };
 }
 
 function measureInline(
@@ -229,7 +341,7 @@ function measureInline(
     const box = measureNode(child, innerWidth, Number.MAX_SAFE_INTEGER, style, depth, ctx, semantic);
     for (const line of box.lines) flat.push(...line);
   }
-  if (flat.length === 0) return { lines: [], width: 0, height: 0 };
+  if (flat.length === 0) return { lines: [], width: 0, height: 0, frozen: 0 };
 
   const lines: Line[] = [];
   let current: Line = [];
@@ -244,7 +356,8 @@ function measureInline(
     used += cell.width;
   }
   if (current.length) lines.push(current);
-  return { lines, width: Math.max(0, ...lines.map(l => l.length)), height: lines.length };
+  // inline 流的行由多个子节点拼成，任何一段变化都会影响整行，保守取 0
+  return { lines, width: Math.max(0, ...lines.map(l => l.length)), height: lines.length, frozen: 0 };
 }
 
 /** 出流节点（overlay/portal）不参与常规 flow，最后单独合成 */
@@ -264,7 +377,7 @@ function measureRow(
 ): Box {
   const gap = Number(node.props.gap ?? 0);
   const kids = node.children.filter(inFlow);
-  if (kids.length === 0) return { lines: [], width: 0, height: 0 };
+  if (kids.length === 0) return { lines: [], width: 0, height: 0, frozen: 0 };
 
   const available = Math.max(0, innerWidth - gap * (kids.length - 1));
 
@@ -351,7 +464,9 @@ function measureRow(
     }
     lines.push(line);
   }
-  return { lines, width: Math.max(0, ...lines.map(l => l.length)), height: lines.length };
+  // 一行由所有列拼成，只有所有列的这一行都冻结，整行才冻结
+  const frozen = Math.min(height, ...columns.map(c => c.frozen));
+  return { lines, width: Math.max(0, ...lines.map(l => l.length)), height: lines.length, frozen };
 }
 
 function growOf(node: Node): number {
@@ -374,7 +489,7 @@ function measureColumn(
 ): Box {
   const gap = Number(node.props.gap ?? 0);
   const kids = node.children.filter(inFlow);
-  if (kids.length === 0) return { lines: [], width: 0, height: 0 };
+  if (kids.length === 0) return { lines: [], width: 0, height: 0, frozen: 0 };
 
   const gapTotal = gap * Math.max(0, kids.length - 1);
   const grow = kids.map(growOf);
@@ -420,7 +535,14 @@ function measureColumn(
     }
     lines.push(...measured[i].lines.map(alignLine));
   }
-  return { lines, width: innerWidth, height: lines.length };
+  // 累积到第一个「还有易变尾部」的子节点为止
+  let frozen = 0;
+  for (let i = 0; i < measured.length; i++) {
+    if (i > 0) frozen += gap;
+    frozen += measured[i].frozen;
+    if (measured[i].frozen < measured[i].lines.length) break;
+  }
+  return { lines, width: innerWidth, height: lines.length, frozen };
 }
 
 function measureNode(
@@ -431,10 +553,6 @@ function measureNode(
   depth: ColorDepth,
   ctx: LayoutContext,
   parentSemantic: string | undefined,
-  /**
-   * flex 分配下来的确定高度。与 `props.height` 的区别是它来自父容器的
-   * 剩余空间计算，子节点必须接受这个尺寸（必要时裁剪或补白）。
-   */
   forcedHeight?: number
 ): Box {
   const semantic = semanticFor(node, parentSemantic);
@@ -451,14 +569,34 @@ function measureNode(
   const innerWidth = Math.max(0, availableWidth - frame.left - frame.right);
   const innerHeight = Math.max(0, availableHeight - frame.top - frame.bottom);
 
+  // ── 增量快路径 ───────────────────────────────────────────────────────────
+  // 只有「容器结构没变、只有最后一段内容在增长」时才走这里。
+  const cached = cache.get(node);
+  if (
+    cached &&
+    cached.width === availableWidth &&
+    cached.height === availableHeight &&
+    cached.append &&
+    cached.append.forcedHeight === forcedHeight
+  ) {
+    const fast = tryIncremental(node, cached, innerWidth, innerHeight, style, depth, ctx, semantic);
+    if (fast) {
+      if (ctx.stats) ctx.stats.reused++;
+      return fast;
+    }
+  }
+
+  if (ctx.stats) ctx.stats.measured++;
+
   let box: Box;
   if (node.tag === "text") {
     box = measureInline(node, innerWidth, style, depth, ctx, semantic);
   } else if (node.tag === "row") {
     box = measureRow(node, innerWidth, innerHeight, style, depth, ctx, semantic);
   } else if (node.tag === "spacer") {
-    const size = Number(node.props.size ?? 0);
-    box = { lines: [], width: size, height: 0 };
+    box = { lines: [], width: Number(node.props.size ?? 0), height: 0, frozen: 0 };
+  } else if (node.tag === "stream") {
+    box = measureStreamNode(node, innerWidth, semantic);
   } else {
     box = measureColumn(node, innerWidth, innerHeight, style, depth, ctx, semantic);
   }
@@ -471,52 +609,142 @@ function measureNode(
   const contentWidth = explicitWidth !== undefined ? Math.max(0, explicitWidth - frameX) : box.width;
   const targetHeight =
     explicitHeight !== undefined ? Math.max(0, explicitHeight - frameY) : box.height;
-  // 只有显式声明 overflow: hidden|scroll 的节点才会被父容器的可用高度裁剪。
-  // 默认（未声明）视为 visible —— 否则一个放不下的 <text> 会被静默裁成 0 行。
   const clips = node.props.overflow === "hidden" || node.props.overflow === "scroll";
   const contentHeight = clips
     ? Math.min(targetHeight, Math.max(0, availableHeight - frameY))
     : targetHeight;
-
-  let lines = box.lines.map(line => fitLine(line, contentWidth));
-  // 先按滚动偏移取窗口，再按可视高度裁剪 —— 反过来会把要显示的行提前切掉
   const scrollOffset = Number(node.props.scrollOffset ?? 0);
-  if (scrollOffset > 0) lines = lines.slice(scrollOffset);
-  lines = lines.slice(0, contentHeight);
-  lines = lines.map(line => padLine(line, contentWidth, node.id, semantic));
-  // 显式高度 / flex 分配的高度要撑满，否则 border 只包住内容
-  while (explicitHeight !== undefined && lines.length < contentHeight) {
-    lines.push(blankLine(contentWidth, node.id, semantic));
+
+  // stream 节点的内容行已经是最终形态；没有装饰时直接返回，避免 O(N) 的通用组合
+  if (
+    node.tag === "stream" &&
+    !node.props.border &&
+    node.props.padding === undefined &&
+    node.props.margin === undefined &&
+    !clips &&
+    scrollOffset === 0 &&
+    explicitWidth === undefined &&
+    explicitHeight === undefined
+  ) {
+    cache.set(node, { rev: node.rev, width: availableWidth, height: availableHeight, box, append: undefined });
+    compositeLayers(node, box, availableWidth, availableHeight, style, depth, ctx, semantic);
+    return box;
   }
 
-  // padding / margin / border
-  if (padding.left || padding.right) {
-    lines = lines.map(line => [
-      ...blankLine(padding.left, node.id, semantic),
-      ...line,
-      ...blankLine(padding.right, node.id, semantic),
-    ]);
+  let contentLines = box.lines.map(line => fitLine(line, contentWidth));
+  if (scrollOffset > 0) contentLines = contentLines.slice(scrollOffset);
+  contentLines = contentLines.slice(0, contentHeight);
+  contentLines = contentLines.map(line => padLine(line, contentWidth, node.id, semantic));
+  while (explicitHeight !== undefined && contentLines.length < contentHeight) {
+    contentLines.push(blankLine(contentWidth, node.id, semantic));
   }
-  const paddedWidth = Math.max(0, ...lines.map(l => l.length));
-  for (let i = 0; i < padding.top; i++) lines.unshift(blankLine(paddedWidth, node.id, semantic));
-  for (let i = 0; i < padding.bottom; i++) lines.push(blankLine(paddedWidth, node.id, semantic));
 
-  if (node.props.border) lines = drawBorder(node, lines, style, depth, semantic);
-  if (margin.left || margin.right) {
-    lines = lines.map(line => [
-      ...blankLine(margin.left, node.id, semantic),
-      ...line,
-      ...blankLine(margin.right, node.id, semantic),
-    ]);
+  // ── 组合：prefix + content + suffix ──────────────────────────────────────
+  const bordered = node.props.border
+    ? borderSpec(node, style, depth, semantic, contentWidth + padding.left + padding.right)
+    : null;
+  const innerTotal = contentWidth + padding.left + padding.right;
+  const totalWidth = innerTotal + (bordered ? 2 : 0) + margin.left + margin.right;
+
+  const decorate = (line: Line): Line => {
+    let out = padLine(line, contentWidth, node.id, semantic);
+    if (padding.left || padding.right) {
+      out = [
+        ...blankLine(padding.left, node.id, semantic),
+        ...out,
+        ...blankLine(padding.right, node.id, semantic),
+      ];
+    }
+    if (bordered) {
+      out = [
+        ...bordered.left,
+        ...padLine(out, bordered.innerWidth, node.id, semantic),
+        ...bordered.right,
+      ];
+    }
+    if (margin.left || margin.right) {
+      out = [
+        ...blankLine(margin.left, node.id, semantic),
+        ...out,
+        ...blankLine(margin.right, node.id, semantic),
+      ];
+    }
+    return out;
+  };
+
+  const prefix: Line[] = [];
+  const suffix: Line[] = [];
+  const pushMarginRow = (target: Line[]) => {
+    if (totalWidth > 0) target.push(blankLine(totalWidth, node.id, semantic));
+  };
+  for (let i = 0; i < margin.top; i++) pushMarginRow(prefix);
+  if (bordered) prefix.push(edgeLine(bordered.top, bordered, node, semantic, totalWidth, margin));
+  for (let i = 0; i < padding.top; i++) pushMarginRow(prefix);
+  for (let i = 0; i < padding.bottom; i++) pushMarginRow(suffix);
+  if (bordered) suffix.push(edgeLine(bordered.bottom, bordered, node, semantic, totalWidth, margin));
+  for (let i = 0; i < margin.bottom; i++) pushMarginRow(suffix);
+
+  const lines = [...prefix, ...contentLines.map(decorate), ...suffix];
+  const contentStart = prefix.length;
+  const contentEnd = contentStart + contentLines.length;
+  const frozen = clips || scrollOffset > 0 ? 0 : contentStart + box.frozen;
+
+  const result: Box = { lines, width: totalWidth, height: lines.length, frozen };
+
+  // ── 记录增量元数据 ──────────────────────────────────────────────────────
+  const kids = node.children.filter(inFlow);
+  // 增量快路径只对「纵向堆叠」的容器成立：inline / row 的子节点是在同一行里
+  // 横向拼接的，`lastChildStart` 这种「行号区间」没有意义。
+  const stackable = node.tag !== "text" && node.tag !== "row";
+  if (stackable && !clips && scrollOffset === 0 && kids.length > 0) {
+    const lastIndex = node.children.indexOf(kids[kids.length - 1]);
+    const lastLines = measureNode(
+      kids[kids.length - 1],
+      innerWidth,
+      innerHeight,
+      style,
+      depth,
+      ctx,
+      semantic
+    );
+    const beforeLast = contentEnd - contentStart - lastLines.lines.length;
+    cachedMeta.set(node, {
+      childCount: kids.length,
+      childrenRevSum: node.childrenRevSum,
+      contentStart,
+      contentEnd,
+      lastChildStart: contentStart + Math.max(0, beforeLast),
+      lastChildRev: kids[kids.length - 1].rev,
+      lastChildLines: lastLines.lines.length,
+      lastChildFrozen: lastLines.frozen,
+      suffix,
+      decorate,
+      maxContentWidth: contentWidth,
+      forcedHeight,
+      childIndex: lastIndex,
+    });
+  } else {
+    cachedMeta.delete(node);
   }
-  for (let i = 0; i < margin.top; i++) {
-    lines.unshift(blankLine(Math.max(0, ...lines.map(l => l.length)), node.id, semantic));
-  }
-  for (let i = 0; i < margin.bottom; i++) {
-    lines.push(blankLine(Math.max(0, ...lines.map(l => l.length)), node.id, semantic));
-  }
+
+  cache.set(node, { rev: node.rev, width: availableWidth, height: availableHeight, box: result, append: cachedMeta.get(node) });
 
   // overlay / portal（SPEC §9.4）：出流子节点按 (x, y) 合成到本节点之上
+  compositeLayers(node, result, availableWidth, availableHeight, style, depth, ctx, semantic);
+  return result;
+}
+
+/** 把 layer 子节点合成到父节点之上 */
+function compositeLayers(
+  node: ElementNode,
+  result: Box,
+  availableWidth: number,
+  availableHeight: number,
+  style: Style,
+  depth: ColorDepth,
+  ctx: LayoutContext,
+  semantic: string | undefined
+): void {
   for (const layer of node.children) {
     if (!isElement(layer) || layer.tag !== "layer") continue;
     const lx = Number(layer.props.x ?? 0);
@@ -531,8 +759,7 @@ function measureNode(
       semantic
     );
     for (let i = 0; i < layerBox.lines.length; i++) {
-      const y = ly + i;
-      const target = lines[y];
+      const target = result.lines[ly + i];
       if (!target) continue;
       const source = layerBox.lines[i];
       for (let x = 0; x < source.length; x++) {
@@ -541,22 +768,161 @@ function measureNode(
         const cell = source[x];
         if (cell.width === 0) continue;
         target[cx] = cell;
-        // 宽字符：把后继占位也覆盖掉，避免出现半格残留
         for (let k = 1; k < cell.width; k++) {
-          const placeholder = cx + k;
-          if (placeholder < target.length) {
-            target[placeholder] = { ...cell, ch: "", width: 0 };
-          }
+          if (cx + k < target.length) target[cx + k] = { ...cell, ch: "", width: 0 };
         }
       }
     }
   }
+}
 
-  return {
-    lines,
-    width: Math.max(0, ...lines.map(l => l.length)),
-    height: lines.length,
+/** 增量元数据单独存，避免 Box 上挂内部字段 */
+const cachedMeta = new WeakMap<Node, AppendMeta>();
+
+/**
+ * 尝试增量重建。
+ *
+ * 两种情形：
+ *
+ * A. **追加了新子节点** —— 前面的子节点通过 `childrenRevSum` 的差被证明没变，
+ *    所以直接把新子节点的行接在内容区末尾，再把 suffix 补回去。
+ * B. **只有最后一个子节点变了** —— 从它的起点截断，重新接上它的行与 suffix。
+ *
+ * 两种情形都只做 O(新增行数 + suffix) 的工作，与已累积行数无关。
+ */
+function tryIncremental(
+  node: ElementNode,
+  cached: CacheEntry,
+  innerWidth: number,
+  innerHeight: number,
+  style: Style,
+  depth: ColorDepth,
+  ctx: LayoutContext,
+  semantic: string | undefined
+): Box | null {
+  const meta = cached.append;
+  if (!meta) return null;
+  const kids = node.children.filter(inFlow);
+  if (kids.length < meta.childCount) return null;
+
+  const lines = cached.box.lines;
+  const appended = kids.length > meta.childCount;
+
+  if (appended) {
+    // 前缀（原有子节点）必须原封不动：childrenRevSum 的差恰好等于新增部分的 rev 和
+    let tailSum = 0;
+    for (let i = meta.childCount; i < kids.length; i++) tailSum += kids[i].rev;
+    if (node.childrenRevSum - tailSum !== meta.childrenRevSum) return null;
+
+    lines.length = meta.contentEnd;
+    let addedFrozen = 0;
+    let addedLines = 0;
+    for (let i = meta.childCount; i < kids.length; i++) {
+      const childBox = measureNode(kids[i], innerWidth, innerHeight, style, depth, ctx, semantic);
+      for (const line of childBox.lines) lines.push(meta.decorate(line));
+      addedFrozen += childBox.frozen;
+      addedLines += childBox.lines.length;
+    }
+    const previousContent = meta.contentEnd - meta.contentStart;
+    meta.contentEnd = meta.contentStart + previousContent + addedLines;
+    meta.childCount = kids.length;
+    meta.childrenRevSum = node.childrenRevSum;
+    meta.lastChildRev = kids[kids.length - 1].rev;
+    meta.lastChildLines = addedLines || meta.lastChildLines;
+    meta.lastChildStart = meta.contentEnd - meta.lastChildLines;
+    lines.push(...meta.suffix);
+    cached.box.height = lines.length;
+    // 原有内容此刻全部冻结，新增部分只冻结各自的 frozen 前缀
+    cached.box.frozen = meta.contentStart + previousContent + addedFrozen;
+    return cached.box;
+  }
+
+  // 情形 B：只有最后一个子节点变了
+  const last = kids[kids.length - 1];
+  const onlyLastChanged =
+    kids.length === meta.childCount &&
+    last.rev !== meta.lastChildRev &&
+    node.childrenRevSum - meta.childrenRevSum === last.rev - meta.lastChildRev;
+  if (!onlyLastChanged) return null;
+
+  const childBox = measureNode(last, innerWidth, innerHeight, style, depth, ctx, semantic);
+  // 关键：截断点必须用**父数组里已有的**那部分（旧 frozen），而不是子节点
+  // 现在的新 frozen —— 子节点的冻结前缀会增长，多出来的那些行父数组里还没有。
+  const keepFromChild = Math.min(meta.lastChildFrozen, meta.lastChildLines);
+  const keep = meta.lastChildStart + keepFromChild;
+  if (keep > lines.length) return null;
+  lines.length = keep;
+  for (let i = keepFromChild; i < childBox.lines.length; i++) {
+    lines.push(meta.decorate(childBox.lines[i]));
+  }
+  lines.push(...meta.suffix);
+  meta.contentEnd = keep + (childBox.lines.length - keepFromChild);
+  meta.lastChildLines = childBox.lines.length;
+  meta.lastChildFrozen = childBox.frozen;
+  meta.lastChildRev = last.rev;
+  meta.childrenRevSum = node.childrenRevSum;
+  cached.box.height = lines.length;
+  cached.box.frozen = meta.lastChildStart + childBox.frozen;
+  return cached.box;
+}
+
+interface BorderSpec {
+  top: Line;
+  bottom: Line;
+  left: Line;
+  right: Line;
+  innerWidth: number;
+}
+
+function borderSpec(
+  node: ElementNode,
+  style: Style,
+  depth: ColorDepth,
+  semantic: string | undefined,
+  innerWidth: number
+): BorderSpec {
+  const kind = typeof node.props.border === "string" ? node.props.border : "round";
+  const glyphs = BORDER_GLYPHS[kind as keyof typeof BORDER_GLYPHS] ?? BORDER_GLYPHS.round;
+  const borderStyle: Style = {
+    ...style,
+    fg: (node.props.borderColor as string) ?? style.fg,
+    bold: false,
+    dim: false,
+    italic: false,
+    underline: false,
+    strikethrough: false,
   };
+  const sgr = sgrOf(borderStyle, depth);
+  const horizontal = (left: string, middle: string, right: string): Line => {
+    const cells = toCells(left, node, sgr, semantic);
+    // 总宽 = innerWidth + 2：左边 1 格 + 中间 innerWidth 格 + 右边 1 格
+    while (cells.length < innerWidth + 1) cells.push(...toCells(middle, node, sgr, semantic));
+    cells.push(...toCells(right, node, sgr, semantic));
+    return cells.slice(0, innerWidth + 2);
+  };
+  return {
+    top: horizontal(glyphs[0], glyphs[1], glyphs[2]),
+    bottom: horizontal(glyphs[5], glyphs[6], glyphs[7]),
+    left: toCells(glyphs[3], node, sgr, semantic),
+    right: toCells(glyphs[4], node, sgr, semantic),
+    innerWidth,
+  };
+}
+
+function edgeLine(
+  edge: Line,
+  spec: BorderSpec,
+  node: ElementNode,
+  semantic: string | undefined,
+  totalWidth: number,
+  margin: Insets
+): Line {
+  const out = [
+    ...blankLine(margin.left, node.id, semantic),
+    ...edge,
+    ...blankLine(margin.right, node.id, semantic),
+  ];
+  return padLine(out, totalWidth, node.id, semantic).slice(0, totalWidth);
 }
 
 const BORDER_GLYPHS = {
@@ -610,6 +976,10 @@ export interface Frame {
   lines: Line[];
   width: number;
   height: number;
+  /** 视口顶部对应的内容行号 */
+  top: number;
+  /** 内容总行数 */
+  total: number;
   /** 语义 hit test：返回 `message:<id>` 这类标识（SPEC §4.2） */
   semanticAt(x: number, y: number): string | undefined;
   /** 返回节点 id */
@@ -625,28 +995,28 @@ export function layout(
   context: Partial<LayoutContext> = {}
 ): Frame {
   const ctx: LayoutContext = { ...DEFAULT_CONTEXT, ...context };
-  const cached = cache.get(root);
-  let box: Box;
-  if (cached && cached.rev === root.rev && cached.width === width && cached.height === height) {
-    box = cached.box;
-    if (ctx.stats) ctx.stats.reused++;
-  } else {
-    box = measureNode(root, width, height, {}, ctx.depth, ctx, undefined);
-    cache.set(root, { rev: root.rev, width, height, box });
-    if (ctx.stats) ctx.stats.measured++;
-  }
+  const box = measureNode(root, width, height, {}, ctx.depth, ctx, undefined);
 
-  const lines = box.lines.map(line => fitLine(line, width));
-  const padded = lines.map(line => padLine(line, width, root.id));
-  // 补齐到视口高度：帧始终是 width×height，hit test / 差分都不需要额外边界判断
-  while (padded.length < height) padded.push(blankLine(width, root.id));
+  const total = box.lines.length;
+  const maxTop = Math.max(0, total - height);
+  const requested = ctx.scrollTop ?? 0;
+  const top = requested === "bottom" ? maxTop : Math.max(0, Math.min(requested, maxTop));
+
+  // 只把可视窗口复制成帧：与总行数无关
+  const lines: Line[] = [];
+  for (let i = top; i < Math.min(top + height, total); i++) {
+    lines.push(padLine(fitLine(box.lines[i], width), width, root.id));
+  }
+  while (lines.length < height) lines.push(blankLine(width, root.id));
 
   return {
-    lines: padded,
+    lines,
     width,
     height,
+    top,
+    total,
     nodeAt(x, y) {
-      const line = padded[y];
+      const line = lines[y];
       if (!line) return undefined;
       let used = 0;
       for (const cell of line) {
@@ -656,7 +1026,7 @@ export function layout(
       return line[line.length - 1]?.node;
     },
     semanticAt(x, y) {
-      const line = padded[y];
+      const line = lines[y];
       if (!line) return undefined;
       let used = 0;
       for (const cell of line) {
@@ -666,7 +1036,7 @@ export function layout(
       return line[line.length - 1]?.semantic;
     },
     text() {
-      return padded
+      return lines
         .map(line => line.map(c => (c.width === 0 ? "" : c.ch)).join("").replace(/\s+$/, ""))
         .join("\n");
     },

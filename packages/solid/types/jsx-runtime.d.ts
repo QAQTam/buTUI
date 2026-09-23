@@ -134,6 +134,19 @@ export namespace JSX {
     fit?: "contain" | "cover" | "fill";
   }
 
+  interface StreamProps {
+    /**
+     * 只增不改的行数组（同一个引用）。`version` 变化时布局会增量读取新增行。
+     */
+    lines?: readonly { text: string }[];
+    /** 触发重新测量的版本号 */
+    version?: number;
+    /** 未定稿的尾部文本（可能多行） */
+    tail?: string;
+    color?: string;
+    semantic?: Semantic;
+  }
+
   interface LayerProps extends BoxProps {
     /** 相对父节点左上角的偏移（cell 单位） */
     x?: number;
@@ -153,5 +166,7 @@ export namespace JSX {
     image: ImageProps;
     /** 出流覆盖层：不参与 flow，按 (x, y) 合成到父节点之上 */
     layer: LayerProps;
+    /** 流式文本节点：O(1) 追加 */
+    stream: StreamProps;
   }
 }

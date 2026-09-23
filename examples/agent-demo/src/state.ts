@@ -5,6 +5,7 @@
  * 目的只是证明 UI 层能正确响应。
  */
 import { createSignal } from "solid-js";
+import { type StreamSource, createMarkdownStream } from "@butui/stream";
 
 export interface ToolRun {
   name: string;
@@ -16,6 +17,8 @@ export interface AgentMessage {
   id: string;
   role: "user" | "assistant";
   text: string;
+  /** 正在流式输出时挂一个 markdown 流；结束后置空，退回普通 text */
+  source?: StreamSource;
   tool?: ToolRun;
   streaming?: boolean;
 }
@@ -65,9 +68,20 @@ export const [size, setSize] = createSignal({ columns: 80, rows: 24 });
 export const [status, setStatus] = createSignal("ready");
 
 const REPLIES = [
-  "Solid 2 RC 的 createRenderer 契约直接可用，host ops 只有 13 个。",
-  "Bun.stringWidth / wrapAnsi / sliceAnsi 覆盖了文本层最难的部分。",
-  "布局、cell buffer、输入解析这三块要自己写，其余都能靠主线 API。",
+  "**结论**：`@solidjs/universal` 的 `createRenderer` 契约直接可用，host ops 只有 13 个。\n\n" +
+    "- 文本层交给 `Bun.stringWidth` / `wrapAnsi` / `sliceAnsi`\n" +
+    "- 布局、cell buffer、输入解析要自己写\n\n" +
+    "> 其余都能靠 Bun 主线 API 撑住。",
+  "流式渲染的关键是**增量定稿边界**：\n\n" +
+    "1. 纯文本 —— 最后一个空格之前\n" +
+    "2. markdown —— 块状态机 + 内联定界符闭合\n\n" +
+    "这样每条 delta 都是 `O(delta + W)`。",
+  "实测数据：\n\n" +
+    "| N | 每次 delta |\n" +
+    "|---|---|\n" +
+    "| 100 | 0.007ms |\n" +
+    "| 9000 | 0.002ms |\n\n" +
+    "与已累积长度无关。",
 ];
 
 let replyIndex = 0;
@@ -79,10 +93,12 @@ export function submitInput(text: string): void {
 
   const userMessage: AgentMessage = { id: nextId("m"), role: "user", text: trimmed };
   const assistantId = nextId("m");
+  const source = createMarkdownStream({ width: Math.max(20, size().columns - 8) });
   const assistant: AgentMessage = {
     id: assistantId,
     role: "assistant",
     text: "",
+    source,
     streaming: true,
     tool: { name: "grep -rn auth src/", status: "running" },
   };
@@ -104,17 +120,16 @@ export function submitInput(text: string): void {
   const reply = REPLIES[replyIndex++ % REPLIES.length];
   let index = 0;
   const timer = setInterval(() => {
-    index += 2;
+    const chunk = reply.slice(index, index + 3);
+    index += 3;
+    if (chunk) source.push(chunk);
     const done = index >= reply.length;
-    setMessages(list =>
-      list.map(m =>
-        m.id === assistantId
-          ? { ...m, text: reply.slice(0, index), streaming: !done }
-          : m
-      )
-    );
     if (done) {
       clearInterval(timer);
+      source.flush();
+      setMessages(list =>
+        list.map(m => (m.id === assistantId ? { ...m, streaming: false, source } : m))
+      );
       setStatus("ready");
       // 顺便弹一个权限请求，演示 modal + focus trap
       setPermission({

@@ -16,6 +16,7 @@
     "@butui/layout": "workspace:*",
     "@butui/renderer": "workspace:*",
     "@butui/solid": "workspace:*",
+    "@butui/stream": "workspace:*",
     "@butui/terminal": "workspace:*",
     "@butui/test": "workspace:*",
     "@types/bun": "latest",

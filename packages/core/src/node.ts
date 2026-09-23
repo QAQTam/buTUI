@@ -23,6 +23,14 @@ export interface NodeBase {
   readonly children: Node[];
   /** 节点自身 + 子树的修改版本号 */
   rev: number;
+  /**
+   * 所有子节点 `rev` 之和。
+   *
+   * 因为 rev 只增不减，这个和在 O(1) 时间里就能判断「某个前缀有没有被改过」：
+   * 前缀和不变 ⟺ 前缀里每个子节点都没动。增量布局靠它判断「只有最后一段
+   * 内容在增长」而不用扫描全部子节点。
+   */
+  childrenRevSum: number;
   /** 语义标识，供 hit test 返回 `message:<id>` / `tool:<callId>`（SPEC §4.2） */
   semantic?: string;
 }
@@ -53,6 +61,7 @@ export function isText(node: Node): node is TextNode {
   return node.kind !== "element";
 }
 
+export const stats = { created: 0, touched: 0 };
 let nextId = 1;
 let revision = 1;
 
@@ -63,17 +72,24 @@ export function currentRevision(): number {
 
 /** 把一个节点及其全部祖先标记为脏 */
 export function touch(node: Node): void {
+  stats.touched++;
   const rev = ++revision;
   let cur: Node | null = node;
+  let previousRev = cur.rev;
   while (cur) {
-    if (cur.rev === rev) break;
     cur.rev = rev;
-    cur = cur.parent;
+    const parent: Node | null = cur.parent;
+    if (!parent) break;
+    // 维护父节点的子节点 rev 和：cur 的 rev 从 previousRev 变成 rev
+    parent.childrenRevSum += rev - previousRev;
+    previousRev = parent.rev;
+    cur = parent;
   }
 }
 
 function base(kind: NodeKind): NodeBase {
-  return { id: nextId++, kind, parent: null, children: [], rev: ++revision };
+  stats.created++;
+  return { id: nextId++, kind, parent: null, children: [], rev: ++revision, childrenRevSum: 0 };
 }
 
 export function createElement(tag: string, staticProps?: Record<string, unknown>): ElementNode {
@@ -122,7 +138,10 @@ function applySemantic(node: ElementNode, value: unknown): void {
 export function insertNode(parent: Node, node: Node, anchor?: Node): void {
   if (node.parent === parent) {
     const from = parent.children.indexOf(node);
-    if (from !== -1) parent.children.splice(from, 1);
+    if (from !== -1) {
+      parent.children.splice(from, 1);
+      parent.childrenRevSum -= node.rev;
+    }
   } else if (node.parent) {
     removeNode(node.parent, node);
   }
@@ -130,6 +149,7 @@ export function insertNode(parent: Node, node: Node, anchor?: Node): void {
   if (at === -1) parent.children.push(node);
   else parent.children.splice(at, 0, node);
   node.parent = parent;
+  parent.childrenRevSum += node.rev;
   touch(parent);
 }
 
@@ -137,6 +157,7 @@ export function removeNode(parent: Node, node: Node): void {
   const at = parent.children.indexOf(node);
   if (at === -1) return;
   parent.children.splice(at, 1);
+  parent.childrenRevSum -= node.rev;
   node.parent = null;
   touch(parent);
 }

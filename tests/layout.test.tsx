@@ -30,7 +30,8 @@ describe("布局引擎（SPEC §9.1 P0）", () => {
     const lines = app.text().split("\n");
     expect(lines[0]).toBe("╭──────────╮");
     expect(lines.at(-1)).toBe("╰──────────╯");
-    expect(lines.every(l => Bun.stringWidth(l) === 12)).toBe(true);
+    // 宽度要看帧本身：text() 会裁掉行尾空白
+    expect(app.frame().lines.every(l => l.length === 12)).toBe(true);
     expect(lines.some(l => l.includes("a"))).toBe(true);
     expect(lines.some(l => l.includes("b"))).toBe(true);
     app.unmount();

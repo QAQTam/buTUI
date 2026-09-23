@@ -248,6 +248,14 @@ getFirstChild  getNextSibling  cleanupNodes?
 
 §5.5「不从 OpenTUI 复制 reconciler」因此升级为「不需要 reconciler」。
 
+**5.6.5b Solid 2 的 store setter 改成了 draft 风格**
+
+```ts
+setStore(s => { s.lines.push(line); });   // 不是 setStore("lines", i, v)
+```
+
+旧签名会直接抛 `t is not a function`。
+
 **5.6.6 Bun 侧缺口**
 
 - `Bun.Image` 没有 raw pixel 出口 → Kitty / iTerm2 协议可直接用，sixel 与
@@ -255,6 +263,41 @@ getFirstChild  getNextSibling  cleanupNodes?
 - 鼠标 SGR 解析、Kitty keyboard protocol、focus events、bracketed paste、
   终端能力探测全部需要自己实现（`@butui/terminal` 已实现）
 - `Bun.Terminal`（PTY）可用于 PTY 冒烟与回放测试
+
+---
+
+### 5.7 流式渲染 O(1) 契约（v0.1 实现）
+
+§9.5「动画只在需要时运行」和 §17「流式输出不整屏闪烁」在实现时收敛成一条
+硬契约：
+
+> 每条 delta 的处理成本是 `O(|delta| + W)`（W = 折行宽度），与已累积长度 N 无关。
+
+四个环节各自定死边界，缺一不可：
+
+1. **增量折行**：定稿边界是「最后一个空格之前」。注意 `Bun.wrapAnsi` 的
+   `placeWord`（`src/jsc/bindings/wrapAnsi.cpp:570`）在 `wordLen > columns` 时
+   走 hard wrap 填满当前行，**正在增长的词会翻转它自己的落位决策**，所以
+   「折出 ≥2 行就定稿前面的行」是错的。
+2. **增量 markdown**：块状态机逐行定稿；未闭合的 `**bold` 只进 volatile，
+   闭合后整段 `Bun.markdown.render` 重渲染（摊销 O(1)）。
+3. **增量布局**：节点增加 `childrenRevSum`（子节点 rev 之和，O(1) 判断前缀
+   是否未变），`Box` 增加 `frozen`（前 N 行永不再变）。父容器据此只重建尾部。
+4. **视口窗口**：每帧只复制可视行。
+
+**明确不用 `<For>` 渲染流。** 实测 Solid 的 `For` 每次都对数组做 O(N)
+reconcile（N=9000 时 4.4 ms/push）。`createStore(..., { shallow: true })` 能让
+它变常数，但 shallow store 的子数组不再被代理、`push` 不触发更新，是假象。
+
+改用**单个 `<stream>` 节点** + 只增不改的 `lines` 数组：Solid 侧每次 push 只
+产生一次 `setProp`，布局侧只转换新增行。这是真正的 O(1)，且仍然是细粒度的
+—— 变化被限制在一个属性上，不重建任何子树。
+
+实测（`scripts/stream-bench.tsx`）：N=100 → 0.051 ms/delta，N=9000 →
+0.021 ms/delta；markdown N=50 → 0.062 ms/delta，N=6000 → 0.041 ms/delta。
+
+**已知取舍**（markdown 流）：不支持 setext 标题（需要回溯整个段落）；
+表格按块关闭时整块渲染；不识别缩进代码块。
 
 ---
 

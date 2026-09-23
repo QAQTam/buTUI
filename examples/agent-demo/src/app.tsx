@@ -3,6 +3,7 @@
  * demo 里。`@butui/components` / `@butui/agent` 会把它们抽成正式包。
  */
 import { For, Show } from "solid-js";
+import { StreamMarkdown } from "@butui/stream";
 import {
   type AgentMessage,
   type PermissionRequest,
@@ -34,7 +35,9 @@ function MessageView(props: { msg: AgentMessage }) {
           <text color="warning">streaming…</text>
         </Show>
       </row>
-      <text color="fg">{props.msg.text}</text>
+      <Show when={props.msg.source} fallback={<text color="fg">{props.msg.text}</text>}>
+        {source => <StreamMarkdown source={source()} />}
+      </Show>
       <Show when={props.msg.tool}>
         {tool => (
           <row gap={1}>
