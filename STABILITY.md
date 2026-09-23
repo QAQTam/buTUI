@@ -177,6 +177,10 @@ const editor = createTextEditor({ onSubmit: value => session.submit(value) });
 
 `<Input>` 的按键优先级：`props.onKey`（返回 true 即消费）→ 编辑器。
 
+多行输入用 `<Textarea editor={editor} height={5} lineNumbers />`（同一个编辑器
+模型，`multiline: true`）。它做软换行（按 grapheme + 显示宽度）、垂直滚动跟随
+光标、可选行号；**多行模式下 ↑↓ 是上下移动光标**，单行模式才是翻历史。
+
 ### 4.8 列表与选择：`createSelection` + `<List>` / `<VirtualList>`
 
 ```tsx

@@ -3,6 +3,8 @@ import { createModifiers, type KeyEvent } from "@butui/core";
 import {
   type TextEditor,
   createTextEditor,
+  lineBounds,
+  moveVertical,
   nextGrapheme,
   prevGrapheme,
   wordBoundaryLeft,
@@ -225,5 +227,44 @@ describe("文本编辑模型（SPEC §10.1 Input 的地基）", () => {
     // 控制字符不插入
     expect(editor.handleKey(key("tab", "\t"))).toBe(false);
     expect(editor.value()).toBe("x");
+  });
+});
+
+describe("多行：lineBounds / moveVertical", () => {
+  test("lineBounds 给出所在行的 [start, end)", () => {
+    const text = "abc\ndef\ngh";
+    expect(lineBounds(text, 0)).toEqual({ start: 0, end: 3 });
+    expect(lineBounds(text, 3)).toEqual({ start: 0, end: 3 }); // 行尾（换行符处）
+    expect(lineBounds(text, 4)).toEqual({ start: 4, end: 7 });
+    expect(lineBounds(text, 9)).toEqual({ start: 8, end: 10 });
+  });
+
+  test("上下移动保持列位置", () => {
+    const text = "abc\ndefgh\nij";
+    expect(moveVertical(text, 1, 1)).toBe(5); // 第 1 列 → 第二行第 1 列
+    expect(moveVertical(text, 5, -1)).toBe(1);
+    expect(moveVertical(text, 5, 1)).toBe(11); // 第三行第 1 列（i 之后）
+  });
+
+  test("目标行更短时夹到行尾，再移回来列会丢（有意的取舍）", () => {
+    const text = "abcdef\ngh\nxyz";
+    const down = moveVertical(text, 5, 1); // 第 5 列 → 第二行只有 2 列
+    expect(down).toBe(9); // 第二行行尾
+    expect(moveVertical(text, down, 1)).toBe(12); // 第三行第 1 列（不是第 5 列）
+  });
+
+  test("第一行往上 / 最后一行往下都不动", () => {
+    const text = "ab\ncd";
+    expect(moveVertical(text, 1, -1)).toBe(1);
+    expect(moveVertical(text, 4, 1)).toBe(4);
+  });
+
+  test("多行编辑器里 ↑↓ 移动光标而不是翻历史", () => {
+    const editor = createTextEditor({ multiline: true, value: "one\ntwo" });
+    editor.setCursor(1);
+    editor.handleKey(key("down"));
+    expect(editor.cursor()).toBe(5);
+    editor.handleKey(key("up"));
+    expect(editor.cursor()).toBe(1);
   });
 });

@@ -99,6 +99,36 @@ export function wordBoundaryRight(text: string, offset: number): number {
   return i;
 }
 
+/** offset 所在行的 `[start, end)`（`end` 不含换行符本身） */
+export function lineBounds(text: string, offset: number): { start: number; end: number } {
+  const at = Math.max(0, Math.min(offset, text.length));
+  const start = text.lastIndexOf("\n", Math.max(0, at - 1)) + 1;
+  const next = text.indexOf("\n", at);
+  return { start, end: next === -1 ? text.length : next };
+}
+
+/**
+ * 上下移动光标（多行编辑用）。
+ *
+ * 列位置按**code unit 偏移**保持：从短行移到长行会夹到行尾，再移回来列就
+ * 丢了。这是有意的取舍 —— 记住「想要的列」需要额外状态，而 TUI 里上下移动
+ * 通常是为了快速跳行，不是精确列对齐。
+ */
+export function moveVertical(text: string, offset: number, delta: 1 | -1): number {
+  const { start, end } = lineBounds(text, offset);
+  const column = Math.max(0, Math.min(offset, text.length) - start);
+  if (delta === -1) {
+    if (start === 0) return Math.max(0, Math.min(offset, text.length));
+    const prevEnd = start - 1; // 上一行的换行符位置
+    const prevStart = text.lastIndexOf("\n", Math.max(0, prevEnd - 1)) + 1;
+    return Math.min(prevStart + column, prevEnd);
+  }
+  if (end >= text.length) return Math.max(0, Math.min(offset, text.length));
+  const nextStart = end + 1;
+  const nextEnd = text.indexOf("\n", nextStart);
+  return Math.min(nextStart + column, nextEnd === -1 ? text.length : nextEnd);
+}
+
 export function createTextEditor(options: TextEditorOptions = {}): TextEditor {
   const historyLimit = options.historyLimit ?? 50;
   const clearOnSubmit = options.clearOnSubmit ?? true;
@@ -199,6 +229,11 @@ export function createTextEditor(options: TextEditorOptions = {}): TextEditor {
     const { name, text: input, modifiers } = event;
     const word = modifiers.ctrl || modifiers.alt;
 
+    /** 多行模式的上下移动：光标上下走一行，列尽量保持 */
+    const moveVerticalCursor = (delta: 1 | -1): void => {
+      setCursor(moveVertical(text, pos, delta));
+    };
+
     switch (name) {
       case "left":
         setCursor(word ? wordBoundaryLeft(text, pos) : prevGrapheme(text, pos));
@@ -228,10 +263,13 @@ export function createTextEditor(options: TextEditorOptions = {}): TextEditor {
         submit();
         return true;
       case "up":
-        browseHistory(-1);
+        // 多行模式：上下移动光标；单行模式：翻历史
+        if (options.multiline) moveVerticalCursor(-1);
+        else browseHistory(-1);
         return true;
       case "down":
-        browseHistory(1);
+        if (options.multiline) moveVerticalCursor(1);
+        else browseHistory(1);
         return true;
       default:
         break;

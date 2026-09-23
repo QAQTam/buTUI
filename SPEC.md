@@ -516,6 +516,14 @@ Solid 的 provider 在自己的 root 里延迟读取 `props.children`，直接�
   "wheel"` 时有值）。同一段代码里鼠标修饰键位也修了：鼠标用 4/8/16
   （shift/meta/ctrl），不是键盘那套 1/2/4，原来 shift 会被认成 ctrl。
 
+**多行输入（`<Textarea>`）。** 软换行是纯函数 `wrapText(text, width)`：按
+grapheme 切、按 `Bun.stringWidth` 算宽度，产出「视觉行 + 它在源文本里的
+`[start, end)` + 逻辑行号」。光标定位（`locateCursor`）与垂直滚动都建立在这张
+映射上，组件里不存第二份文本。垂直滚动由光标驱动（跑出视口才动窗口）。
+
+顺带修了编辑器一个语义错误：**多行模式下 ↑↓ 原来走的是「翻历史」**。现在
+多行走 `moveVertical`（保持列位置，短行夹到行尾），单行才翻历史。
+
 **选择模型的两个扩展**（写 `<Select>` / `<Tree>` 时补的）：
 
 - `isSelectable(i)`：↑↓ 跳过不可选项（分隔线 / 分组标题 / disabled），
@@ -1064,7 +1072,8 @@ P1：
 - 布局原语 `Box` / `Row` / `Column` / `Spacer` / `Text`（`@butui/solid` 的
   intrinsic elements，不是包装组件）
 - `ScrollBox`：`<box overflow="scroll" scrollOffset={n}>`（布局层实现）
-- `Input` / `Textarea`：`createTextEditor` + `<Input>`（`multiline` 即 Textarea）
+- `Input` / `Textarea`：`createTextEditor` + `<Input>`（单行）/ `<Textarea>`
+  （多行：软换行 + 垂直滚动 + 行号）
 - `List` / `VirtualList`：`createSelection` + `<List>` / `<VirtualList>`
   （见 §5.12）
 - `Overlay` / `Portal` / `Dialog`：`<Modal>` / `<Dialog>`（根 layer + 焦点
