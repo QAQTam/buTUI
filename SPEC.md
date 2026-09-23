@@ -323,6 +323,34 @@ reconcile（N=9000 时 4.4 ms/push）。`createStore(..., { shallow: true })` �
 
 ---
 
+### 5.9 Undo 落地（v0.1 实现）
+
+§8 已实现为 `@butui/undo`：
+
+- `patch.ts`：**行级编辑脚本** `{ at, remove[], insert[] }`。可逆是结构性的
+  （交换 remove/insert），应用时自带上下文校验，不需要解析 unified diff 文本。
+  末尾换行必须单独记录 —— `""` → `"hello\n"` 只差一个 insert，但还原不回来。
+  `reversePatch` 要把 `at` 从 before 坐标换算到 after 坐标（加上前面所有 op
+  的行数增量），照抄 `at` 是错的。
+- `journal.ts`：只追加的 `WorkspaceChange`（toolCallId / beforeHash / afterHash
+  / reverse patch / files / reversible / todoBefore）。
+- `plan.ts`：本地推导 undo 预览 + 执行。
+
+四条实现约束：
+
+1. **链式修改只校验最后一次的 hash**。`v1→v2→v3` 里拿 c1 的 `afterHash(v2)`
+   跟磁盘比必然误报冲突；只有每个文件最后一次改动的 afterHash 该跟磁盘比，
+   中间态在应用过程中用暂存内容逐级校验。
+2. **revert 全有或全无**：任何冲突都导致零写入，避免半截状态。
+3. **`at` 是坐标不是序号**：反向 patch 必须做坐标换算。
+4. **分支可见性**：子分支能看到父分支 `fromMsgId` 之前的历史（§8.2），
+   由 `visibleOnBranch()` 沿祖先链判断。
+
+另外，`tool.result` 增加可选字段 `workspace: [{ path, before, after }]`，
+由工具执行器填 —— 这样「改了什么」也走事件协议，回放时 journal 能完整重建。
+
+---
+
 ### 5.5 禁止事项
 
 - 不从 OpenTUI 复制 reconciler

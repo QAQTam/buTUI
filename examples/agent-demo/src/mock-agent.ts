@@ -9,6 +9,7 @@
  * NDJSON over stdio / WebSocket，UI 一行都不用改。
  */
 import type { AgentEvent, UiCommand } from "@butui/agent";
+import type { WorkspaceFs } from "@butui/undo";
 
 export interface MockAgent {
   handle(command: UiCommand): void;
@@ -42,7 +43,27 @@ const SCRIPTS = [
 let turnSeq = 0;
 let scriptIndex = 0;
 
-export function createMockAgent(emit: (event: AgentEvent) => void): MockAgent {
+/** Demo 用的内存工作区：不碰真实文件，但走完全一样的 journal / patch 流程 */
+export function createMemoryWorkspace(initial: Record<string, string>) {
+  const files = new Map(Object.entries(initial));
+  const fs: WorkspaceFs = {
+    read: path => files.get(path),
+    write: (path, text) => {
+      files.set(path, text);
+    },
+  };
+  return { fs, files };
+}
+
+export interface MockAgentOptions {
+  /** 工具「改文件」时用的工作区 */
+  workspace?: { fs: WorkspaceFs; files: Map<string, string> };
+}
+
+export function createMockAgent(
+  emit: (event: AgentEvent) => void,
+  options: MockAgentOptions = {}
+): MockAgent {
   const timers = new Set<ReturnType<typeof setTimeout>>();
 
   const later = (ms: number, fn: () => void) => {
@@ -108,7 +129,22 @@ export function createMockAgent(emit: (event: AgentEvent) => void): MockAgent {
       },
     });
     later(220, () => {
-      emit({ type: "tool.result", callId: `c${turnSeq}`, result: { status: "success", output: "ok" } });
+      // 模拟一次文件编辑：改之前读、改之后写，并把变更报给 UI
+      const workspace = options.workspace;
+      let change: Array<{ path: string; before: string; after: string }> | undefined;
+      if (workspace) {
+        const path = "src/auth.ts";
+        const before = workspace.fs.read(path) ?? "";
+        const after = before.replace("// TODO: extract", "// extracted\n// TODO: extract");
+        const next = before === after ? before + `// edit ${turnSeq}\n` : after;
+        workspace.fs.write(path, next);
+        change = [{ path, before, after: next }];
+      }
+      emit({
+        type: "tool.result",
+        callId: `c${turnSeq}`,
+        result: { status: "success", output: "ok", workspace: change },
+      });
       emit({
         type: "todo.update",
         todos: [

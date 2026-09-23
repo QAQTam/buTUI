@@ -87,6 +87,17 @@ export function MessageView(props: { session: Session; message: AgentMessage }) 
       </Show>
 
       <For each={tools()}>{call => <ToolCard call={call} />}</For>
+
+      <Show when={props.session.state.selectedMessage === props.message.id}>
+        <MessageActions
+          message={props.message}
+          onUndo={() => props.session.requestUndoPreview(props.message.id)}
+          onFork={() => props.session.send({ type: "session.fork", msgid: props.message.msgid })}
+          onRetry={() => props.session.send({ type: "session.fork", msgid: props.message.msgid })}
+          onCopy={() => props.session.send({ type: "artifact.open", id: props.message.id })}
+          onInspect={() => props.session.send({ type: "artifact.open", id: props.message.id })}
+        />
+      </Show>
     </box>
   );
 }
@@ -94,9 +105,58 @@ export function MessageView(props: { session: Session; message: AgentMessage }) 
 export function MessageList(props: { session: Session }) {
   return (
     <box gap={1}>
-      <For each={props.session.state.messages}>
+      {/* 只渲染当前分支可见的消息（SPEC §8.2 的分支式历史） */}
+      <For each={props.session.visibleMessages()}>
         {message => <MessageView session={props.session} message={message} />}
       </For>
+    </box>
+  );
+}
+
+/** SPEC §8.3 的 MessageActionBar */
+export function MessageActions(props: {
+  message: AgentMessage;
+  onUndo: () => void;
+  onFork: () => void;
+  onRetry: () => void;
+  onCopy: () => void;
+  onInspect?: () => void;
+}) {
+  return (
+    <row gap={2} semantic={`message:${props.message.id}:actions`}>
+      <text color="accent" semantic="action:undo" onClick={props.onUndo}>
+        [u] undo
+      </text>
+      <text color="accent" semantic="action:fork" onClick={props.onFork}>
+        [f] fork
+      </text>
+      <text color="accent" semantic="action:retry" onClick={props.onRetry}>
+        [r] retry
+      </text>
+      <text color="accent" semantic="action:copy" onClick={props.onCopy}>
+        [c] copy
+      </text>
+      <Show when={props.onInspect}>
+        <text color="accent" semantic="action:inspect" onClick={() => props.onInspect?.()}>
+          [i] inspect
+        </text>
+      </Show>
+    </row>
+  );
+}
+
+/** SPEC §10.2：revert 冲突对话框。冲突时**一个文件都不会写**。 */
+export function RevertConflictDialog(props: { files: string[]; onClose: () => void }) {
+  return (
+    <box border="double" borderColor="danger" padding={1} gap={1} width={56} semantic="revert:conflict">
+      <text color="danger" bold>
+        ⚠ revert 冲突
+      </text>
+      <text color="muted">以下文件已被外部修改，未做任何写入：</text>
+      <For each={props.files}>{file => <text color="fg">· {file}</text>}</For>
+      <text color="accent" semantic="revert:close" onClick={props.onClose}>
+        [关闭]
+      </text>
     </box>
   );
 }
@@ -323,6 +383,13 @@ export function AgentView(props: { session: Session }) {
       </Show>
 
       {/* when 直接给对象，Show 的回调才会拿到对象而不是 boolean */}
+      <Show when={session.state.revertConflicts.length > 0}>
+        <RevertConflictDialog
+          files={session.state.revertConflicts}
+          onClose={() => session.send({ type: "cancel" })}
+        />
+      </Show>
+
       <Show when={session.state.permissions[0]}>
         {request => (
           <PermissionDialog

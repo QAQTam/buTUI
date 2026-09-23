@@ -20,6 +20,7 @@
     "@butui/stream": "workspace:*",
     "@butui/terminal": "workspace:*",
     "@butui/test": "workspace:*",
+    "@butui/undo": "workspace:*",
     "@types/bun": "latest",
     "solid-js": "2.0.0-rc.9",
     "typescript": "^5.9.3"

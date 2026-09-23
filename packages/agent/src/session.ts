@@ -12,6 +12,16 @@
  * 3. **UI 不直接改状态，只发 UiCommand**（SPEC §13.2）。
  */
 import { createSignal, createStore, flush } from "solid-js";
+import {
+  Journal,
+  fileChange,
+  type UndoPlan,
+  type WorkspaceChange,
+  type WorkspaceFs,
+  applyUndo as applyUndoPlan,
+  planEffects,
+  planUndo,
+} from "@butui/undo";
 import { type StreamSource, createMarkdownStream } from "@butui/stream";
 import type {
   AgentEvent,
@@ -54,6 +64,10 @@ export interface SessionState {
   activeBranch: string;
   status: SessionStatus;
   undoPreview?: UndoPreview;
+  /** 最近一次 revert 因外部修改而失败的文件（SPEC §8.6 revert.conflict） */
+  revertConflicts: string[];
+  /** 当前选中的消息（SPEC §8.3：点击消息后显示 MessageActionBar） */
+  selectedMessage?: string;
   mode: SandboxMode;
   lastError?: string;
   /** 下一个消息序号（分支 / undo 的锚点） */
@@ -75,6 +89,8 @@ export function initialState(branchId = "main"): SessionState {
     ],
     activeBranch: branchId,
     status: "idle",
+    revertConflicts: [],
+    selectedMessage: undefined,
     mode: "workspace-write",
     nextMsgId: 1,
   };
@@ -165,6 +181,7 @@ export function reduce(state: SessionState, event: AgentEvent): void {
 
     case "undo.apply": {
       state.undoPreview = undefined;
+      state.revertConflicts = [];
       return;
     }
 
@@ -180,6 +197,11 @@ export function reduce(state: SessionState, event: AgentEvent): void {
 
     case "branch.switch": {
       state.activeBranch = event.branchId;
+      return;
+    }
+
+    case "revert.conflict": {
+      state.revertConflicts = event.files;
       return;
     }
 
@@ -230,8 +252,36 @@ export interface SessionOptions {
   onCommand?: (command: UiCommand) => void;
 }
 
+/** 分支可见性：子分支能看到父分支 `fromMsgId` 之前的历史（SPEC §8.2） */
+export function visibleOnBranch(
+  message: AgentMessage,
+  branchId: string,
+  branches: readonly Branch[]
+): boolean {
+  if (message.branchId === branchId) return true;
+  let current = branches.find(b => b.id === branchId);
+  while (current?.parentBranchId) {
+    if (message.branchId === current.parentBranchId) {
+      return current.fromMsgId === undefined || message.msgid <= current.fromMsgId;
+    }
+    const parentId: string = current.parentBranchId;
+    current = branches.find(b => b.id === parentId);
+  }
+  return false;
+}
+
+export interface UndoOutcome {
+  plan: UndoPlan;
+  ok: boolean;
+  applied: string[];
+  conflicts: string[];
+  skipped: string[];
+}
+
 export interface Session {
   readonly state: SessionState;
+  /** 工作区变更日志（SPEC §8.4） */
+  readonly journal: Journal;
   /** 消费一个 agent 事件 */
   dispatch(event: AgentEvent): void;
   /** 发一条 UI 命令 */
@@ -254,6 +304,27 @@ export interface Session {
   resize(): void;
   /** 取消息的完整文本（含流式中） */
   textOf(messageId: string): string;
+  /** 当前分支可见的消息（SPEC §8.2 的分支式历史） */
+  visibleMessages(): AgentMessage[];
+  /** 选中 / 取消选中一条消息 */
+  selectMessage(messageId: string | null): void;
+  /** 关掉 undo 预览（用户取消） */
+  dismissUndoPreview(): void;
+  /** 记录一条工作区变更 */
+  recordChange(change: Parameters<Journal["record"]>[0]): WorkspaceChange;
+  /**
+   * 本地计算 undo 预览（SPEC §8.3）。
+   *
+   * 不需要 agent 告诉 UI「会影响什么」—— buTUI 自己持有日志。
+   */
+  previewUndo(target: string, read?: (path: string) => string | undefined): UndoPlan;
+  /**
+   * 计算预览并挂到 UI 上（SPEC §8.3：点 Undo 后必须先进预览）。
+   * 返回计划，方便调用方展示细节。
+   */
+  requestUndoPreview(target: string, read?: (path: string) => string | undefined): UndoPlan;
+  /** 执行 undo：branch 只切分支，revert 反向 patch 工作区（SPEC §8.4） */
+  undo(target: string, mode: "branch" | "revert", fs: WorkspaceFs): UndoOutcome;
 }
 
 export function createSession(options: SessionOptions): Session {
@@ -277,9 +348,15 @@ export function createSession(options: SessionOptions): Session {
     return source;
   };
 
+  const journal = new Journal();
+
   const session: Session = {
     get state() {
       return state;
+    },
+
+    get journal() {
+      return journal;
     },
 
     dispatch(event) {
@@ -290,6 +367,27 @@ export function createSession(options: SessionOptions): Session {
           const message = ensureAssistantMessage(s, event.turnId);
           ensureSource(message).push(event.delta);
           rawText.set(message.id, (rawText.get(message.id) ?? "") + event.delta);
+        });
+        return;
+      }
+
+      if (event.type === "tool.result" && event.result.workspace?.length) {
+        // 工具执行器报告了工作区变更 → 记录进 journal（SPEC §8.4）
+        //
+        // 查 call 必须在 setter 内部：tool.start 的写入还没 flush，
+        // 在外面读 state.toolCalls 会是旧快照（turnId 会记成空串）。
+        setState(s => {
+          const call = s.toolCalls.find(c => c.id === event.callId);
+          journal.record({
+            toolCallId: event.callId,
+            turnId: call?.turnId ?? "",
+            reversible: call?.reversible ?? true,
+            files: (event.result.workspace ?? []).map(f =>
+              fileChange(f.path, f.before, f.after)
+            ),
+            todoBefore: s.todos.map(t => ({ ...t })),
+          });
+          reduce(s, event);
         });
         return;
       }
@@ -361,6 +459,68 @@ export function createSession(options: SessionOptions): Session {
 
     textOf(messageId) {
       return rawText.get(messageId) ?? state.messages.find(m => m.id === messageId)?.text ?? "";
+    },
+
+    visibleMessages() {
+      const branchId = state.activeBranch;
+      const branches = state.branches;
+      return state.messages.filter(m => visibleOnBranch(m, branchId, branches));
+    },
+
+    selectMessage(messageId) {
+      setState(s => {
+        s.selectedMessage = messageId ?? undefined;
+      });
+    },
+
+    dismissUndoPreview() {
+      setState(s => {
+        s.undoPreview = undefined;
+        s.revertConflicts = [];
+      });
+    },
+
+    recordChange(change) {
+      return journal.record(change);
+    },
+
+    previewUndo(target, read) {
+      return planUndo({
+        target,
+        messages: state.messages,
+        turns: state.turns,
+        todos: state.todos,
+        changes: journal.changes,
+        branchId: state.activeBranch,
+        read,
+      });
+    },
+
+    requestUndoPreview(target, read) {
+      const plan = session.previewUndo(target, read);
+      session.dispatch({ type: "undo.preview", target, effects: planEffects(plan) });
+      return plan;
+    },
+
+    undo(target, mode, fs) {
+      const plan = session.previewUndo(target, fs.read);
+      const result = applyUndoPlan(plan, fs, mode);
+      if (!result.ok) {
+        session.dispatch({ type: "revert.conflict", files: result.conflicts });
+        return { plan, ...result };
+      }
+
+      if (mode === "branch") {
+        // SPEC §8.2：不删历史，从目标之后开一条新分支
+        const branchId = `b${state.branches.length}`;
+        session.dispatch({ type: "branch.create", from: String(plan.targetMsgId), branchId });
+        session.dispatch({ type: "branch.switch", branchId });
+      }
+      // SPEC §8.4 第 5 步：重算 todo 与 UI 状态
+      session.dispatch({ type: "todo.update", todos: plan.todos });
+      // undo.apply 会清掉预览
+      session.dispatch({ type: "undo.apply", target, mode });
+      return { plan, ...result };
     },
   };
 

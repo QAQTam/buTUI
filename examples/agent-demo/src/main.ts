@@ -14,7 +14,7 @@ import { createComponent, render } from "@butui/solid";
 import { TerminalSession, terminalSize } from "@butui/terminal";
 import { createEffect, createRoot, flush } from "solid-js";
 import { App } from "./app.tsx";
-import { createMockAgent } from "./mock-agent.ts";
+import { createMemoryWorkspace, createMockAgent } from "./mock-agent.ts";
 import { input, permission, setInput, setPermission, setSize, setStatus, size } from "./state.ts";
 
 const terminal = new TerminalSession({ altScreen: true, mouse: true, bracketedPaste: true });
@@ -32,12 +32,18 @@ const session = createSession({
   },
 });
 
+// Demo 的工作区：内存实现，但走的是真实的 journal / diff / patch 路径
+const workspace = createMemoryWorkspace({
+  "src/auth.ts": "export function login() {\n  // TODO: extract\n  return token;\n}\n",
+  "src/util.ts": "export const noop = () => {};\n",
+});
+
 const agent = createMockAgent((event: AgentEvent) => {
   // Agent → UI 的事件入口。真实实现里这里是 NDJSON decoder。
   session.dispatch(event);
   setStatus(session.state.status);
   setPermission(session.state.permissions.length > 0);
-});
+}, { workspace });
 
 function paint(): void {
   const { columns, rows } = size();
@@ -86,6 +92,18 @@ terminal.onEvent(event => {
     const { name, text, modifiers } = event;
     if (modifiers.ctrl && name === "c") return quit();
 
+    // ctrl+u：对最后一条 assistant 消息做 undo 预览（SPEC §8.3）
+    if (modifiers.ctrl && name === "u") {
+      const last = [...session.state.messages]
+        .reverse()
+        .find(m => m.role === "assistant");
+      if (last) {
+        session.selectMessage(last.id);
+        session.requestUndoPreview(last.id, workspace.fs.read);
+      }
+      return;
+    }
+
     // 权限弹窗期间吃掉输入（modal focus trap 的简化版）
     if (permission()) {
       if (name === "y") {
@@ -131,17 +149,23 @@ terminal.onEvent(event => {
       if (request) session.respondPermission(request.id, false);
       return;
     }
+    if (semantic === "action:undo") {
+      const target = session.state.selectedMessage;
+      if (target) session.requestUndoPreview(target, workspace.fs.read);
+      return;
+    }
     if (semantic.startsWith("message:")) {
-      session.send({ type: "undo.preview", target: semantic.slice("message:".length) });
+      // 点消息 → 选中（显示 MessageActionBar）
+      session.selectMessage(semantic.split(":")[1]);
       return;
     }
     if (semantic === "undo:confirm") {
       const preview = session.state.undoPreview;
-      if (preview) session.send({ type: "undo.apply", target: preview.target, mode: "branch" });
+      if (preview) session.undo(preview.target, "branch", workspace.fs);
       return;
     }
-    if (semantic === "undo:cancel") {
-      session.send({ type: "cancel" });
+    if (semantic === "undo:cancel" || semantic === "revert:close") {
+      session.dismissUndoPreview();
     }
   }
 });

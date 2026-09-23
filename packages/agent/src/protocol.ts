@@ -53,6 +53,14 @@ export interface ToolResult {
   status: "success" | "error";
   output?: string;
   error?: string;
+  /**
+   * 该工具对工作区造成的变更（SPEC §8.4）。
+   *
+   * 由**工具执行器**填：它知道改前的内容和改后的内容。buTUI 拿到之后
+   * 自己算 diff / hash 并写进 journal，于是 undo 预览可以本地推导出来，
+   * 不需要 agent 额外告诉 UI「会影响什么」。
+   */
+  workspace?: Array<{ path: string; before: string; after: string }>;
 }
 
 export interface Todo {
@@ -126,6 +134,7 @@ export type AgentEvent =
   | { type: "undo.apply"; target: string; mode: "branch" | "revert" }
   | { type: "branch.create"; from: string; branchId: string }
   | { type: "branch.switch"; branchId: string }
+  | { type: "revert.conflict"; files: string[] }
   | { type: "turn.end"; turnId: string; reason: string }
   | { type: "error"; message: string };
 

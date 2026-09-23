@@ -2,14 +2,15 @@
 
 > 面向 coding agent 的 Agent UI Runtime。设计文档见 [SPEC.md](./SPEC.md)。
 
-当前状态：**M1/M2 骨架 + 流式渲染 O(1) + 事件协议驱动的 agent UI 已跑通**，
-`bun test` 101 个用例全绿。
+当前状态：**M1/M2 骨架 + 流式渲染 O(1) + 事件协议驱动的 agent UI +
+分支式 Undo 已跑通**，`bun test` 127 个用例全绿。
 
 ```
 Solid signal / store
   → @butui/solid   (13 个 host ops，Solid 自带 reconciler)
   → @butui/core    (节点树 / 失效传播 / focus / 事件冒泡 / theme / ANSI 解析)
   → @butui/agent   (事件协议 reducer + Session + SPEC §10.2 组件)
+  → @butui/undo    (workspace 日志 + 行级 patch + 分支式 undo)
   → @butui/stream  (增量折行 + 增量 markdown，O(delta) 定稿)
   → @butui/layout  (flex 子集 + 增量合成 + 视口窗口)
   → @butui/renderer(cell buffer + 逐行差分 + SGR 状态机)
@@ -124,6 +125,48 @@ tests/agent-replay.test.tsx
   语义标识覆盖 message / tool / todo / permission / undo / status
 ```
 
+## 分支式 Undo（SPEC §8）
+
+Undo 不是 Ctrl+Z。buTUI 自己持有工作区变更日志，所以**预览是本地算出来的**，
+不需要 agent 告诉 UI「会影响什么」：
+
+```ts
+// 工具执行器报告它改了什么（走事件协议，因此可回放）
+session.dispatch({
+  type: "tool.result",
+  callId: "c1",
+  result: { status: "success", workspace: [{ path: "src/auth.ts", before, after }] },
+});
+
+// 点击消息 → 预览
+const plan = session.requestUndoPreview(messageId, fs.read);
+// → Messages: 2 条 / Files: 2 个 / Todo: 回滚 / Irreversible: npm publish / Conflicts: 1 个
+
+// 确认
+session.undo(messageId, "branch", fs);   // 只切分支，不动工作区
+session.undo(messageId, "revert", fs);   // 反向 patch 工作区
+```
+
+四个硬保证：
+
+1. **不删历史**（§8.2）。`branch` 模式从目标之后开新分支，原分支完整保留；
+   `visibleMessages()` 按祖先链 + `fromMsgId` 过滤出当前分支可见的消息。
+2. **冲突就不写**（§8.4）。revert 是全有或全无：任何文件与记录的 `afterHash`
+   对不上，一个文件都不写，并抛 `revert.conflict`。
+3. **链式修改只校验最后一次**。`v1→v2→v3` 里拿 c1 的 `afterHash(v2)` 比当前
+   内容必然误报；只有每个文件最后一次改动的 hash 该跟磁盘比，中间态在应用
+   过程中用暂存内容逐级校验。
+4. **不可逆操作显式列出**（§8.5）。`git push` / `npm publish` / `curl -X POST`
+   / `rm -rf` 会被识别，撤销时跳过并提示，而不是假装撤销成功。
+
+patch 用的是**编辑脚本**而不是 unified diff 文本：
+
+```ts
+{ at, remove: string[], insert: string[] }   // 可逆是结构性的，应用时自带上下文校验
+```
+
+`tests/undo-patch.test.ts` 用 300 轮随机文本验证两个方向都能精确还原。
+
 ## 快速开始
 
 ```bash
@@ -142,7 +185,10 @@ bun --conditions=browser run scripts/snapshot.tsx 72 22
 ```
 
 Demo 操作：打字 → `Enter` 发送 → `Tab` 切焦点 → 鼠标点消息展开 action bar →
-点 todo 勾选 → 权限弹窗按 `y`/`n` → `Ctrl+C` 退出。
+点 `[u] undo` 看预览 → `Ctrl+U` 对最后一条消息做 undo 预览 →
+权限弹窗按 `y`/`n` → `Ctrl+C` 退出。
+
+Demo 的工作区是**内存实现**，但走的是完全一样的 journal / diff / patch 路径。
 
 ## 包
 
@@ -151,6 +197,7 @@ Demo 操作：打字 → `Enter` 发送 → `Tab` 切焦点 → 鼠标点消息�
 | `@butui/core` | 节点树、`rev` 失效传播、`childrenRevSum`、focus、事件冒泡、theme、ANSI 解析 |
 | `@butui/solid` | `@solidjs/universal` host ops、JSX 类型、Bun 编译插件 |
 | `@butui/agent` | 事件协议（NDJSON）、Session reducer、SPEC §10.2 组件 |
+| `@butui/undo` | 工作区变更日志、行级 patch、undo 预览与执行（SPEC §8） |
 | `@butui/stream` | 增量折行、增量 markdown、Solid 绑定与组件 |
 | `@butui/layout` | flex 子集 → cell 网格，带 `frozen` 的增量合成与视口窗口 |
 | `@butui/renderer` | cell → ANSI，逐行差分 + SGR 状态机 |
@@ -208,7 +255,19 @@ setStore(s => { s.lines.push(line); });   // 不是 setStore("lines", i, v)
 `<Show when={getSource(id)}>` 永远停在第一次求值的结果上。要么把资源放进
 store，要么配一个版本信号让调用方建立依赖（`@butui/agent` 用的是后者）。
 
-### 6. 在响应式 root 外部批量注入事件后要 `settle()`
+### 6. 读 store 必须在 setter **内部**
+
+Solid 2 的写入延迟到 flush，所以「先 `setState` 再读 `state`」拿到的是旧快照：
+
+```ts
+setState(s => { s.calls.push(call); });
+const call = state.calls.find(...);        // ← 查不到！
+```
+
+`@butui/agent` 里 `tool.result` 要把 workspace 变更记到对应的 tool call 上，
+第一版就是在 setter 外面查的，结果 journal 里的 `turnId` 全是空串。
+
+### 7. 在响应式 root 外部批量注入事件后要 `settle()`
 
 ```ts
 for (const event of events) session.dispatch(event);

@@ -13,6 +13,7 @@
         "@butui/stream": "workspace:*",
         "@butui/terminal": "workspace:*",
         "@butui/test": "workspace:*",
+        "@butui/undo": "workspace:*",
         "@types/bun": "latest",
         "solid-js": "2.0.0-rc.9",
         "typescript": "^5.9.3",
@@ -95,6 +96,14 @@
         "solid-js": "2.0.0-rc.9",
       },
     },
+    "packages/undo": {
+      "name": "@butui/undo",
+      "version": "0.1.0",
+      "dependencies": {
+        "@butui/agent": "workspace:*",
+        "@butui/core": "workspace:*",
+      },
+    },
   },
   "packages": {
     "@butui/agent": ["@butui/agent@workspace:packages/agent"],
@@ -114,6 +123,8 @@
     "@butui/terminal": ["@butui/terminal@workspace:packages/terminal"],
 
     "@butui/test": ["@butui/test@workspace:packages/test"],
+
+    "@butui/undo": ["@butui/undo@workspace:packages/undo"],
 
     "@emnapi/core": ["@emnapi/core@1.11.3", "", { "dependencies": { "@emnapi/wasi-threads": "1.2.3", "tslib": "^2.4.0" } }, "sha512-zLpS5asjEb7lq8jYLq37N6XKaE41DIexlY1rF/z4/tIl3wo13Sqm28fRyfIsKZD+NZ8mM5RoKkpW/rBcuoSZSg=="],
 
