@@ -10,14 +10,23 @@
  * 它们都在 `createTuiApp` 里。这里只剩「视图 + 键位策略」。
  */
 import { type AgentEvent, type UiCommand, createSession } from "@butui/agent";
+import { createTextEditor } from "@butui/components";
 import { ImageLayer } from "@butui/image";
 import { type TuiApp, createTuiApp } from "@butui/runtime";
 import { App } from "./app.tsx";
 import { createMemoryWorkspace, createMockAgent } from "./mock-agent.ts";
-import { input, permission, setInput, setPermission, setStatus } from "./state.ts";
+import { permission, setPermission, setStatus } from "./state.ts";
 
 /** 原生图片协议（Kitty / iTerm2 / Sixel）不进 cell 网格，由 ImageLayer 叠加 */
 const imageLayer = new ImageLayer();
+
+/**
+ * 输入框的编辑模型：光标、词跳转、历史、提交全在里面。
+ * 应用不用再写 backspace / ctrl+u / ↑↓ —— 那是 `@butui/components` 的事。
+ */
+const editor = createTextEditor({
+  onSubmit: value => session.submit(value),
+});
 
 const session = createSession({
   width: () => Math.max(20, app.size().columns - 6),
@@ -45,6 +54,7 @@ const app: TuiApp = createTuiApp({
     <App
       session={session}
       size={runtime.size}
+      editor={editor}
       imageLayer={imageLayer}
       onImageLoad={() => runtime.requestPaint()}
     />
@@ -52,7 +62,7 @@ const app: TuiApp = createTuiApp({
   scroll: () => "bottom",
   afterDraw: (frame, stats) => imageLayer.render(frame, stats.changed),
   onKey: event => {
-    const { name, text, modifiers } = event;
+    const { name, modifiers } = event;
 
     // ctrl+u：对最后一条 assistant 消息做 undo 预览（SPEC §8.3）
     if (modifiers.ctrl && name === "u") {
@@ -78,23 +88,7 @@ const app: TuiApp = createTuiApp({
       return true;
     }
 
-    if (name === "enter") {
-      const value = input();
-      if (value.trim() !== "") {
-        session.submit(value);
-        setInput("");
-      }
-      return true;
-    }
-    // Solid 2 的 signal 写入延迟到 flush：累加必须用 updater
-    if (name === "backspace") {
-      setInput(prev => prev.slice(0, -1));
-      return true;
-    }
-    if (text && !modifiers.ctrl && !modifiers.alt) {
-      setInput(prev => prev + text);
-      return true;
-    }
+    // 其余按键交给 <Input> 里的编辑器（它挂在焦点节点上）
     return false;
   },
   onMouse: event => {

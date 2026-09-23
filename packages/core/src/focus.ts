@@ -14,6 +14,24 @@ export interface FocusState {
 
 const states = new WeakMap<Node, FocusState>();
 
+/**
+ * 焦点变更订阅。
+ *
+ * 焦点是「应用级共享状态」，但组件不该为了知道「我是不是焦点」而去拿 root
+ * （组件拿不到 root）。所以 core 负责通知，运行时把它转成响应式信号，组件再
+ * 通过上下文读 —— 这样 `isFocused(node)` 是 O(1) 且响应式的。
+ */
+const focusListeners = new Set<(root: Node) => void>();
+
+export function onFocusChange(listener: (root: Node) => void): () => void {
+  focusListeners.add(listener);
+  return () => focusListeners.delete(listener);
+}
+
+function notifyFocus(root: Node): void {
+  for (const listener of focusListeners) listener(root);
+}
+
 export function getFocusState(root: Node): FocusState {
   let state = states.get(root);
   if (!state) {
@@ -59,7 +77,10 @@ function move(root: Node, delta: number): Node | undefined {
   const next = index === -1
     ? (delta > 0 ? order[0] : order[order.length - 1])
     : order[(index + delta + order.length) % order.length];
-  state.current = next.id;
+  if (state.current !== next.id) {
+    state.current = next.id;
+    notifyFocus(root);
+  }
   return next;
 }
 
@@ -72,7 +93,11 @@ export function focusPrev(root: Node): Node | undefined {
 }
 
 export function focusNode(root: Node, node: Node | undefined): void {
-  getFocusState(root).current = node ? node.id : null;
+  const state = getFocusState(root);
+  const next = node ? node.id : null;
+  if (state.current === next) return;
+  state.current = next;
+  notifyFocus(root);
 }
 
 export function isFocused(root: Node, node: Node): boolean {
@@ -87,8 +112,10 @@ export function trapFocus(root: Node, scope: Node): () => void {
   state.trap = scope;
   const order = focusOrder(root);
   if (order.length > 0) state.current = order[0].id;
+  notifyFocus(root);
   return () => {
     state.trap = previousTrap;
     state.current = previousCurrent;
+    notifyFocus(root);
   };
 }

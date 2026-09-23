@@ -73,10 +73,24 @@ export type ColorDepth = "truecolor" | "256" | "16" | "none";
  * token 名 → ANSI SGR。用 Bun.color 做转换（SPEC §5.1）。
  * 非法 token（不是已知主题键、也不是颜色字面量）会被忽略，避免污染输出。
  */
-export function resolveColor(value: unknown, depth: ColorDepth): string {
+export type ColorLayer = "fg" | "bg";
+
+/**
+ * 前景序列 → 背景序列。
+ *
+ * `Bun.color` 只产出前景（`\x1b[38;...m`），没有背景变体，所以背景色要把
+ * `38;` 换成 `48;`。少了这一步，`bg="..."` 会被当成前景色画出来 —— 看着
+ * 「有颜色」，其实完全不是想要的效果。
+ */
+function toBackground(sgr: string): string {
+  return sgr.replace(/\x1b\[38;/g, "\x1b[48;");
+}
+
+export function resolveColor(value: unknown, depth: ColorDepth, layer: ColorLayer = "fg"): string {
   if (typeof value !== "string") return "";
   if (depth === "none" || value === "default") return "";
   const named = (active as unknown as Record<string, string>)[value] ?? value;
   const format = depth === "truecolor" ? "ansi-16m" : depth === "256" ? "ansi-256" : "ansi-16";
-  return Bun.color(named, format) ?? "";
+  const sgr = Bun.color(named, format) ?? "";
+  return layer === "bg" ? toBackground(sgr) : sgr;
 }

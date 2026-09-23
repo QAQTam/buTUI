@@ -441,6 +441,37 @@ signal / 定时器 / 异步图片加载
 属性，逼着作者为了「能 Tab 到」多包一层 `<box>`。列表项 / 菜单行 / 按钮都是
 text，现在 `TextProps` 与 `BoxProps` 的交互属性完全对齐。
 
+**焦点可观察（v0.1 补齐）。** 组件拿不到 root，所以「我是不是焦点」过去只能由
+应用自己维护一份 signal（demo 就这么干的）。现在拆成三层：
+
+```text
+core     焦点变化时通知（onFocusChange）
+runtime  转成响应式信号，并用 Solid context 提供给整棵视图树
+组件     ref 拿自己的节点 → useFocus()(node) → O(1) 且响应式
+```
+
+`@butui/solid` 里的 `provideFocusScope` 有个细节：`children` 必须是 **getter**。
+Solid 的 provider 在自己的 root 里延迟读取 `props.children`，直接传值会让子树在
+上下文生效前就创建完，`useFocus()` 全部拿到 null（这个坑是实测出来的，见
+`packages/solid/src/focus-context.ts`）。
+
+顺带补了 `ref`：`applyRef` 一直都在 host ops 里，但 JSX 类型没暴露它，
+所以「组件拿自己的节点」这条路之前是走不通的。
+
+**输入模型（v0.1 补齐）。** `@butui/components` 提供 `createTextEditor`（纯逻辑）
++ `<Input>`（渲染）。编辑器覆盖光标移动、插入删除、词跳转、`ctrl+a/e/u/k/w`、
+`↑↓` 历史、多行、粘贴；`<Input>` 负责光标样式与水平滚动。
+
+两个实测教训：
+
+1. **编辑器内部不能直接读写 signal。** 第一次实现「读 `value()` → 算新值 →
+   写 signal」，连续输入直接丢字符 —— 正是 §5.6.3 的延迟写入。改成
+   「真值放局部变量、signal 只当版本号、访问器读真值」之后才对。
+   这条同样适用于运行时自己的 `focusedId()`。
+2. **`Bun.color` 只产前景序列。** `resolveColor` 一直把它当背景用，于是
+   `bg="..."` 实际画的是前景色（看着有颜色，完全不是想要的效果）。现在
+   `resolveColor(value, depth, "bg")` 会把 `38;` 换成 `48;`。
+
 稳定性的完整契约见 **`STABILITY.md`**（哪些是稳定层、兼容规则、已知缺口）。
 
 ---
@@ -479,7 +510,7 @@ text，现在 `TextProps` 与 `BoxProps` 的交互属性完全对齐。
   协议探测、PNG 编解码、Kitty/iTerm2/Sixel/半块/占位符、安全加载、图形图层
 
 @butui/components
-  Box / Text / Input / Select / ScrollBox / Overlay / Code / Diff
+  createTextEditor / <Input>（v0.1）；Select / List / ScrollBox / Table 待做
 
 @butui/agent
   Message / ToolCard / TodoPanel / PermissionDialog / ArtifactCanvas

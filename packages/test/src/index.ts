@@ -16,12 +16,13 @@ import {
   eventTarget,
   focusNode,
   getFocusState,
+  onFocusChange,
   walk,
 } from "@butui/core";
 import { type Frame, layout } from "@butui/layout";
 import { type RenderStats, Renderer, plainText } from "@butui/renderer";
-import { render } from "@butui/solid";
-import { flush } from "solid-js";
+import { provideFocusScope, render } from "@butui/solid";
+import { createSignal, flush } from "solid-js";
 
 export interface MountOptions {
   width?: number;
@@ -63,7 +64,16 @@ export function mount(component: () => unknown, options: MountOptions = {}): Mou
   let rows = height;
   const root = createElement("root");
 
-  const dispose = render(() => component() as Node, root);
+  // 与 @butui/runtime 一致：把焦点作用域提供给视图，组件里的 useFocus() 才有意义
+  const [focusedId, setFocusedId] = createSignal<number | null>(null);
+  const offFocus = onFocusChange(changed => {
+    if (changed === root) setFocusedId(getFocusState(root).current);
+  });
+  const dispose = render(
+    () =>
+      provideFocusScope({ focusedId, focus: node => focusNode(root, node) }, () => component()) as Node,
+    root
+  );
   flush();
 
   let output = "";
@@ -130,6 +140,7 @@ export function mount(component: () => unknown, options: MountOptions = {}): Mou
       return renderer.draw(frame());
     },
     unmount() {
+      offFocus();
       dispose();
     },
   };

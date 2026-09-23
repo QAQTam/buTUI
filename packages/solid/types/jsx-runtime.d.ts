@@ -25,10 +25,20 @@ export namespace JSX {
 
   type Accessor<T> = () => T;
 
+  /**
+   * 元素引用。回调收到的是 buTUI 的 `Node`。
+   *
+   * 这是「组件需要知道自己的节点」的唯一途径 —— 焦点判断（`useFocus()`）、
+   * 手动 `focusNode`、测量都靠它。
+   */
+  interface RefProp {
+    ref?: (node: Node) => void;
+  }
+
   /** SPEC §4.2：hit test 返回的语义标识，如 `message:<id>` / `tool:<callId>` */
   type Semantic = string;
 
-  interface BoxProps {
+  interface BoxProps extends RefProp {
     children?: Element;
     /** 布局方向。`box` 默认 column，等价于 `column` */
     direction?: "row" | "column";
@@ -73,7 +83,7 @@ export namespace JSX {
   interface RowProps extends BoxProps {}
   interface ColumnProps extends BoxProps {}
 
-  interface TextProps {
+  interface TextProps extends RefProp {
     children?: Element;
     /** 内联样式：text 是 inline 容器，子节点横向流动 */
     fg?: string;
@@ -127,7 +137,7 @@ export namespace JSX {
     onKey?: (event: KeyEvent) => void;
   }
 
-  interface MarkdownProps {
+  interface MarkdownProps extends RefProp {
     children?: Element;
     /** markdown 源文本 */
     source?: string;
@@ -136,7 +146,7 @@ export namespace JSX {
     semantic?: Semantic;
   }
 
-  interface CodeProps {
+  interface CodeProps extends RefProp {
     children?: Element;
     source?: string;
     language?: string;
@@ -154,7 +164,7 @@ export namespace JSX {
    *   - 原生协议（Kitty / iTerm2 / Sixel）→ `graphic` + `rect`，
    *     布局只补空白占位 cell 并打标记，真正的图形由 ImageLayer 叠加
    */
-  interface ImageNodeProps {
+  interface ImageNodeProps extends RefProp {
     /** 每行一个 ANSI 字符串；行内 SGR 会被布局解析成 per-cell 样式 */
     lines?: readonly string[];
     /** 原生图形 id；布局把它盖在 `rect` 覆盖的 cell 上 */
@@ -167,7 +177,7 @@ export namespace JSX {
     semantic?: Semantic;
   }
 
-  interface StreamProps {
+  interface StreamProps extends RefProp {
     /**
      * 只增不改的行数组（同一个引用）。`version` 变化时布局会增量读取新增行。
      */

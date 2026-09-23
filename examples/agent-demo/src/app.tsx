@@ -7,8 +7,9 @@
 import { AgentView, ArtifactCanvas, type Session } from "@butui/agent";
 import { type ImageLayer, artifactImageRenderer } from "@butui/image";
 import { Show } from "solid-js";
+import { type TextEditor, Input } from "@butui/components";
 import type { TuiSize } from "@butui/runtime";
-import { input, permission, status } from "./state.ts";
+import { permission, status } from "./state.ts";
 
 /** 宽终端才开侧栏；窄终端里 artifact 面板会把对话挤没 */
 const PANEL_WIDTH = 42;
@@ -18,6 +19,8 @@ export interface AppProps {
   session: Session;
   /** 由 @butui/runtime 提供：resize 后读到的就是新值 */
   size: () => TuiSize;
+  /** 输入框的编辑模型（光标 / 历史 / 提交都在里面） */
+  editor: TextEditor;
   /** 图片 artifact 走 Kitty / iTerm2 / Sixel / 半块（SPEC §12），由图层统一摆放 */
   imageLayer?: ImageLayer;
   /** 图片是异步加载的：加载完要主动重绘一帧 */
@@ -79,12 +82,16 @@ export function App(props: AppProps) {
             <text color="accent" bold>
               ›
             </text>
-            <text color="fg">{input()}</text>
-            <Show when={!permission()}>
-              <text color="focus">▏</text>
-            </Show>
-            <Show when={permission()}>
-              <text color="warning">等待权限响应（y / n）</text>
+            <Show
+              when={!permission()}
+              fallback={<text color="warning">等待权限响应（y / n）</text>}
+            >
+              <Input
+                editor={props.editor}
+                width={size().columns - 8}
+                placeholder="说点什么…（Enter 发送，↑↓ 翻历史）"
+                autoFocus
+              />
             </Show>
           </row>
         </box>

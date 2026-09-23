@@ -7,7 +7,6 @@
  */
 import { createSignal } from "solid-js";
 
-export const [input, setInput] = createSignal("");
 export const [status, setStatus] = createSignal("ready");
 
 /** 当前是否有待响应的权限请求（由 main.ts 从 session 同步过来） */

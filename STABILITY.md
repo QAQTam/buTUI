@@ -36,6 +36,7 @@ const app = createTuiApp({
 | 布局 | `@butui/layout` | **稳定**（`Cell` / `Line` / `Frame` / `layout`） |
 | 渲染 | `@butui/renderer` | **稳定**（`Renderer` / `plainText` / `paintLine`） |
 | 终端 | `@butui/terminal` | **稳定**（`TerminalSession` / 输入解码 / 能力探测） |
+| 基础组件 | `@butui/components` | **稳定**（`createTextEditor` / `<Input>`） |
 | 流式文本 | `@butui/stream` | **稳定**（`StreamSource` / `<stream>`） |
 | 图片 | `@butui/image` | **稳定**（`createImage` / `ImageLayer` / `renderImage`） |
 | Agent 协议与组件 | `@butui/agent` | **稳定**（`AgentEvent` / `UiCommand` / `Session`） |
@@ -60,7 +61,10 @@ interface TuiApp {
   paint(): RenderStats;             // 立刻画一帧（一般不用调）
   requestPaint(): void;             // 请求一帧，微任务合并
   send(event: ButuiEvent): number;  // 自定义输入源 / 测试注入
-  frame(): Frame;                   // 最近一帧
+  frame(): Frame;                   // 当前布局（现算，不是「上一帧」）
+  focusedId(): number | null;       // 响应式焦点
+  isFocused(node?: Node): boolean;  // O(1)
+  focus(node?: Node): void;
   dispose(): void;                  // stop + 解绑所有订阅
 }
 ```
@@ -77,6 +81,10 @@ interface TuiApp {
 5. **默认 `scroll: "bottom"`**：内容超出视口时贴底（聊天式）。固定布局传
    `scroll: () => "top"`。
 6. **`afterDraw`** 的返回值会拼在同一批写入里（原生图片协议挂这里）。
+7. **`send()` 结束前会 `flush()`**：事件引发的 signal 写入立刻落到节点树上，
+   所以「send 之后读 `frame()`」永远是一致的。真正的**绘制**仍在微任务里合并。
+8. **`frame()` 是现算的当前布局**（布局层按 rev 缓存，很便宜），不是「上一次
+   画出来的帧」—— 测试和 hit test 拿到的都是最新状态。
 
 **不保证：** 一帧内的重绘次数上限；`paint()` 之外的时序细节；`root` 的子结构。
 
@@ -137,7 +145,39 @@ const layer = new ImageLayer();
 createTuiApp({ ..., afterDraw: (frame, stats) => layer.render(frame, stats.changed) });
 ```
 
-### 4.6 Agent 协议
+### 4.6 焦点可观察（组件知道自己是不是焦点）
+
+```tsx
+import { type Node } from "@butui/core";
+import { useFocus } from "@butui/solid";
+import { createSignal } from "solid-js";
+
+function Item(props: { label: string }) {
+  const [node, setNode] = createSignal<Node>();
+  const isFocused = useFocus();
+  return <text ref={setNode} focusable color={isFocused(node()) ? "accent" : "muted"}>{props.label}</text>;
+}
+```
+
+- `ref` 拿到自己的节点（这是唯一途径，`ref` 已加进所有元素的 JSX 类型）
+- `useFocus()` 返回 `(node?) => boolean`，O(1) 且响应式；焦点变化自动重绘
+- 没有运行时上下文时安全退化成 `false`（组件不会炸）
+- 需要在运行时之外驱动（测试）时，`@butui/test` 的 `mount` 也提供同样的上下文
+
+### 4.7 输入：`createTextEditor` + `<Input>`
+
+```tsx
+const editor = createTextEditor({ onSubmit: value => session.submit(value) });
+<Input editor={editor} placeholder="说点什么…" autoFocus />
+```
+
+编辑器（纯逻辑，可单测）覆盖：光标移动（按 **grapheme**，emoji / CJK 不会被
+劈开）、插入 / 退格 / 删除、词跳转、`ctrl+a/e/u/k/w`、`↑↓` 历史、多行模式、
+粘贴。`<Input>` 负责画：光标（bar / block）、水平滚动（光标永远可见）、占位符。
+
+`<Input>` 的按键优先级：`props.onKey`（返回 true 即消费）→ 编辑器。
+
+### 4.8 Agent 协议
 
 ```ts
 import { createSession, decodeNdjson, encodeNdjson } from "@butui/agent";
@@ -150,13 +190,13 @@ remote attach / 多套渲染都是「换个传输层」。
 
 ## 5. 已知缺口（不要依赖，也不建议自己绕）
 
-- **焦点样式没有内建**：`isFocused(root, node)` 存在，但组件里拿不到 `root`，
-  目前要自己用 signal 记「当前焦点在哪」（demo 就是这么做的）。
-- **没有内建键盘导航**：列表上下键、翻页、快捷键表都要应用自己写。
+- **没有内建列表导航**：上下键选行、翻页、快捷键表都要应用自己写
+  （输入框内部的历史/词跳转已经有了，但那是编辑器的能力）。
+- **编辑器没有选区 / 剪贴板历史 / 撤销栈**：只有光标与历史。
 - **没有 scroll 容器的手势/惯性**：`scrollOffset` 是纯数值，滚轮要自己接。
-- **`<input>` 是受控的**：值由应用持有（`value` + `onKey`），没有内建编辑模型
-  （光标、选区、撤销）。
 - **没有布局调试工具**（类似 flexbox inspector）。
+- **焦点不会自动清理**：被移除的节点如果还是焦点，`focusedId()` 会保留它的
+  id（下一次 tab 会自动跳到活着的节点）。组件里用 `isFocused` 不受影响。
 - **`@butui/web` 是实验层**：接口可能变。
 
 ## 6. 版本

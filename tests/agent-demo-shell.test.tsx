@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { type AgentEvent, createSession } from "@butui/agent";
-import { ImageLayer, artifactImageRenderer } from "@butui/image";
+import { createTextEditor } from "@butui/components";
+import { ImageLayer } from "@butui/image";
 import { mount } from "@butui/test";
 import { App } from "../examples/agent-demo/src/app.tsx";
 
@@ -36,6 +37,7 @@ function setup(columns: number, rows: number) {
       <App
         session={session}
         size={() => ({ columns, rows })}
+        editor={createTextEditor()}
         imageLayer={imageLayer}
         onImageLoad={() => {}}
       />
@@ -77,6 +79,7 @@ describe("agent demo 外壳（artifact 面板放置）", () => {
         <App
           session={session}
           size={() => ({ columns: 120, rows: 24 })}
+          editor={createTextEditor()}
           imageLayer={imageLayer}
           onImageLoad={() => {}}
         />

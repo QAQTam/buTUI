@@ -2,6 +2,22 @@ import { describe, expect, test } from "bun:test";
 import { mount } from "@butui/test";
 
 describe("布局引擎（SPEC §9.1 P0）", () => {
+  test("bg 用背景序列（48;…），不是把前景色当背景用", () => {
+    const app = mount(() => <text bg="accent">hi</text>, { width: 4, height: 1 });
+    const sgr = app.frame().lines[0][0].sgr;
+    // accent = #7dd3fc
+    expect(sgr).toContain("48;2;125;211;252");
+    expect(sgr).not.toContain("38;2;125;211;252");
+    app.unmount();
+  });
+
+  test("fg 与 bg 同时设置时两条序列都在", () => {
+    const app = mount(() => <text fg="accent" bg="bg">x</text>, { width: 4, height: 1 });
+    const sgr = app.frame().lines[0][0].sgr;
+    expect(sgr).toContain("38;2;125;211;252");
+    expect(sgr).toContain("48;2;15;23;42");
+    app.unmount();
+  });
   test("row 横向排列 + spacer 吃掉剩余空间", () => {
     const app = mount(
       () => (

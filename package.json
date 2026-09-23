@@ -14,6 +14,7 @@
   },
   "devDependencies": {
     "@butui/agent": "workspace:*",
+    "@butui/components": "workspace:*",
     "@butui/core": "workspace:*",
     "@butui/example-web-demo": "workspace:*",
     "@butui/image": "workspace:*",

@@ -29,17 +29,19 @@ import {
   type Node,
   type PasteEvent,
   createElement,
-  currentRevision,
   dispatchEvent,
   focusNext,
+  focusNode,
   focusPrev,
   focusedNode,
+  getFocusState,
   nodeById,
+  onFocusChange,
   onMutation,
 } from "@butui/core";
 import { type Frame, layout } from "@butui/layout";
 import { type RenderStats, Renderer } from "@butui/renderer";
-import { render } from "@butui/solid";
+import { provideFocusScope, render } from "@butui/solid";
 import { TerminalSession, terminalSize } from "@butui/terminal";
 import { createSignal, flush } from "solid-js";
 
@@ -118,6 +120,17 @@ export interface TuiApp {
   requestPaint(): void;
   /** 把事件喂进运行时（自定义输入源 / 测试注入） */
   send(event: ButuiEvent): number;
+  /**
+   * 当前焦点节点 id（响应式）。
+   *
+   * 组件里不要直接用它 —— 用 `@butui/solid` 的 `useFocus()`，那里能拿到
+   * 自己的节点（`ref`）并做 O(1) 比较。
+   */
+  focusedId(): number | null;
+  /** 某个节点是不是焦点（O(1)，响应式） */
+  isFocused(node: Node | undefined): boolean;
+  /** 主动聚焦（等价于 core 的 focusNode(root, node)） */
+  focus(node: Node | undefined): void;
   /** 最近一帧（hit test 与断言用） */
   frame(): Frame;
   dispose(): void;
@@ -128,9 +141,12 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
   const root = createElement("root");
 
   const [size, setSize] = createSignal<TuiSize>(options.size ?? terminal.size);
+  // 焦点同理：真值放局部变量，signal 只当版本号（写入延迟到 flush，读 signal 会读到旧值）
+  let focusId: number | null = null;
+  const [focusRev, bumpFocus] = createSignal(0);
+  const focusedId = (): number | null => (focusRev(), focusId);
   const depth = (): ColorDepth => options.colorDepth ?? terminal.colorDepth;
 
-  let lastFrame: Frame | undefined;
   const renderer = new Renderer(chunk => terminal.write(chunk), {
     ...(options.afterDraw !== undefined ? { afterDraw: options.afterDraw } : {}),
   });
@@ -142,12 +158,13 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
     return requested;
   };
 
-  const paint = (): RenderStats => {
+  /** 当前布局（布局层按 rev 缓存，现算很便宜；不要缓存成「上一帧」） */
+  const computeFrame = (): Frame => {
     const { columns, rows } = size();
-    const frame = layout(root, columns, rows, { depth: depth(), scrollTop: scrollTop() });
-    lastFrame = frame;
-    return renderer.draw(frame);
+    return layout(root, columns, rows, { depth: depth(), scrollTop: scrollTop() });
   };
+
+  const paint = (): RenderStats => renderer.draw(computeFrame());
 
   // ── 合帧：任何节点变更 → 微任务里 flush + 画一帧 ───────────────────────
   let dirty = true;
@@ -177,14 +194,29 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
     requestPaint();
   });
 
+  // 焦点变化 → 响应式信号（组件通过上下文读它，见 @butui/solid 的 useFocus）
+  const offFocus = onFocusChange(changed => {
+    if (changed !== root) return;
+    focusId = getFocusState(root).current;
+    bumpFocus(n => n + 1);
+    requestPaint();
+  });
+
   // ── 事件分发 ───────────────────────────────────────────────────────────
-  const currentFrame = (): Frame => {
-    // 还没画过（比如 headless 直接注入鼠标）→ 先算一帧，hit test 才有意义
-    if (!lastFrame) paint();
-    return lastFrame!;
+  /**
+   * 处理一个事件。
+   *
+   * 结束前会 `flush()` —— 让这次事件引发的 signal 写入立刻落到节点树上。
+   * 于是「send() 之后读 frame()」永远是一致的（不然要等下一个微任务），
+   * 组件作者和测试都不用去猜 flush 时机。真正的**绘制**仍然在微任务里合并。
+   */
+  const send = (event: ButuiEvent): number => {
+    const delivered = dispatch(event);
+    flush();
+    return delivered;
   };
 
-  const send = (event: ButuiEvent): number => {
+  const dispatch = (event: ButuiEvent): number => {
     if (event.type === "key") {
       // 1) 应用级键位优先：模态 / 全局快捷键
       if (options.onKey?.(event) === true) return 1;
@@ -204,8 +236,7 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
     }
 
     if (event.type === "mouse") {
-      const frame = currentFrame();
-      const target = nodeById(root, frame.nodeAt(event.x, event.y));
+      const target = nodeById(root, computeFrame().nodeAt(event.x, event.y));
       const delivered = dispatchEvent(target, event);
       if (delivered === 0) options.onMouse?.(event);
       return delivered;
@@ -234,8 +265,15 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
     if (started || disposed) return;
     started = true;
 
-    // 视图挂到 root 上；Solid 的写入会在 runFrame 的 flush 里提交
-    const disposeView = render(() => options.view(app) as Node, root);
+    // 视图挂到 root 上，外面包一层焦点上下文；Solid 的写入会在 flush 里提交
+    const disposeView = render(
+      () =>
+        provideFocusScope(
+          { focusedId, focus: node => focusNode(root, node) },
+          () => options.view(app)
+        ) as Node,
+      root
+    );
 
     disposers.push(
       disposeView,
@@ -264,6 +302,7 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
     if (disposed) return;
     stop();
     offMutation();
+    offFocus();
     disposed = true;
   };
 
@@ -276,7 +315,10 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
     paint,
     requestPaint,
     send,
-    frame: currentFrame,
+    focusedId,
+    isFocused: node => node !== undefined && node.id === focusedId(),
+    focus: node => focusNode(root, node),
+    frame: computeFrame,
     dispose,
   };
 

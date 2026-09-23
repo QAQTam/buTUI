@@ -317,7 +317,7 @@ function sgrOf(style: Style, depth: ColorDepth): string {
   if (style.underline) out += "\x1b[4m";
   if (style.strikethrough) out += "\x1b[9m";
   if (style.fg) out += resolveColor(style.fg, depth);
-  if (style.bg) out += resolveColor(style.bg, depth);
+  if (style.bg) out += resolveColor(style.bg, depth, "bg");
   // 只返回「开启」序列，reset 由渲染器的状态机决定何时发
   return out;
 }
