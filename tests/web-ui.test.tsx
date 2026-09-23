@@ -182,6 +182,34 @@ describe("WebUI（@solidjs/web，generate: dom）", () => {
     dispose();
   });
 
+  test("artifact：同一份事件，DOM 里也长出 artifact 面板（SPEC §11.1）", () => {
+    const { session, container, dispose } = setupDom();
+    session.dispatch({
+      type: "tool.start",
+      call: { id: "c9", turnId: "t1", name: "edit_file", args: {}, status: "success", reversible: true },
+    });
+    session.dispatch({
+      type: "tool.result",
+      callId: "c9",
+      result: {
+        status: "success",
+        output: "wrote src/a.ts",
+        workspace: [{ path: "src/a.ts", before: "const a = 1;", after: "const a = 2;" }],
+      },
+    });
+    session.settle();
+    flush();
+
+    // 面板 + 两张卡（diff / log）都在，语义标识与 TUI 完全一致
+    expect(container.querySelector('[data-semantic="artifact:canvas"]')).not.toBeNull();
+    expect(container.querySelector('[data-semantic="artifact:c9:src/a.ts"]')).not.toBeNull();
+    expect(container.querySelector('[data-semantic="artifact:c9:output"]')).not.toBeNull();
+    // diff 用 DOM 渲染成加/删行
+    expect(container.querySelector(".butui-add")?.textContent).toContain("+const a = 2;");
+    expect(container.querySelector(".butui-del")?.textContent).toContain("-const a = 1;");
+    dispose();
+  });
+
   test("dispose 后不再更新", () => {
     const { session, container, dispose } = setupDom();
     for (const event of TURN) session.dispatch(event);

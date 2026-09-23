@@ -23,6 +23,7 @@ import {
   planUndo,
 } from "@butui/undo";
 import { type StreamSource, createMarkdownStream } from "@butui/stream";
+import { artifactsFromToolResult } from "./artifact-model.ts";
 import type {
   AgentEvent,
   AgentMessage,
@@ -143,6 +144,17 @@ export function reduce(state: SessionState, event: AgentEvent): void {
         call.status = event.result.status;
         call.endedAt = 0;
         if (event.result.output !== undefined) call.output = event.result.output;
+
+        // SPEC §11.1「从 tool result 直接生成」：workspace 变更 → diff artifact，
+        // 其余输出按内容分类。时间戳取自 tool call（不是 Date.now），这样回放
+        // 两次得到的状态逐字节一致。
+        for (const artifact of artifactsFromToolResult(call, event.result, {
+          now: call.startedAt ?? 0,
+        })) {
+          if (!state.artifacts.some(existing => existing.id === artifact.id)) {
+            state.artifacts.push(artifact);
+          }
+        }
       }
       return;
     }

@@ -20,3 +20,4 @@ export * from "./png-encode.ts";
 export * from "./render.ts";
 export * from "./scale.ts";
 export * from "./component.tsx";
+export * from "./artifact.tsx";

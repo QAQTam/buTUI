@@ -8,6 +8,7 @@
  */
 import { type AgentEvent, type UiCommand, createSession } from "@butui/agent";
 import { createElement, focusNext } from "@butui/core";
+import { ImageLayer } from "@butui/image";
 import { layout } from "@butui/layout";
 import { Renderer } from "@butui/renderer";
 import { createComponent, render } from "@butui/solid";
@@ -19,7 +20,14 @@ import { input, permission, setInput, setPermission, setSize, setStatus, size } 
 
 const terminal = new TerminalSession({ altScreen: true, mouse: true, bracketedPaste: true });
 const root = createElement("root");
-const renderer = new Renderer(chunk => terminal.write(chunk));
+/**
+ * 原生图片协议（Kitty / iTerm2 / Sixel）不进 cell 网格，而是由 ImageLayer
+ * 在文字差分之后按矩形摆放（SPEC §12.4）。
+ */
+const imageLayer = new ImageLayer();
+const renderer = new Renderer(chunk => terminal.write(chunk), {
+  afterDraw: (frame, stats) => imageLayer.render(frame, stats.changed),
+});
 
 // ── 协议接线 ────────────────────────────────────────────────────────────────
 const pending: UiCommand[] = [];
@@ -66,7 +74,7 @@ function schedulePaint(): void {
   });
 }
 
-render(() => createComponent(App, { session }), root);
+render(() => createComponent(App, { session, imageLayer, onImageLoad: schedulePaint }), root);
 
 createRoot(() => {
   createEffect(

@@ -5,14 +5,22 @@
  * 这里用 `@solidjs/web`（`generate: "dom"`，SPEC §5.4）渲染 DOM，消费的是
  * 同一个 `@butui/agent` Session：同一串事件，TUI 和浏览器里看到的是同一份状态。
  */
-import { For, Show, createEffect } from "solid-js";
-import type {
-  AgentMessage,
-  AskUserQuestion,
-  PermissionRequest,
-  Session,
-  Todo,
-  ToolCall,
+import { For, Show, Switch, Match, createEffect } from "solid-js";
+import {
+  type Artifact,
+  type AgentMessage,
+  type AskUserQuestion,
+  type PermissionRequest,
+  type Session,
+  type Todo,
+  type ToolCall,
+  artifactSummary,
+  formatTable,
+  parseNumbers,
+  parseTable,
+  parseUnifiedDiff,
+  prettyJson,
+  sparkline,
 } from "@butui/agent";
 import type { StreamSource } from "@butui/stream";
 import { ansiToHtml } from "./ansi-html.ts";
@@ -152,8 +160,76 @@ export function MessageList(props: { session: Session }) {
   );
 }
 
-export function TodoPanel(props: { todos: Todo[] }) {
-  const done = () => props.todos.filter(t => t.status === "completed").length;
+/**
+ * Artifact 面板（DOM 版）—— SPEC §11.1。
+ *
+ * 与 TUI 侧**共享纯函数**（摘要 / diff 解析 / 表格对齐 / sparkline），但组件
+ * 是各写各的：TUI 走 cell 网格，WebUI 走 DOM。图片在浏览器里不需要任何协议
+ * 协商 —— 直接 `<img>`，这也是「同一份 artifact，两套渲染」最直观的地方。
+ */
+export function ArtifactPanel(props: { artifacts: readonly Artifact[] }) {
+  return (
+    <div class="butui-artifacts" data-semantic="artifact:canvas">
+      <div class="butui-section-title">artifacts {props.artifacts.length}</div>
+      <For each={props.artifacts}>
+        {artifact => (
+          <div class="butui-artifact" data-semantic={`artifact:${artifact.id}`}>
+            <div class="butui-artifact-head">
+              <span class="butui-artifact-kind">{artifact.kind}</span>
+              <span class="butui-muted">{artifactSummary(artifact)}</span>
+            </div>
+            <div class="butui-artifact-body">
+              <Switch>
+                <Match when={artifact.kind === "image"}>
+                  <img class="butui-artifact-image" src={artifact.source} alt={artifactSummary(artifact)} />
+                </Match>
+                <Match when={artifact.kind === "diff"}>
+                  <pre class="butui-code butui-diff">
+                    <For each={parseUnifiedDiff(artifact.source)}>
+                      {line => (
+                        <div
+                          class={
+                            line.kind === "add"
+                              ? "butui-add"
+                              : line.kind === "remove"
+                                ? "butui-del"
+                                : line.kind === "header" || line.kind === "meta"
+                                  ? "butui-muted"
+                                  : ""
+                          }
+                        >
+                          {line.text || " "}
+                        </div>
+                      )}
+                    </For>
+                  </pre>
+                </Match>
+                <Match when={artifact.kind === "table"}>
+                  <pre class="butui-code">
+                    {formatTable(parseTable(artifact.source)).join("\n")}
+                  </pre>
+                </Match>
+                <Match when={artifact.kind === "json"}>
+                  <pre class="butui-code">{prettyJson(artifact.source)}</pre>
+                </Match>
+                <Match when={artifact.kind === "chart"}>
+                  <pre class="butui-code butui-chart">
+                    {sparkline(parseNumbers(artifact.source), 80)}
+                  </pre>
+                </Match>
+                <Match when={true}>
+                  <pre class="butui-code">{artifact.source}</pre>
+                </Match>
+              </Switch>
+            </div>
+          </div>
+        )}
+      </For>
+    </div>
+  );
+}
+
+export function TodoPanel(props: { todos: Todo[] }) {  const done = () => props.todos.filter(t => t.status === "completed").length;
   return (
     <div class="butui-todos" data-semantic="todo:panel">
       <div class="butui-section-title">
@@ -323,6 +399,10 @@ export function AgentWebView(props: { session: Session }) {
           if (preview) session.send({ type: "undo.apply", target: preview.target, mode: "branch" });
         }}
       />
+
+      <Show when={session.state.artifacts.length > 0}>
+        <ArtifactPanel artifacts={session.state.artifacts} />
+      </Show>
 
       <RevertConflictDialog session={session} />
 

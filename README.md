@@ -4,7 +4,7 @@
 
 当前状态：**M1/M2 骨架 + 流式渲染 O(1) + 事件协议驱动的 agent UI +
 分支式 Undo + WebUI remote attach + 图片子系统（Kitty / iTerm2 / Sixel /
-半块 / 占位符）已跑通**，`bun test` 206 个用例全绿。
+半块 / 占位符）+ Artifact Canvas 已跑通**，`bun test` 236 个用例全绿。
 
 ```
 Solid signal / store
@@ -151,8 +151,49 @@ placeholder 40×10      —           纯文本
 且需要逐次授权。**绝不把用户可控字符串交给 `new Bun.Image(path)`**（任意文件
 读取原语）。
 
-## 事件协议驱动的 agent UI
+## Artifact Canvas（SPEC §11.1）
 
+差异化的点不是「能画图」，而是把 **diff / 日志 / 表格 / JSON / 图表 / 图片**
+收敛成同一个一等公民：都来自 tool result、都挂在 tool call 上、都能 pin / 展开 /
+复制 / 并排比较 / 在 WebUI 打开 / 跟着回放重放。
+
+```tsx
+const layer = new ImageLayer();
+<ArtifactCanvas
+  artifacts={session.state.artifacts}
+  session={session}                     // [open] → artifact.open 命令
+  compare                               // pin 两张 → 左右并排
+  renderers={{ image: artifactImageRenderer({ layer, width: 36 }) }}
+/>
+```
+
+```bash
+bun --conditions=browser run scripts/artifact-demo.tsx 64 60
+```
+
+```text
+± diff   1 增 / 2 删 · --- a/src/auth.ts   ← tool:edit
+▤ log    wrote src/auth.ts                 ← tool:edit
+▦ table  5 行 · N push flush paint         ← tool:bench
+▁▄█ chart 10 个数据点                       ← tool:perf
+{} json  {"model":"solid-2-rc",…}          ← tool:cfg
+🖼 image ./shots/stream-o1.png（image/png）
+```
+
+设计要点：
+
+- **从 tool result 直接生成**：reducer 在 `tool.result` 时推导 artifact
+  （workspace 变更 → diff，其余按内容分类）。时间戳取自 tool call 而不是
+  `Date.now()`，所以回放两次状态逐字节一致。
+- **内容有界**：折叠 6 行 / 展开 200 行，超出明确提示还剩多少行。
+- **渲染器注入**：`@butui/agent` 不依赖 `@butui/image`（图片解码要用 Bun 内建，
+  会炸掉 browser 打包）。TUI 注入 `artifactImageRenderer`，WebUI 注入 `<img>`，
+  不注入就是纯文本占位。
+- **独立面板**：不在对话流里；demo 里是宽终端（≥100 列）下的右侧栏。
+- **两套渲染共用纯函数**：diff 解析 / 表格对齐 / sparkline 在 `artifact-model.ts`，
+  TUI 渲染成 cell，WebUI 渲染成 DOM，语义标识完全一致。
+
+## 事件协议驱动的 agent UI
 SPEC §13 的协议是主干：**UI 不读 agent 内部状态，只消费事件；UI 不调 agent
 方法，只发命令。** 这样 WebUI / remote attach / 回放 / 测试注入都只是「换个
 传输层」。
@@ -300,6 +341,9 @@ bun --conditions=browser run scripts/stream-bench.tsx
 # 图片子系统自检（不需要真终端）
 bun --conditions=browser run scripts/image-demo.tsx
 
+# Artifact Canvas 快照
+bun --conditions=browser run scripts/artifact-demo.tsx 64 60
+
 # WebUI（remote attach demo）
 bun run web
 
@@ -322,7 +366,7 @@ Demo 的工作区是**内存实现**，但走的是完全一样的 journal / dif
 |---|---|
 | `@butui/core` | 节点树、`rev` 失效传播、`childrenRevSum`、focus、事件冒泡、theme、ANSI 解析 |
 | `@butui/solid` | `@solidjs/universal` host ops、JSX 类型、Bun 编译插件 |
-| `@butui/agent` | 事件协议（NDJSON）、Session reducer、SPEC §10.2 组件 |
+| `@butui/agent` | 事件协议（NDJSON）、Session reducer、SPEC §10.2 组件、Artifact Canvas |
 | `@butui/undo` | 工作区变更日志、行级 patch、undo 预览与执行（SPEC §8） |
 | `@butui/web` | WebUI：ANSI→HTML、DOM 组件、`mountWebUI`（复用同一个 Session） |
 | `@butui/stream` | 增量折行、增量 markdown、Solid 绑定与组件 |
@@ -475,8 +519,8 @@ Bun.plugin(onLoad)
 ## 还没做
 
 - `@butui/components` 独立成包（Box / Text / Input 等 primitive 现在散在 layout 里）
-- ArtifactCanvas（SPEC §11.1）：把图片/diff/日志/表格统一成 artifact
 - VirtualList / CommandPalette / ToolGraph / AgentTimeline（§10.2 剩余组件）
+- Artifact Canvas：artifact 的持久化（现在只在 Session 内存里）、WebUI 侧的服务端图片路由
 - 图片子系统：半块图的终端背景透出、Kitty 图片随滚动的位置缓存
 - 虚拟列表、动画、Kitty keyboard protocol 的发送侧
 - `markdown` / `code` / `image` 三个 intrinsic element 目前只有类型，没有实现

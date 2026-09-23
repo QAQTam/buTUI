@@ -780,28 +780,32 @@ P1：
 
 ### 10.2 Agent 组件
 
-- `StreamText`
-- `ReasoningLine`
+已实现（v0.1）：
+
+- `StreamText` / `StreamMarkdown`（`@butui/stream`，O(1) 追加）
 - `ToolCard`
-- `BashProgress`
-- `FoldableOutput`
-- `DiffView`
 - `TodoPanel`
 - `PermissionDialog`
 - `AskUserForm`
+- `CheckpointMarker`
+- `MessageView` / `MessageActions` / `MessageList`
+- `UndoPreviewPanel` / `RevertConflictDialog`
+- `BranchTree`
+- `StatusBar`
+- `AgentView`（把上面这些装成最小闭环）
+- `ArtifactCanvas` / `ArtifactView`（SPEC §11.1）
+
+待做：
+
+- `ReasoningLine`
+- `BashProgress`
+- `FoldableOutput` / `DiffView`（现在 diff 渲染在 ArtifactCanvas 内部）
 - `ContextMeter`
 - `SessionTree`
 - `AgentTimeline`
-- `ArtifactCanvas`
 - `CommandPalette`
 - `ToolGraph`
-- `CheckpointMarker`
-- `MessageActions`
-- `UndoActionBar`
-- `UndoPreview`
-- `BranchTree`
-- `BranchSwitcher`
-- `RevertConflictDialog`
+- `BranchSwitcher`（现在只有 BranchTree）
 
 ---
 
@@ -833,6 +837,63 @@ buTUI 的差异应该是：
 - 复制路径
 - WebUI 打开
 - 关联 tool call / message
+
+#### 11.1.1 落地（v0.1 实现）
+
+`@butui/agent` 里分成两层，边界是「能不能离开终端」：
+
+```text
+artifact-model.ts   纯函数：分类 / unified diff / 表格对齐 / sparkline / 摘要
+artifacts.tsx       组件：ArtifactView / ArtifactCanvas（cell 网格）
+packages/web/src    DOM 版 ArtifactPanel（复用同一批纯函数）
+```
+
+**从 tool result 直接生成。** `reducer` 在 `tool.result` 时调
+`artifactsFromToolResult`：workspace 变更 → 每个文件一条 diff artifact；
+其余输出按内容分类（JSON / diff / 表格 / 日志）。分类是**保守**的 —— 拿不准
+就当 `log`，因为 log 的渲染是「原样显示」，永远不会骗人。时间戳取自 tool call
+而不是 `Date.now()`，所以回放两次得到的状态逐字节一致（SPEC §15）。
+
+**内容渲染必须有界。** 折叠态 6 行，展开态 200 行，超出部分明确提示还剩多少行。
+一个 50MB 的日志 artifact 不能把布局拖死。
+
+**渲染器注入。** `@butui/agent` **不依赖** `@butui/image`：图片解码要用 Bun
+内建（`inflateSync`）和 `Bun.Image`，而同一份组件树还要能进 WebUI 的 browser
+打包 —— 静态依赖会让 `Bun.build({ target: "browser" })` 直接报
+「Browser build cannot import Bun builtin」。所以：
+
+| 场景 | 注入的东西 |
+|---|---|
+| TUI | `artifactImageRenderer({ layer })` → Kitty / iTerm2 / Sixel / 半块 |
+| WebUI | `<img src>`，浏览器自己解码 |
+| 不注入 | 纯文本占位符（路径 + MIME），永远不炸 |
+
+**并排比较。** pin 两张且 `compare` 打开时，两张卡在 `<row>` 里各占 `flexGrow=1`。
+
+**它是独立面板，不在对话流里。** SPEC §19 的 AgentView 最小闭环是「消息 +
+tool card + todo + 权限 + undo preview + 状态栏」；artifact 面板是 §11 的差异
+化能力，由调用方决定放在哪（demo 里是宽终端下的右侧栏）。
+
+```tsx
+const layer = new ImageLayer();
+<ArtifactCanvas
+  artifacts={session.state.artifacts}
+  session={session}                      // [open] → artifact.open 命令
+  compare
+  renderers={{ image: artifactImageRenderer({ layer, width: 36 }) }}
+/>
+```
+
+`scripts/artifact-demo.tsx` 是纯文本快照，六种 kind 都能看：
+
+```text
+± diff   1 增 / 2 删 · --- a/src/auth.ts   ← tool:edit
+▤ log    wrote src/auth.ts                 ← tool:edit
+▦ table  5 行 · N push flush paint         ← tool:bench
+▁▄█ chart 10 个数据点                       ← tool:perf
+{} json  {"model":"solid-2-rc",…}          ← tool:cfg
+🖼 image ./shots/stream-o1.png（image/png）
+```
 
 ### 11.2 Agent Timeline / Flight Recorder
 
@@ -1147,7 +1208,7 @@ ask_user
 - Agent Timeline
 - Context Inspector
 - ~~Kitty / iTerm2 / Sixel~~ ✅ 已提前到 v0.1（§12.4）
-- Artifact Canvas
+- ~~Artifact Canvas~~ ✅ 已提前到 v0.1（§11.1.1）
 
 ### v0.3
 

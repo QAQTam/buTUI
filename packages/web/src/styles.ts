@@ -20,8 +20,7 @@ const CSS = `
 .butui-text{white-space:pre-wrap}
 .butui-md .butui-line{white-space:pre-wrap;min-height:1.55em}
 .butui-tail{display:inline}
-.butui-tool{display:flex;gap:8px;color:#94a3b8;font-size:12px;padding-left:8px}
-.butui-glyph.butui-success{color:#4ade80}
+.butui-tool{display:flex;gap:8px;color:#94a3b8;font-size:12px;padding-left:8px}.butui-glyph.butui-success{color:#4ade80}
 .butui-glyph.butui-running{color:#facc15}
 .butui-glyph.butui-error{color:#f87171}
 .butui-tool-name{color:#94a3b8}
@@ -44,6 +43,17 @@ const CSS = `
 .butui-effects{margin:6px 0;padding-left:18px}
 .butui-option{display:block;background:none;border:none;color:#7dd3fc;font:inherit;
   text-align:left;padding:2px 0;cursor:pointer}
+.butui-artifacts{margin-top:12px;border-top:1px solid #1e293b;padding-top:8px}
+.butui-artifact{border:1px solid #1e293b;border-radius:6px;padding:8px;margin:6px 0}
+.butui-artifact-head{display:flex;gap:8px;align-items:center;font-size:12px}
+.butui-artifact-kind{background:#1e293b;border-radius:4px;padding:1px 6px;color:#93c5fd}
+.butui-artifact-body{margin-top:6px}
+.butui-artifact-image{max-width:100%;border-radius:4px}
+.butui-diff div{white-space:pre}
+.butui-add{color:#4ade80}
+.butui-del{color:#f87171}
+.butui-chart{letter-spacing:1px}
+
 `;
 
 let injected = false;
