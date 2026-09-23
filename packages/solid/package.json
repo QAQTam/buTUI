@@ -1,0 +1,37 @@
+{
+  "name": "@butui/solid",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./types/jsx-runtime.d.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./jsx-runtime": {
+      "types": "./types/jsx-runtime.d.ts",
+      "default": "./src/jsx-runtime.ts"
+    },
+    "./jsx-dev-runtime": {
+      "types": "./types/jsx-runtime.d.ts",
+      "default": "./src/jsx-runtime.ts"
+    },
+    "./plugin": {
+      "types": "./src/plugin.ts",
+      "default": "./src/plugin.ts"
+    },
+    "./package.json": "./package.json",
+    "./preload": {
+      "types": "./src/preload.ts",
+      "default": "./src/preload.ts"
+    }
+  },
+  "dependencies": {
+    "@butui/core": "workspace:*",
+    "@solidjs/compiler": "2.0.0-rc.9",
+    "@solidjs/universal": "2.0.0-rc.9",
+    "solid-js": "2.0.0-rc.9"
+  },
+  "sideEffects": false
+}

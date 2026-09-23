@@ -1,0 +1,13 @@
+{
+  "name": "@butui/example-agent-demo",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@butui/core": "workspace:*",
+    "@butui/layout": "workspace:*",
+    "@butui/renderer": "workspace:*",
+    "@butui/solid": "workspace:*",
+    "@butui/terminal": "workspace:*",
+    "solid-js": "2.0.0-rc.9"
+  }
+}

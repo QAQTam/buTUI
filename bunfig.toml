@@ -1,0 +1,19 @@
+# ── buTUI 运行环境注意事项 ───────────────────────────────────────────────
+#
+# 1) solid-js@2 的 exports map 把 node/deno/worker 条件指向 dist/server.js
+#    （SSR，无客户端响应式），只有 browser 条件指向 dist/solid.js。
+#    Bun 默认命中 node 条件 —— 结果是「不报错、但 signal 更新毫无反应」。
+#
+#    实测结论：bunfig.toml **不支持** conditions；Bun 插件的 onResolve 对
+#    bare specifier 也不生效。所以只能走 CLI flag：
+#
+#      bun --conditions=browser run <entry>
+#      BUN_OPTIONS="--conditions=browser" bun run <entry>
+#
+#    @butui/solid 会在启动时检查，命中 server 构建就直接抛错。
+#
+# 2) 顶层 preload 只作用于 `bun run`，`bun test` 需要单独的 [test].preload。
+preload = ["@butui/solid/preload"]
+
+[test]
+preload = ["@butui/solid/preload"]

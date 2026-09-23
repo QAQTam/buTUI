@@ -1,0 +1,25 @@
+{
+  "name": "butui",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "examples/*"
+  ],
+  "scripts": {
+    "test": "bun --conditions=browser test",
+    "demo": "bun --conditions=browser run examples/agent-demo/src/main.ts",
+    "typecheck": "bun --conditions=browser x tsc --noEmit"
+  },
+  "devDependencies": {
+    "@butui/core": "workspace:*",
+    "@butui/layout": "workspace:*",
+    "@butui/renderer": "workspace:*",
+    "@butui/solid": "workspace:*",
+    "@butui/terminal": "workspace:*",
+    "@butui/test": "workspace:*",
+    "@types/bun": "latest",
+    "solid-js": "2.0.0-rc.9",
+    "typescript": "^5.9.3"
+  }
+}
