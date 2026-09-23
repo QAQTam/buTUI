@@ -54,6 +54,27 @@ describe("MarkdownStream：增量 ≡ 一次性", () => {
     expect(render(["---\n"])[0]!.startsWith("─")).toBe(true);
   });
 
+  test("逐 3 字符吐字时不会把 `**结` 当成已闭合", () => {
+    // 回归：曾经用「星号个数是偶数」判断闭合，于是 `**结`（2 个星号）
+    // 被当成闭合行永久定稿，后面补齐 `论**` 也救不回来。
+    const stream = new MarkdownStream({ width: 40 });
+    const text = "**结论**：host ops 只有 13 个。\n";
+    for (let i = 0; i < text.length; i += 3) stream.push(text.slice(i, i + 3));
+    stream.flush();
+
+    const joined = stream.lines.map(l => l.text).join("\n");
+    expect(stripAnsi(joined)).toBe("结论：host ops 只有 13 个。");
+    expect(joined).toContain("\x1b[1m");
+    expect(joined).not.toContain("**");
+  });
+
+  test("孤立星号（两侧空白）不算未闭合", () => {
+    const stream = new MarkdownStream({ width: 40 });
+    stream.push("a * b 是字面量\n");
+    stream.flush();
+    expect(stripAnsi(stream.lines.map(l => l.text).join(""))).toContain("a * b");
+  });
+
   test("跨行强调闭合后整段重渲染", () => {
     const stream = new MarkdownStream({ width: 40 });
     stream.push("**bo");

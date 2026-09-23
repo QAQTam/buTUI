@@ -5,6 +5,7 @@
     "": {
       "name": "butui",
       "devDependencies": {
+        "@butui/agent": "workspace:*",
         "@butui/core": "workspace:*",
         "@butui/layout": "workspace:*",
         "@butui/renderer": "workspace:*",
@@ -25,6 +26,16 @@
         "@butui/renderer": "workspace:*",
         "@butui/solid": "workspace:*",
         "@butui/terminal": "workspace:*",
+        "solid-js": "2.0.0-rc.9",
+      },
+    },
+    "packages/agent": {
+      "name": "@butui/agent",
+      "version": "0.1.0",
+      "dependencies": {
+        "@butui/core": "workspace:*",
+        "@butui/solid": "workspace:*",
+        "@butui/stream": "workspace:*",
         "solid-js": "2.0.0-rc.9",
       },
     },
@@ -86,6 +97,8 @@
     },
   },
   "packages": {
+    "@butui/agent": ["@butui/agent@workspace:packages/agent"],
+
     "@butui/core": ["@butui/core@workspace:packages/core"],
 
     "@butui/example-agent-demo": ["@butui/example-agent-demo@workspace:examples/agent-demo"],

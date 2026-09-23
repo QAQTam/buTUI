@@ -86,12 +86,27 @@ const TASK = /^\[([ xX])\]\s+(.*)$/;
 /** 只由块起始字符组成时还无法判定（`---` 可能是分隔线，也可能是段落） */
 const UNDECIDED = /^[#>\-*+`|_~\d.\s]*$/;
 
+/**
+ * 定界符栈 —— 判断「内联标记是否闭合」。
+ *
+ * 不能只数奇偶：`**结` 有 2 个星号，但它是**一个未闭合的开启串**。
+ * 这里按 CommonMark 的朴素规则扫描 delimiter run：
+ *   - `canOpen`  = 后面不是空白
+ *   - `canClose` = 前面不是空白
+ * 能闭合就出栈，否则能开启就入栈。栈空 = 已闭合。
+ *
+ * 对 `a * b` 这种两侧都是空白的孤立星号，既不能开也不能闭，会被当成字面量
+ * —— 不会误判成未闭合。
+ */
+interface Delimiter {
+  ch: string;
+  len: number;
+}
+
 interface Balance {
-  ticks: number;
-  stars: number;
-  underscores: number;
-  tildes: number;
-  brackets: number;
+  stack: Delimiter[];
+  /** 上一个非定界符字符，用来判断跨行的 canClose */
+  prev: string;
 }
 
 interface OpenBlock {
@@ -332,7 +347,7 @@ export class MarkdownStream {
       buffer: new LineBuffer({ width }),
       held: [],
       volatile: [],
-      balance: { ticks: 0, stars: 0, underscores: 0, tildes: 0, brackets: 0 },
+      balance: { stack: [], prev: "" },
     };
   }
 
@@ -469,34 +484,40 @@ export class MarkdownStream {
 }
 
 function addBalance(balance: Balance, text: string): void {
-  for (let i = 0; i < text.length; i++) {
+  let i = 0;
+  let prev = balance.prev;
+  while (i < text.length) {
     const ch = text[i];
-    if (ch === "\\") {
-      i++;
+    if (ch === "*" || ch === "_" || ch === "~" || ch === "`") {
+      let j = i;
+      while (j < text.length && text[j] === ch) j++;
+      const len = j - i;
+      const next = j < text.length ? text[j] : "\n";
+      const canOpen = !/\s/.test(next);
+      const canClose = prev !== "" && !/\s/.test(prev) && !/[\s]/.test(prev);
+      const top = balance.stack[balance.stack.length - 1];
+      if (canClose && top && top.ch === ch && (ch !== "`" || top.len === len)) {
+        balance.stack.pop();
+      } else if (canOpen) {
+        balance.stack.push({ ch, len });
+      }
+      prev = ch;
+      i = j;
       continue;
     }
-    if (ch === "`") balance.ticks++;
-    else if (ch === "*") balance.stars++;
-    else if (ch === "_") balance.underscores++;
-    else if (ch === "~") balance.tildes++;
-    else if (ch === "[") balance.brackets++;
-    else if (ch === "]") balance.brackets--;
+    prev = ch;
+    i++;
   }
+  balance.prev = prev;
 }
 
 function isBalanced(balance: Balance): boolean {
-  return (
-    balance.ticks % 2 === 0 &&
-    balance.stars % 2 === 0 &&
-    balance.underscores % 2 === 0 &&
-    balance.tildes % 2 === 0 &&
-    balance.brackets === 0
-  );
+  return balance.stack.length === 0;
 }
 
 /** 单行版本，供测试与外部使用 */
 export function inlineBalanced(text: string): boolean {
-  const balance: Balance = { ticks: 0, stars: 0, underscores: 0, tildes: 0, brackets: 0 };
+  const balance: Balance = { stack: [], prev: "" };
   addBalance(balance, text);
   return isBalanced(balance);
 }

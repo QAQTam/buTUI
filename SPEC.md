@@ -301,6 +301,28 @@ reconcile（N=9000 时 4.4 ms/push）。`createStore(..., { shallow: true })` �
 
 ---
 
+### 5.8 事件协议落地（v0.1 实现）
+
+§13 的协议已实现为 `@butui/agent`：
+
+- `protocol.ts`：SPEC §7 数据模型 + §13 事件/命令 + **NDJSON 编解码**
+  （增量解码器保留不完整行，坏行包成 `error` 事件不阻塞流）。
+- `session.ts`：`reduce(state, event)` 是纯函数（原地改 draft），状态只由事件
+  推导 —— 回放 / 测试注入 / remote attach 都成立。
+- `components.tsx`：SPEC §10.2 组件 + 组合好的 `AgentView`，每个都带
+  `message:<id>` / `tool:<callId>` / `permission:<id>:allow` 这类语义标识。
+
+两条实现注意：
+
+1. **流式文本不进 reducer**。`text.delta` 的字符串累积是 O(N)，放进 store 会让
+   每条 delta 变成 O(N)；文本交给 `@butui/stream`，reducer 只建消息、标
+   `streaming`，`turn.end` 时回填最终文本。
+2. **懒创建的资源必须暴露响应性**。消息由 `tool.start` 建、stream source 由
+   `text.delta` 懒建，`sourceFor()` 读普通 Map 没有响应性，`<Show>` 会一直停在
+   fallback 上（表现为 markdown 以原文显示）。`@butui/agent` 用一个版本信号解决。
+
+---
+
 ### 5.5 禁止事项
 
 - 不从 OpenTUI 复制 reconciler

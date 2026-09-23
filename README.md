@@ -2,12 +2,14 @@
 
 > 面向 coding agent 的 Agent UI Runtime。设计文档见 [SPEC.md](./SPEC.md)。
 
-当前状态：**M1/M2 骨架 + 流式渲染 O(1) 已跑通**，`bun test` 73 个用例全绿。
+当前状态：**M1/M2 骨架 + 流式渲染 O(1) + 事件协议驱动的 agent UI 已跑通**，
+`bun test` 101 个用例全绿。
 
 ```
 Solid signal / store
   → @butui/solid   (13 个 host ops，Solid 自带 reconciler)
   → @butui/core    (节点树 / 失效传播 / focus / 事件冒泡 / theme / ANSI 解析)
+  → @butui/agent   (事件协议 reducer + Session + SPEC §10.2 组件)
   → @butui/stream  (增量折行 + 增量 markdown，O(delta) 定稿)
   → @butui/layout  (flex 子集 + 增量合成 + 视口窗口)
   → @butui/renderer(cell buffer + 逐行差分 + SGR 状态机)
@@ -86,6 +88,42 @@ N=9000  → 4.40 ms/push
 `setProp`，布局侧只把新增行转成 cell。这才是真正的 O(1)，而且仍然是细粒度的
 —— 变化被限制在一个属性上，不重建任何子树。
 
+## 事件协议驱动的 agent UI
+
+SPEC §13 的协议是主干：**UI 不读 agent 内部状态，只消费事件；UI 不调 agent
+方法，只发命令。** 这样 WebUI / remote attach / 回放 / 测试注入都只是「换个
+传输层」。
+
+```ts
+import { createSession, decodeNdjson, encodeNdjson, AgentView } from "@butui/agent";
+
+const session = createSession({
+  width: () => 80,
+  onCommand: command => transport.write(encodeNdjson(command)),   // UI → Agent
+});
+
+// Agent → UI（NDJSON over stdio / WebSocket / 测试注入）
+for (const event of decodeNdjson(chunk)) session.dispatch(event);
+
+<AgentView session={session} />
+```
+
+数据模型（Message / Turn / ToolCall / Checkpoint / Branch / Artifact）严格对齐
+SPEC §7；`reduce(state, event)` 是纯函数，所以**同一串事件必然推导出同一状态**。
+
+内置组件（SPEC §10.2）：`MessageList` / `MessageView` / `ToolCard` /
+`TodoPanel` / `PermissionDialog` / `AskUserForm` / `CheckpointMarker` /
+`UndoPreviewPanel` / `BranchTree` / `StatusBar`，以及组合好的 `AgentView`。
+
+每个组件都把语义标识打在根节点上（SPEC §4.2），所以鼠标点击拿到的是
+`message:<id>` / `tool:<callId>` / `checkpoint:<id>`，不是行号：
+
+```
+tests/agent-replay.test.tsx
+  同一段录制回放两次 → 逐字节相同的界面
+  语义标识覆盖 message / tool / todo / permission / undo / status
+```
+
 ## 快速开始
 
 ```bash
@@ -112,6 +150,7 @@ Demo 操作：打字 → `Enter` 发送 → `Tab` 切焦点 → 鼠标点消息�
 |---|---|
 | `@butui/core` | 节点树、`rev` 失效传播、`childrenRevSum`、focus、事件冒泡、theme、ANSI 解析 |
 | `@butui/solid` | `@solidjs/universal` host ops、JSX 类型、Bun 编译插件 |
+| `@butui/agent` | 事件协议（NDJSON）、Session reducer、SPEC §10.2 组件 |
 | `@butui/stream` | 增量折行、增量 markdown、Solid 绑定与组件 |
 | `@butui/layout` | flex 子集 → cell 网格，带 `frozen` 的增量合成与视口窗口 |
 | `@butui/renderer` | cell → ANSI，逐行差分 + SGR 状态机 |
@@ -163,6 +202,22 @@ flush();   // → "b"，第一个字符被吞
 setStore(s => { s.lines.push(line); });   // 不是 setStore("lines", i, v)
 ```
 
+### 5. 非响应式的 getter 会让 `<Show>` 卡死
+
+懒创建的资源（比如「消息先建、stream source 后建」）如果用普通 Map 存，
+`<Show when={getSource(id)}>` 永远停在第一次求值的结果上。要么把资源放进
+store，要么配一个版本信号让调用方建立依赖（`@butui/agent` 用的是后者）。
+
+### 6. 在响应式 root 外部批量注入事件后要 `settle()`
+
+```ts
+for (const event of events) session.dispatch(event);
+// 此时 state 还是空的 —— 写入延迟到 flush
+session.settle();          // 提交
+```
+
+回放、快照、测试注入都属于这种场景。
+
 ## 编译管线
 
 `@butui/solid/plugin` 实现 SPEC §5.3：
@@ -200,8 +255,9 @@ Bun.plugin(onLoad)
 
 ## 还没做
 
-- `@butui/components` / `@butui/agent`：把 demo 内联的组件抽成正式包
-- `@butui/undo`：checkpoint / branch / revert（SPEC §8）
+- `@butui/undo`：checkpoint / branch / revert 的**执行**（SPEC §8）——
+  协议与展示已经就位，缺的是 workspace patch / conflict 检测
+- `@butui/web`：复用同一套事件协议（§13 已就绪，只差 DOM adapter）
 - 事件协议（SPEC §13 NDJSON）与 `@butui/web` adapter
 - 图片子系统（SPEC §12）：Kitty / iTerm2 好做，sixel 需要补 PNG 解码
 - 虚拟列表、动画、Kitty keyboard protocol 的发送侧

@@ -12,6 +12,7 @@
     "typecheck": "bun --conditions=browser x tsc --noEmit"
   },
   "devDependencies": {
+    "@butui/agent": "workspace:*",
     "@butui/core": "workspace:*",
     "@butui/layout": "workspace:*",
     "@butui/renderer": "workspace:*",
