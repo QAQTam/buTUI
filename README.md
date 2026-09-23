@@ -5,7 +5,7 @@
 当前状态：**M1/M2 骨架 + 流式渲染 O(1) + 事件协议驱动的 agent UI +
 分支式 Undo + WebUI remote attach + 图片子系统（Kitty / iTerm2 / Sixel /
 半块 / 占位符）+ Artifact Canvas + 列表 / 虚拟列表 + 滚动视口已跑通**，
-`bun test` 365 个用例全绿。
+`bun test` 369 个用例全绿。
 
 ```
 应用（你的 agent / 工具 / TUI）
@@ -609,12 +609,13 @@ Bun.plugin(onLoad)
 
 ## 还没做
 
-- `@butui/components` 继续长（现在有 Input / List / VirtualList；Select /
-  ScrollBox / Table / Tree 待做）
+- `@butui/components` 继续长（现在有 Input / List / VirtualList / 滚动视口；
+  Select / Table / Tree 待做）
 - CommandPalette / ToolGraph / AgentTimeline（§10.2 剩余组件；命令面板用
   `<Input onKey={e => sel.handleKey(e)}>` + `<List>` 组合就够，不必再包一层）
 - 编辑器还缺选区 / 剪贴板历史 / 撤销栈；列表只支持单列 + 固定行高
 - Artifact Canvas：artifact 的持久化（现在只在 Session 内存里）、WebUI 侧的服务端图片路由
 - 图片子系统：半块图的终端背景透出、Kitty 图片随滚动的位置缓存
 - 动画、Kitty keyboard protocol 的发送侧
+- `flexShrink` 没实现：row 里只有显式 `truncate` / `wrap={false}` 的 text 会让位
 - `markdown` / `code` / `image` 三个 intrinsic element 目前只有类型，没有实现
