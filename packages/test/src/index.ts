@@ -22,7 +22,7 @@ import {
 } from "@butui/core";
 import { type Frame, layout } from "@butui/layout";
 import { type RenderStats, Renderer, plainText } from "@butui/renderer";
-import { provideFocusScope, render } from "@butui/solid";
+import { provideAppScope, provideFocusScope, render } from "@butui/solid";
 import { createSignal, flush } from "solid-js";
 
 export interface MountOptions {
@@ -79,15 +79,29 @@ export function mount(component: () => unknown, options: MountOptions = {}): Mou
   const offFocus = onFocusChange(changed => {
     if (changed === root) setFocusedId(getFocusState(root).current);
   });
+  /** 组件级全局按键（`useKeyboard`）—— 和 runtime 同一套语义 */
+  const keyListeners = new Set<(event: KeyEvent) => boolean | void>();
   const dispose = render(
     () =>
-      provideFocusScope(
+      provideAppScope(
         {
-          focusedId,
-          focus: node => focusNode(root, node),
-          trap: node => trapFocus(root, node),
+          size: () => ({ columns, rows }),
+          colorDepth: () => depth,
+          requestPaint: () => {},
+          onKey: listener => {
+            keyListeners.add(listener);
+            return () => keyListeners.delete(listener);
+          },
         },
-        () => component()
+        () =>
+          provideFocusScope(
+            {
+              focusedId,
+              focus: node => focusNode(root, node),
+              trap: node => trapFocus(root, node),
+            },
+            () => component()
+          ) as Node
       ) as Node,
     root
   );
@@ -126,6 +140,10 @@ export function mount(component: () => unknown, options: MountOptions = {}): Mou
           modifiers?.meta ?? false
         ),
       }) as KeyEvent;
+      // 组件级全局按键先跑（应用级在测试里直接调 useKeyboard 之外的东西）
+      for (const listener of [...keyListeners]) {
+        if (listener(event) === true) return 1;
+      }
       return dispatchEvent(target ?? root, event);
     },
     click(x, y, button = "left") {

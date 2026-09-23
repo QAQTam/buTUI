@@ -210,7 +210,22 @@ const sel = createSelection({ count: () => filtered().length, onChange: i => pre
 **命令面板不需要新组件**：`<Input>` 聚焦时 `onKey={e => sel.handleKey(e)}`
 就让方向键归列表、字符归编辑器（`onKey` 先于编辑器）。
 
-### 4.9 内容渲染：`<Markdown>` / `<Code>`
+### 4.9 应用上下文：`useSize` / `useKeyboard` / `useColorDepth`
+
+```tsx
+import { useColorDepth, useKeyboard, useSize } from "@butui/solid";
+
+const size = useSize();        // 响应式 { columns, rows }；无 runtime 时 0x0
+const depth = useColorDepth(); // truecolor / 256 / 16 / none
+useKeyboard(event => {         // 全局按键；返回 true 即消费；卸载自动退订
+  if (event.name === "escape") return close();
+}, { enabled: () => isOpen() });
+```
+
+按键顺序是契约：**应用 `onKey` → 组件 `useKeyboard` → 内建（ctrl+c / tab）→
+焦点节点**。应用永远第一优先级。
+
+### 4.10 内容渲染：`<Markdown>` / `<Code>`
 
 ```tsx
 <Markdown source={message.text} width={72} />
@@ -227,7 +242,7 @@ const sel = createSelection({ count: () => filtered().length, onChange: i => pre
 `<input>` / `<markdown>` / `<code>` 只有类型没有实现，写下去会静默变成空盒子，
 现在从类型里删掉了。
 
-### 4.10 选择类与结构化展示
+### 4.11 选择类与结构化展示
 
 ```tsx
 <Select options={[{ value: "a", label: "A", description: "…" }]} value={v()} onChange={setV} />
@@ -248,7 +263,7 @@ const sel = createSelection({ count: () => filtered().length, onChange: i => pre
   Enter 在叶子上触发 `onActivate`。内部就是「按展开状态拍平 + `<List>`」，
   所以虚拟化、滚动跟随、鼠标点击全都复用。
 
-### 4.11 弹窗与基础展示组件
+### 4.12 弹窗与基础展示组件
 
 ```tsx
 <Button tone="success" onPress={allow}>允许</Button>
@@ -272,7 +287,7 @@ const sel = createSelection({ count: () => filtered().length, onChange: i => pre
   （受控 `frame` 或自走）、`Badge`、`Divider`、`KeyHint`。颜色一律走主题
   token，语义色用 `tone`。
 
-### 4.12 滚动视口：`createScrollView`
+### 4.13 滚动视口：`createScrollView`
 
 ```tsx
 const view = createScrollView();
@@ -302,7 +317,7 @@ createTuiApp({
 前 / 后 N 行固定在视口两端。注意 `<layer>` 做不到这件事 —— 它相对父节点定位，
 父节点自己会被滚走。
 
-### 4.13 Agent 协议
+### 4.14 Agent 协议
 
 ```ts
 import { createSession, decodeNdjson, encodeNdjson } from "@butui/agent";

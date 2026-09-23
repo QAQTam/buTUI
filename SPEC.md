@@ -642,6 +642,30 @@ turn 建一个**纯文本流**（不是 markdown：思考里全是半截句子�
 
 ---
 
+### 5.17 应用上下文（v0.1 实现）
+
+组件要能问「现在多宽 / 什么色深 / 我想订一个全局键」，但既不该认识 runtime，
+也不该让应用一路传 props。`@butui/solid` 因此多了一层**应用上下文**
+（和焦点上下文同构，provider 由 runtime 装）：
+
+```text
+runtime   provideAppScope({ size, colorDepth, requestPaint, onKey })
+组件      useSize() / useColorDepth() / useKeyboard(fn)
+```
+
+`useSize()` 是响应式的（resize 后自动更新），`useKeyboard` 返回 `true` 就消费
+这个键。**按键顺序固定**：应用 `onKey` → 组件 `useKeyboard` → 内建（ctrl+c /
+tab）→ 焦点节点 —— 应用永远第一优先级，组件只能在应用没要的前提下抢键。
+
+没有 runtime 上下文时两个 hook 都安全退化（`0x0` / `truecolor` / 不订阅），
+所以组件单独渲染、写文档示例都不会炸。
+
+顺带对齐了一条一致性：**resize 现在也会立刻 `flush()`**（和 `send()` 一样），
+于是「resize 之后马上读 `frame()`」拿到的是一致的状态，而不是「尺寸变了但
+文本还是旧的」。
+
+---
+
 ### 5.16 Markdown / Code 落地（v0.1 实现）
 
 JSX 里原本声明了 `input` / `markdown` / `code` 三个 intrinsic element，但布局层

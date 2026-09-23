@@ -42,7 +42,7 @@ import {
 } from "@butui/core";
 import { type Frame, layout } from "@butui/layout";
 import { type RenderStats, Renderer } from "@butui/renderer";
-import { provideFocusScope, render } from "@butui/solid";
+import { provideAppScope, provideFocusScope, render } from "@butui/solid";
 import { TerminalSession, terminalSize } from "@butui/terminal";
 import { createSignal, flush } from "solid-js";
 
@@ -233,6 +233,14 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
    * 于是「send() 之后读 frame()」永远是一致的（不然要等下一个微任务），
    * 组件作者和测试都不用去猜 flush 时机。真正的**绘制**仍然在微任务里合并。
    */
+  /**
+   * 组件级全局按键（`useKeyboard`）。
+   *
+   * 顺序固定：应用的 `onKey` → 这里 → 内建（ctrl+c / tab）→ 焦点节点。
+   * 应用永远第一优先级；组件返回 true 就吃掉这个键。
+   */
+  const keyListeners = new Set<(event: KeyEvent) => boolean | void>();
+
   const send = (event: ButuiEvent): number => {
     const delivered = dispatch(event);
     flush();
@@ -243,7 +251,11 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
     if (event.type === "key") {
       // 1) 应用级键位优先：模态 / 全局快捷键
       if (options.onKey?.(event) === true) return 1;
-      // 2) 内建：退出与焦点循环
+      // 2) 组件级全局按键（useKeyboard），按注册顺序
+      for (const listener of [...keyListeners]) {
+        if (listener(event) === true) return 1;
+      }
+      // 3) 内建：退出与焦点循环
       if ((options.quitOnCtrlC ?? true) && event.modifiers.ctrl && event.name === "c") {
         quit();
         return 1;
@@ -254,7 +266,7 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
         requestPaint();
         return 1;
       }
-      // 3) 派发给焦点节点（向上冒泡）
+      // 4) 派发给焦点节点（向上冒泡）
       return dispatchEvent(focusedNode(root) ?? root, event);
     }
 
@@ -291,13 +303,25 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
     // 视图挂到 root 上，外面包一层焦点上下文；Solid 的写入会在 flush 里提交
     const disposeView = render(
       () =>
-        provideFocusScope(
+        provideAppScope(
           {
-            focusedId,
-            focus: node => focusNode(root, node),
-            trap: node => trapFocus(root, node),
+            size,
+            colorDepth: depth,
+            requestPaint,
+            onKey: listener => {
+              keyListeners.add(listener);
+              return () => keyListeners.delete(listener);
+            },
           },
-          () => options.view(app)
+          () =>
+            provideFocusScope(
+              {
+                focusedId,
+                focus: node => focusNode(root, node),
+                trap: node => trapFocus(root, node),
+              },
+              () => options.view(app)
+            ) as Node
         ) as Node,
       root
     );
@@ -308,6 +332,8 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
       terminal.onResize(next => {
         setSize(next);
         renderer.invalidate(); // 尺寸变了必须整屏重画
+        // 和 send() 一样立刻提交：resize 之后马上读 frame() 必须是一致的
+        flush();
         requestPaint();
       })
     );

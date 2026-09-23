@@ -5,7 +5,7 @@
 当前状态：**M1/M2 骨架 + 流式渲染 O(1) + 事件协议驱动的 agent UI +
 分支式 Undo + WebUI remote attach + 图片子系统（Kitty / iTerm2 / Sixel /
 半块 / 占位符）+ Artifact Canvas + 列表 / 虚拟列表 / 滚动视口 / 弹窗 / 表格 / 树已跑通**，
-`bun test` 460 个用例全绿。
+`bun test` 468 个用例全绿。
 
 ```
 应用（你的 agent / 工具 / TUI）
@@ -43,6 +43,16 @@ const app = createTuiApp({
 终端、备用屏、raw mode、重绘调度、resize、tab 焦点、鼠标 hit test、ctrl+c
 退出全在 `createTuiApp` 里。**不需要自己调 paint** —— 任何节点变更（signal、
 定时器、异步加载）都会自动合并到下一帧。
+
+组件里想读终端尺寸 / 订阅全局按键，用 `@butui/solid` 的 hook —— 不用把 runtime
+一路传下来：
+
+```tsx
+const size = useSize();                  // 响应式，resize 后自动更新
+useKeyboard(event => {                   // 返回 true 即消费
+  if (event.name === "escape") return close();
+});
+```
 
 接口契约（哪些稳定、怎么演进、已知缺口）见 **[STABILITY.md](./STABILITY.md)**。
 
