@@ -5,8 +5,8 @@
 当前状态：**M1/M2 骨架 + 流式渲染 O(1) + 事件协议驱动的 agent UI +
 分支式 Undo + WebUI remote attach + 图片子系统（Kitty / iTerm2 / Sixel /
 半块 / 占位符）+ Artifact Canvas + 列表 / 虚拟列表 / 滚动视口 / 弹窗 / 表格 /
-树 + 鼠标选区 / OSC 52 + 流式 Diff / 共享动画时钟已跑通**，
-`bun test` 495 个用例全绿。
+树 + 鼠标选区 / OSC 52 + 流式 Diff / 共享动画时钟 / 精确 ScrollBar 已跑通**，
+`bun test` 505 个用例全绿。
 
 ```
 应用（你的 agent / 工具 / TUI）
@@ -138,6 +138,9 @@ app.clearSelection();
 OSC 52 是**尽力而为**：终端可以不支持、也可以静默忽略，协议没有确认通道。
 需要严格系统剪贴板确认时，应用应在 `onSelection` 里接平台剪贴板实现。
 
+需要自己接管拖拽的控件（scrollbar、slider）声明 `selectable={false}`；runtime
+会从命中节点向上继承，不再启动文本选择。
+
 ## 流式 Diff
 
 后端负责 diff 算法；前端消费结构化的行 upsert，不解析半截 unified diff：
@@ -176,6 +179,51 @@ const source = session.diffFor("c1");
 
 `bun --conditions=browser run scripts/diff-demo.tsx` 可以直接观察同一行被多次
 upsert、游标闪烁和最终定稿。
+
+## 精确 ScrollBar
+
+ScrollBar 的核心是纯几何模型：内容量、视口、轨道长度先归一到整数坐标，再做
+`top ↔ thumbStart` 双向映射。每个轨道 cell 自己就是精确坐标，不依赖扫描整帧
+或猜测组件在终端里的绝对位置。
+
+```tsx
+const view = createScrollView();
+const bar = createScrollBarFor(view);
+
+createTuiApp({
+  view: () => (
+    <row>
+      <box flexGrow={1}>{/* 内容 */}</box>
+      <ScrollBar model={bar} />
+    </row>
+  ),
+  scroll: view,
+  afterDraw: frame => view.measure(frame),
+});
+```
+
+也可以给任意滚动模型接：
+
+```tsx
+const bar = createScrollBar({
+  top: () => offset(),
+  total: () => rows().length,
+  viewport: () => height(),
+  track: () => height(),
+  onScroll: top => setOffset(top),
+});
+```
+
+保证：
+
+- thumb 至少 1 格；内容不溢出时 thumb 覆盖整条轨道。
+- 拖拽保留 `grabOffset`，拖到轨道两端精确得到 `0 / maxTop`。
+- 点击轨道默认把 thumb 中心对齐到点击行；`jump(y, "start")` 可精确到顶部。
+- 鼠标拖动走真实 `onMouseDown/Move/Up`；`selectable={false}` 保证全局文本
+  选择不会抢走 scrollbar 手势。
+- `<Diff scrollbar>` 已接入，多出来的宽度固定为 1 cell。
+
+`bun --conditions=browser run scripts/diff-demo.tsx` 可直接拖动右侧轨道。
 
 ## 流式渲染 O(1)
 
@@ -503,6 +551,9 @@ bun --conditions=browser run scripts/stream-bench.tsx
 # 流式 Diff（同一行反复 upsert）
 bun --conditions=browser run scripts/diff-demo.tsx
 
+# 精确 ScrollBar（拖 thumb / 点轨道）
+bun --conditions=browser run scripts/scrollbar-demo.tsx
+
 # 图片子系统自检（不需要真终端）
 bun --conditions=browser run scripts/image-demo.tsx
 
@@ -532,7 +583,7 @@ Demo 的工作区是**内存实现**，但走的是完全一样的 journal / dif
 | `@butui/core` | 节点树、`rev` 失效传播、`childrenRevSum`、focus、事件冒泡、theme、ANSI 解析 |
 | `@butui/solid` | `@solidjs/universal` host ops、JSX 类型、Bun 编译插件、共享动画帧时钟 |
 | `@butui/runtime` | `createTuiApp`：终端、合帧重绘、事件分发、鼠标选区 / OSC 52 —— 应用作者的唯一入口 |
-| `@butui/components` | `createTextEditor` / `<Input>` / `<Textarea>` / `<Markdown>` / `<Code>` / `<Diff>`、`createSelection` / `<List>` / `<VirtualList>`、`createScrollView`、`<Select>` / `<Tabs>` / `<Table>` / `<Tree>`、`<Button>` / `<Dialog>` / `<Modal>`、`ProgressBar` / `Spinner` / `Badge` / `Divider` / `KeyHint` |
+| `@butui/components` | `createTextEditor` / `<Input>` / `<Textarea>` / `<Markdown>` / `<Code>` / `<Diff>` / `<ScrollBar>`、`createSelection` / `<List>` / `<VirtualList>`、`createScrollView`、`<Select>` / `<Tabs>` / `<Table>` / `<Tree>`、`<Button>` / `<Dialog>` / `<Modal>`、`ProgressBar` / `Spinner` / `Badge` / `Divider` / `KeyHint` |
 | `@butui/agent` | 事件协议（NDJSON）、Session reducer、流式 diff 事件、SPEC §10.2 组件、Artifact Canvas |
 | `@butui/undo` | 工作区变更日志、行级 patch、undo 预览与执行（SPEC §8） |
 | `@butui/web` | WebUI：ANSI→HTML、DOM 组件、`mountWebUI`（复用同一个 Session） |
@@ -704,8 +755,8 @@ Bun.plugin(onLoad)
 
 ## 还没做
 
-- `@butui/components` 继续长：ScrollBar / Slider / ASCIIFont /
-  LineNumberRenderable 等；CommandPalette 用 `<Input onKey={e => sel.handleKey(e)}>`
+- `@butui/components` 继续长：Slider / ASCIIFont / LineNumberRenderable、
+  水平 ScrollBar 等；CommandPalette 用 `<Input onKey={e => sel.handleKey(e)}>`
   + `<List>` 组合就够，不必再包一层
 - 编辑器模型还缺内部选区 / 剪贴板历史 / 撤销栈（全局鼠标选区已由 runtime 提供）；
   列表只支持单列 + 固定行高

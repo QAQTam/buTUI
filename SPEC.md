@@ -750,6 +750,46 @@ markdown —— 那会让每帧产生大面积样式变化，和 §17「流式�
 
 ---
 
+### 5.20 精确 ScrollBar（v0.1 实现）
+
+ScrollBar 的职责不是“画一根线”，而是把 `[0, maxTop]` 的滚动空间准确映射到
+有限轨道 cell。所有映射先归一到整数：
+
+```text
+maxTop     = max(0, total - viewport)
+thumbSize  = max(1, min(track, floor(track * viewport / total)))
+thumbRange = track - thumbSize
+thumbStart = round(thumbRange * top / maxTop)
+top        = round(maxTop * thumbStart / thumbRange)
+```
+
+端点必须精确：`top=0 → thumbStart=0`，`top=maxTop → thumbStart=thumbRange`。
+内容不溢出时 `overflow=false`，thumb 覆盖整条轨道，不进入拖动状态。
+
+**测量坐标来自轨道 cell 本身，不靠全局矩形。** `<ScrollBar>` 每一行轨道都是
+独立节点，鼠标落在第 N 行就是局部 `y=N`；因此不需要扫描 frame、计算节点 bbox
+或猜终端绝对位置。resize 后 `track` / `viewport` 变化，几何模型直接重算。
+
+交互：
+
+- thumb 内按下 → 记录 `grabOffset`，拖动保持鼠标相对 thumb 的位置；
+- 轨道其他位置按下 → 默认把 thumb 中心对齐到该行，随后继续拖动；
+- `jump(y, "start")` 可把点击行作为 thumb 顶部，用于精确跳转；
+- 拖到端点精确得到 `0 / maxTop`。
+
+**和文本选择共存。** 左键拖动同时被全局文本选择监听，所以 scrollbar 声明
+`selectable={false}`；runtime 的 hit test 从目标向上继承这个属性，命中
+scrollbar 时不启动文本选择，`onMouseMove` 才能完整交给拖动逻辑。
+
+`createScrollBarFor(view)` 是 `createScrollView()` 的直连适配器；`<Diff
+scrollbar>` 也使用同一模型，因此根转录、列表、diff 的 thumb 比例与拖动语义
+完全一致。
+
+**已知边界：** 目前只实现垂直 scrollbar；没有自动隐藏、hover 展开、水平轴、
+触控惯性或轨道纹理。
+
+---
+
 ### 5.17 应用上下文（v0.1 实现）
 
 组件要能问「现在多宽 / 什么色深 / 我想订一个全局键」，但既不该认识 runtime，
@@ -1136,6 +1176,7 @@ P1：
 - SplitPane
 - 自动文本高度
 - VirtualList
+- ~~精确 ScrollBar~~ ✅ 见 §5.20
 
 ### 9.2 文本
 
@@ -1202,6 +1243,7 @@ P1：
 - Spacer
 - Center
 - ScrollBox
+- ScrollBar
 - SplitPane
 - Tabs
 - Text
@@ -1252,6 +1294,8 @@ P1：
   分词器可替换（见 §5.16）
 - `Diff`：`<Diff source={DiffStream} height lineNumbers>`，只渲染视口行，
   支持稳定 id upsert、尾行替换和 `stable:false` 流式游标（见 §5.19）
+- `ScrollBar`：`createScrollBar` / `createScrollBarFor` / `<ScrollBar>`，
+  精确整数映射、轨道点击和保留 grabOffset 的拖动（见 §5.20）
 
 ### 10.2 Agent 组件
 

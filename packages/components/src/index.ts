@@ -14,6 +14,8 @@ export * from "./textarea.tsx";
 export * from "./selection.ts";
 export * from "./list.tsx";
 export * from "./scroll.ts";
+export * from "./scrollbar.ts";
+export * from "./scrollbar.tsx";
 export * from "./display.tsx";
 export * from "./modal.tsx";
 export * from "./select.tsx";

@@ -35,6 +35,7 @@ import {
   focusPrev,
   focusedNode,
   getFocusState,
+  isElement,
   nodeById,
   onFocusChange,
   onMutation,
@@ -354,18 +355,27 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
     return text === "" ? null : cloneSnapshot(range, text);
   };
 
+  const selectableTarget = (target: Node | undefined): boolean => {
+    let current = target;
+    while (current) {
+      if (isElement(current) && current.props.selectable === false) return false;
+      current = current.parent ?? undefined;
+    }
+    return true;
+  };
+
   /**
    * 返回是否消费了这次鼠标事件。
    *
    * 按下和松开仍要参与普通 hit test（否则第一次点击列表会失效）；拖动 move
    * 只归选择器，避免 1002 mouse-motion 被当成连续 click。
    */
-  const handleSelectionMouse = (event: MouseEvent): boolean => {
+  const handleSelectionMouse = (event: MouseEvent, target?: Node): boolean => {
     if (!selectionOptions) return false;
     if (!selecting && !selectionAllowed()) return false;
 
     if (event.action === "press") {
-      if (event.button !== "left") {
+      if (event.button !== "left" || !selectableTarget(target)) {
         if (selecting || selectionHasText) resetSelection(true);
         return false;
       }
@@ -441,11 +451,11 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
     }
 
     if (event.type === "mouse") {
-      const selectionHandled = handleSelectionMouse(event);
+      const target = nodeById(root, computeFrame().nodeAt(event.x, event.y));
+      const selectionHandled = handleSelectionMouse(event, target);
       // move 由选择器消费；press / release 仍按普通 hit test 派发，
       // 保证点击组件和拖拽选择可以共存。
       if (event.action === "move" && selectionHandled) return 1;
-      const target = nodeById(root, computeFrame().nodeAt(event.x, event.y));
       const delivered = dispatchEvent(target, event);
       if (delivered === 0) options.onMouse?.(event);
       return delivered || (selectionHandled ? 1 : 0);

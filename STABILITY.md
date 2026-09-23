@@ -36,7 +36,7 @@ const app = createTuiApp({
 | 布局 | `@butui/layout` | **稳定**（`Cell` / `Line` / `Frame` / `layout`） |
 | 渲染 | `@butui/renderer` | **稳定**（`Renderer` / `plainText` / `paintLine`） |
 | 终端 | `@butui/terminal` | **稳定**（`TerminalSession` / 输入解码 / 能力探测） |
-| 基础组件 | `@butui/components` | **稳定**（编辑器 / 选择 / 列表 / 滚动 / Diff / 弹窗 / 展示组件） |
+| 基础组件 | `@butui/components` | **稳定**（编辑器 / 选择 / 列表 / 滚动 / ScrollBar / Diff / 弹窗 / 展示组件） |
 | 流式文本 | `@butui/stream` | **稳定**（`StreamSource` / `DiffStream` / `<stream>`） |
 | 图片 | `@butui/image` | **稳定**（`createImage` / `ImageLayer` / `renderImage`） |
 | Agent 协议与组件 | `@butui/agent` | **稳定**（`AgentEvent` / `UiCommand` / `Session` / `tool.diff`） |
@@ -351,6 +351,8 @@ app.clearSelection();
 - `onSelection` 只在定稿 / 清除时调用，不会为每个 mouse-move 高频触发。
 - `selection: false` 完全关闭；`enabled: () => false` 可动态暂停。
 - 默认 `copyOnSelect: true` 写 OSC 52（tmux 下自动 passthrough）。
+- 任何节点可声明 `selectable={false}`；命中该节点 / 子树时不启动文本选择，
+  用于 scrollbar、按钮等需要自己接管拖拽的控件。
 - 选择是**当前视口坐标**，不是内容锚点。resize 会清除；滚动 / 内容重排后
   选区仍指向新的同一屏幕位置。需要跨滚动稳定锚点时，应用要在
   `onSelection` 里保存语义节点与文本。
@@ -420,6 +422,27 @@ const time = useAnimationFrame({ enabled: () => source.streaming() });
 - 动画只应更新仍在变化的少量行。不要把 shimmer 铺到完整 diff / markdown，
   否则每帧都会制造大量样式变化和重绘。
 
+### 4.18 精确 ScrollBar：`createScrollBar` / `<ScrollBar>`
+
+```tsx
+const view = createScrollView();
+const bar = createScrollBarFor(view);
+
+<row>
+  <box flexGrow={1}>…</box>
+  <ScrollBar model={bar} />
+</row>
+```
+
+- `scrollBarGeometry()` 是纯函数：整数轨道、thumb 至少 1 格、端点精确。
+- `topForThumb()` / `topAtTrack()` 提供双向映射和轨道点击定位。
+- `createScrollBar()` 拖动保留 `grabOffset`；`jump(y, "start")` 可精确到轨道行。
+- 轨道每一行是独立节点，鼠标局部 `y` 就是轨道行号，不需要扫描 frame 或
+  获取节点 bbox。
+- ScrollBar 声明 `selectable={false}`。runtime 会从命中节点向上继承该属性，
+  不启动全局文本选择，因此拖拽不会被选区吃掉。
+- `<Diff scrollbar>` 与 `createScrollBarFor(view)` 使用同一几何模型。
+
 ## 5. 已知缺口（不要依赖，也不建议自己绕）
 
 - **列表只有单列 + 固定行高**：`itemHeight` 是常数，变高行（折行文本、展开的
@@ -434,6 +457,7 @@ const time = useAnimationFrame({ enabled: () => source.streaming() });
   “视口外有新行”提示。
 - **动画只有共享时钟与 Diff 游标**：还没有 tween / spring / timeline /
   stagger，也没有 shimmer 组件；不要假设 60fps。
+- **ScrollBar 目前只有垂直轴**：没有自动隐藏、hover 展开、水平轴或触控惯性。
 - **`flexShrink` 没有实现**：row 里只有显式 `truncate` / `wrap={false}` 的
   text 会让位给兄弟节点；普通的折行文本仍然先按自然宽度拿满。
 - **`ScrollView` 的翻页步长按整屏高度算**：有固定页眉 / 页脚时会多滚固定区

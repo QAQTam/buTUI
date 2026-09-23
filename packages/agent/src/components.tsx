@@ -63,7 +63,7 @@ export function ToolCard(props: { call: ToolCall; diff?: DiffStream }) {
         </Show>
       </row>
       <Show when={props.diff}>
-        {source => <Diff source={source()} height={12} lineNumbers />}
+        {source => <Diff source={source()} height={12} lineNumbers scrollbar />}
       </Show>
     </box>
   );

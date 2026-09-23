@@ -20,11 +20,15 @@ import {
   tokenizeLine,
   tokenizeOptionsFor,
 } from "./highlight.ts";
+import { createScrollBar } from "./scrollbar.ts";
+import { ScrollBar } from "./scrollbar.tsx";
 
 export interface DiffProps {
   source: DiffStream;
   /** 视口高度；不传 = 全部渲染（只适合已知的小 diff） */
   height?: number;
+  /** 在右侧显示 1 cell 宽的滚动条；默认 false */
+  scrollbar?: boolean;
   /** 初始是否跟随尾部，默认 true */
   follow?: boolean;
   lineNumbers?: boolean;
@@ -105,6 +109,14 @@ export function Diff(props: DiffProps) {
     setFollowing(keepFollowing || value >= maxTop());
   };
   const scrollBy = (delta: number): void => scrollTo(top() + delta);
+
+  const scrollBar = createScrollBar({
+    top: windowStart,
+    total: source.count,
+    viewport,
+    track: () => (props.height === undefined ? source.count() : Math.max(0, props.height)),
+    onScroll: next => scrollTo(next, false),
+  });
 
   const handleWheel = (event: MouseEvent): void => {
     const dir = event.wheel;
@@ -215,17 +227,29 @@ export function Diff(props: DiffProps) {
   return (
     <box
       semantic={props.semantic ?? `diff:${source.id}`}
+      width="100%"
       height={props.height}
       overflow={props.height === undefined ? undefined : "hidden"}
       focusable={props.height !== undefined}
       onWheel={handleWheel}
       onKey={handleKey}
     >
-      <Show when={source.count() > 0} fallback={<text color="muted">等待 diff…</text>}>
-        <Repeat count={windowSize()} from={windowStart()}>
-          {index => row(index)}
-        </Repeat>
-      </Show>
+      <row width="100%" height={props.height}>
+        <box
+          flexGrow={1}
+          height={props.height}
+          overflow={props.height === undefined ? undefined : "hidden"}
+        >
+          <Show when={source.count() > 0} fallback={<text color="muted">等待 diff…</text>}>
+            <Repeat count={windowSize()} from={windowStart()}>
+              {index => row(index)}
+            </Repeat>
+          </Show>
+        </box>
+        <Show when={props.scrollbar && props.height !== undefined}>
+          <ScrollBar model={scrollBar} />
+        </Show>
+      </row>
     </box>
   );
 }

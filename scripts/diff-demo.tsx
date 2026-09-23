@@ -35,7 +35,7 @@ const app = createTuiApp({
         <text bold color="accent">stream diff</text>
         <text color="muted">src/math.ts</text>
       </row>
-      <Diff source={source} height={12} lineNumbers language="ts" />
+      <Diff source={source} height={5} lineNumbers language="ts" scrollbar />
       <text color="muted">↑↓ / PgUp / PgDn 滚动 · Ctrl+C 退出</text>
     </box>
   ),

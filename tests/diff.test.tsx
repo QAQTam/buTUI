@@ -111,4 +111,21 @@ describe("<Diff>：流式 diff 视图", () => {
     expect(app.frame().lines).toHaveLength(1);
     app.unmount();
   });
+
+  test("scrollbar 的 thumb 精确跟随窗口位置", () => {
+    const source = createDiffStream();
+    for (let i = 0; i < 20; i++) source.upsert([line(`l${i}`, `line ${i}`)]);
+    const app = mount(
+      () => <Diff source={source} height={4} scrollbar animate={false} />,
+      { width: 20, height: 4 }
+    );
+
+    expect(app.frame().lines[3].at(-1)?.ch).toBe("█");
+    focusNode(app.root, app.root.children[0]);
+    app.key("home");
+    app.flush();
+    expect(app.frame().lines[0].at(-1)?.ch).toBe("█");
+    expect(app.frame().lines[3].at(-1)?.ch).toBe("│");
+    app.unmount();
+  });
 });
