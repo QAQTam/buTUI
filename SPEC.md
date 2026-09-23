@@ -621,7 +621,53 @@ turn 建一个**纯文本流**（不是 markdown：思考里全是半截句子�
   「streaming…」和 `<Show when={message.streaming}>` 从来没显示过。快路径现在补
   一次 `reduce()`（消息查找是幂等的），并把这条写进了回归测试。
 
+---
 
+### 5.15 弹窗与遮罩落地（v0.1 实现）
+
+TUI 里「模态框」有三件事必须一起解决，缺一件就是错的：**画在视口上（不被
+滚走）**、**盖住该盖的（不该盖的别盖）**、**焦点锁在里面（关掉能还回去）**。
+
+**1. 根 `<layer>` 合成在视口之上。** 之前 `compositeLayers` 在 `measureNode`
+里就把 layer 合进了父节点的行，然后视口再切片 —— 于是根上的 layer 会跟着内容
+一起滚走。现在根的 layer 跳过那一步，改在 `layout()` 切完视口后合成：
+
+```text
+measureNode(root) → 不合成根的 layer
+layout() 切片视口 → compositeLayers(root) → 合成到最终帧
+```
+
+（子节点里的 layer 行为不变：相对父节点定位，父节点滚它就滚。）
+
+**2. layer 默认是透明的。** 合成时**没有样式的空白 cell 不覆盖**下面的内容，
+所以「居中的模态框」不会把整屏抹成空白。要让一块区域不透明，给它 `bg` ——
+容器背景会填满自己的盒子（§5.12 的那个修复正好是这里的地基）。遮罩就是
+`<box width="100%" height="100%" bg="bg">`。
+
+**3. 焦点 trap 进组件层。** `core` 一直有 `trapFocus(root, scope)`，但组件拿
+不到 root。现在 `FocusScope` 多了 `trap(node)`（runtime 与 `@butui/test` 都
+实现），于是 `<Dialog>` 能自己：
+
+```text
+挂载   scope.trap(node)  → Tab 只在对话框里循环，焦点落在第一个可聚焦子节点
+卸载   释放            → 焦点回到打开它之前的那个节点
+```
+
+「权限弹窗关掉，输入框还是刚才那个」于是变成自动的，而不是每个应用自己记账。
+
+**4. 顺手撞出来的 Solid 2 契约：effect 的清理函数只能靠返回值。**
+`createEffect(compute, effect)` 里调 `onCleanup(fn)` 注册的清理**卸载时不会
+跑**（Solid 1 会跑）。`<Dialog>` 的 trap 因此一直没释放（焦点锁死），
+`<Spinner>` 的定时器一直没清（卸载后还在跑）。正确写法：
+
+```ts
+createEffect(() => dep(), () => {
+  const release = scope.trap(node);
+  return () => release();      // ← 只有返回值会被调用
+});
+```
+
+这条写进了 `tests/solid-cleanup-contract.test.tsx` 与 README 的「必须知道的坑」。
 
 ---
 
@@ -1010,6 +1056,10 @@ P1：
 - `Input` / `Textarea`：`createTextEditor` + `<Input>`（`multiline` 即 Textarea）
 - `List` / `VirtualList`：`createSelection` + `<List>` / `<VirtualList>`
   （见 §5.12）
+- `Overlay` / `Portal` / `Dialog`：`<Modal>` / `<Dialog>`（根 layer + 焦点
+  trap，见 §5.15）
+- `Button`：`<Button>`（Enter / 空格 / 点击，焦点态自亮）
+- `ProgressBar` / `Spinner` / `Badge` / `Divider` / `KeyHint`：展示组件
 
 ### 10.2 Agent 组件
 

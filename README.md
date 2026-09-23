@@ -18,7 +18,7 @@
               → 终端 ANSI
 
 按需叠加：
-  @butui/components  编辑器模型 + Input + 选择模型 + List / VirtualList + 滚动视口
+  @butui/components  编辑器 / Input / 选择模型 / List / 滚动视口 / 弹窗 / 展示组件
   @butui/stream  增量折行 + 增量 markdown（O(delta) 定稿）
   @butui/image   Kitty / iTerm2 / Sixel / 半块 / 占位符 + 安全加载
   @butui/agent   事件协议 + Session + SPEC §10.2 组件 + Artifact Canvas
@@ -451,7 +451,7 @@ Demo 的工作区是**内存实现**，但走的是完全一样的 journal / dif
 | `@butui/core` | 节点树、`rev` 失效传播、`childrenRevSum`、focus、事件冒泡、theme、ANSI 解析 |
 | `@butui/solid` | `@solidjs/universal` host ops、JSX 类型、Bun 编译插件 |
 | `@butui/runtime` | `createTuiApp`：终端、合帧重绘、事件分发 —— 应用作者的唯一入口 |
-| `@butui/components` | `createTextEditor`、`<Input>`、`createSelection`、`<List>` / `<VirtualList>`、`createScrollView` |
+| `@butui/components` | `createTextEditor` / `<Input>`、`createSelection` / `<List>` / `<VirtualList>`、`createScrollView`、`<Button>` / `<Dialog>` / `<Modal>`、`ProgressBar` / `Spinner` / `Badge` / `Divider` / `KeyHint` |
 | `@butui/agent` | 事件协议（NDJSON）、Session reducer、SPEC §10.2 组件、Artifact Canvas |
 | `@butui/undo` | 工作区变更日志、行级 patch、undo 预览与执行（SPEC §8） |
 | `@butui/web` | WebUI：ANSI→HTML、DOM 组件、`mountWebUI`（复用同一个 Session） |
@@ -530,7 +530,7 @@ const call = state.calls.find(...);        // ← 查不到！
 `@butui/agent` 里 `tool.result` 要把 workspace 变更记到对应的 tool call 上，
 第一版就是在 setter 外面查的，结果 journal 里的 `turnId` 全是空串。
 
-### 7. Solid 2 的 `createEffect` 需要**两个**参数
+### 7. Solid 2 的 `createEffect` 需要**两个**参数，且清理函数只能靠**返回**
 
 ```ts
 createEffect(() => signal(), value => doWork(value));
@@ -538,6 +538,20 @@ createEffect(() => signal(), value => doWork(value));
 
 单参数在 prod 构建里会抛 `undefined is not an object (evaluating 't.effect')`，
 而且会让整个响应式 root `[REACTIVITY_HALTED]`。
+
+更阴的一条：**在 effect 体里调 `onCleanup(fn)` 注册的清理，卸载时不会跑**
+（Solid 1 会跑）。只有两种写法有效：
+
+```ts
+createEffect(() => dep(), () => {
+  const timer = setInterval(tick, 80);
+  return () => clearInterval(timer);   // ← 返回值才是清理函数
+});
+```
+
+组件体里直接 `onCleanup(...)` 也有效（owner 是组件）。`<Spinner>` 的定时器、
+`<Dialog>` 的焦点 trap 都栽过这条 —— 表现是「卸载后还在跑 / 焦点锁死」，
+而且不会报错。回归测试见 `tests/solid-cleanup-contract.test.tsx`。
 
 ### 8. 在响应式 root 外部批量注入事件后要 `settle()`
 

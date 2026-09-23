@@ -36,7 +36,7 @@ const app = createTuiApp({
 | 布局 | `@butui/layout` | **稳定**（`Cell` / `Line` / `Frame` / `layout`） |
 | 渲染 | `@butui/renderer` | **稳定**（`Renderer` / `plainText` / `paintLine`） |
 | 终端 | `@butui/terminal` | **稳定**（`TerminalSession` / 输入解码 / 能力探测） |
-| 基础组件 | `@butui/components` | **稳定**（`createTextEditor` / `<Input>` / `createSelection` / `<List>` / `<VirtualList>` / `createScrollView`） |
+| 基础组件 | `@butui/components` | **稳定**（编辑器 / 选择 / 列表 / 滚动 / 弹窗 / 展示组件） |
 | 流式文本 | `@butui/stream` | **稳定**（`StreamSource` / `<stream>`） |
 | 图片 | `@butui/image` | **稳定**（`createImage` / `ImageLayer` / `renderImage`） |
 | Agent 协议与组件 | `@butui/agent` | **稳定**（`AgentEvent` / `UiCommand` / `Session`） |
@@ -206,7 +206,31 @@ const sel = createSelection({ count: () => filtered().length, onChange: i => pre
 **命令面板不需要新组件**：`<Input>` 聚焦时 `onKey={e => sel.handleKey(e)}`
 就让方向键归列表、字符归编辑器（`onKey` 先于编辑器）。
 
-### 4.9 滚动视口：`createScrollView`
+### 4.9 弹窗与基础展示组件
+
+```tsx
+<Button tone="success" onPress={allow}>允许</Button>
+
+// Modal 挂在**视图根部**（顶层 <box> 的兄弟节点）
+<Modal open={asking()} title="允许执行？" onDismiss={deny}>
+  <text>rm -rf node_modules</text>
+  <row gap={2}>
+    <Button tone="success" onPress={allow}>允许</Button>
+    <Button tone="danger" onPress={deny}>拒绝</Button>
+  </row>
+</Modal>
+```
+
+- `<Button>`：可聚焦，Enter / 空格 / 点击触发；`plain` 只做焦点高亮。
+- `<Dialog>`：带边框标题的卡片，**自动 trap 焦点**，Esc 触发 `onDismiss`。
+  关掉之后焦点回到打开它之前的那个节点。
+- `<Modal>`：`<layer>` + 遮罩 + 居中。**必须在视图根部** —— `<layer>` 相对
+  父节点定位，父节点会被滚走；只有根上的 layer 合成在视口之上。
+- 展示组件：`ProgressBar`（含 `indeterminate` + `phase`）、`Spinner`
+  （受控 `frame` 或自走）、`Badge`、`Divider`、`KeyHint`。颜色一律走主题
+  token，语义色用 `tone`。
+
+### 4.10 滚动视口：`createScrollView`
 
 ```tsx
 const view = createScrollView();
@@ -236,7 +260,7 @@ createTuiApp({
 前 / 后 N 行固定在视口两端。注意 `<layer>` 做不到这件事 —— 它相对父节点定位，
 父节点自己会被滚走。
 
-### 4.10 Agent 协议
+### 4.11 Agent 协议
 
 ```ts
 import { createSession, decodeNdjson, encodeNdjson } from "@butui/agent";

@@ -126,6 +126,49 @@ describe("布局引擎（SPEC §9.1 P0）", () => {
     app.unmount();
   });
 
+
+  test("根的 <layer> 合成在视口之上，不跟着内容滚（模态框 / 固定状态栏）", () => {
+    const app = mount(
+      () => (
+        <>
+          <box>
+            {Array.from({ length: 20 }, (_, i) => (
+              <text>{`line-${i}`}</text>
+            ))}
+          </box>
+          {/* 根的直接子节点 = 视口坐标系 */}
+          <layer x={0} y={0}>
+            <text color="accent">MODAL</text>
+          </layer>
+        </>
+      ),
+      { width: 20, height: 5, scroll: "bottom" }
+    );
+    const lines = app.text().split("\n");
+    expect(lines[0]).toContain("MODAL"); // 贴底了，模态框还在最上面
+    expect(app.text()).toContain("line-19");
+    app.unmount();
+  });
+
+  test("子节点里的 <layer> 仍然跟着父节点走", () => {
+    const app = mount(
+      () => (
+        <box>
+          <box>
+            <text>a</text>
+            <layer x={0} y={0}>
+              <text color="accent">TAG</text>
+            </layer>
+          </box>
+          <text>b</text>
+        </box>
+      ),
+      { width: 20, height: 3 }
+    );
+    expect(app.text().split("\n")[0]).toContain("TAG");
+    app.unmount();
+  });
+
   test("row 横向排列 + spacer 吃掉剩余空间", () => {
     const app = mount(
       () => (

@@ -17,6 +17,7 @@ import {
   focusNode,
   getFocusState,
   onFocusChange,
+  trapFocus,
   walk,
 } from "@butui/core";
 import { type Frame, layout } from "@butui/layout";
@@ -80,7 +81,14 @@ export function mount(component: () => unknown, options: MountOptions = {}): Mou
   });
   const dispose = render(
     () =>
-      provideFocusScope({ focusedId, focus: node => focusNode(root, node) }, () => component()) as Node,
+      provideFocusScope(
+        {
+          focusedId,
+          focus: node => focusNode(root, node),
+          trap: node => trapFocus(root, node),
+        },
+        () => component()
+      ) as Node,
     root
   );
   flush();

@@ -38,6 +38,7 @@ import {
   nodeById,
   onFocusChange,
   onMutation,
+  trapFocus,
 } from "@butui/core";
 import { type Frame, layout } from "@butui/layout";
 import { type RenderStats, Renderer } from "@butui/renderer";
@@ -291,7 +292,11 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
     const disposeView = render(
       () =>
         provideFocusScope(
-          { focusedId, focus: node => focusNode(root, node) },
+          {
+            focusedId,
+            focus: node => focusNode(root, node),
+            trap: node => trapFocus(root, node),
+          },
           () => options.view(app)
         ) as Node,
       root

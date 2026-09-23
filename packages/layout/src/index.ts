@@ -930,8 +930,13 @@ function measureNode(
 
   cache.set(node, { rev: node.rev, width: availableWidth, height: availableHeight, box: result, append: cachedMeta.get(node) });
 
-  // overlay / portal（SPEC §9.4）：出流子节点按 (x, y) 合成到本节点之上
-  compositeLayers(node, result, availableWidth, availableHeight, style, depth, ctx, semantic);
+  // overlay / portal（SPEC §9.4）：出流子节点按 (x, y) 合成到本节点之上。
+  //
+  // **根节点例外**：根的 layer 要等视口切完再合成，否则「模态框 / 固定状态栏」
+  // 会跟着内容一起被滚走。`layout()` 里做这件事。
+  if (node.parent !== null) {
+    compositeLayers(node, result, availableWidth, availableHeight, style, depth, ctx, semantic);
+  }
   return result;
 }
 
@@ -968,6 +973,10 @@ function compositeLayers(
         if (cx < 0 || cx >= target.length) continue;
         const cell = source[x];
         if (cell.width === 0) continue;
+        // **没有样式的空白 = 透明**：layer 默认只盖住自己画了东西的地方，
+        // 所以「居中的模态框」不会把整屏内容抹成空白。要让一块区域不透明，
+        // 给它 `bg`（容器背景会填满自己的盒子）—— 这就是遮罩的做法。
+        if (cell.sgr === "" && (cell.ch === " " || cell.ch === "")) continue;
         target[cx] = cell;
         for (let k = 1; k < cell.width; k++) {
           if (cx + k < target.length) target[cx + k] = { ...cell, ch: "", width: 0 };
@@ -1241,7 +1250,8 @@ export function layout(
   // 只把可视窗口复制成帧：与总行数无关
   const lines: Line[] = [];
   const push = (line: Line): void => {
-    lines.push(padLine(fitLine(line, width), width, root.id));
+    // 拷贝一份：下面合成根 layer 时会原地改 cell，不能改到布局缓存里的行
+    lines.push([...padLine(fitLine(line, width), width, root.id)]);
   };
   for (let i = 0; i < bodyStart; i++) push(box.lines[i]);
   for (let i = bodyOffset; i < Math.min(bodyOffset + bodyHeight, bodyEnd); i++) {
@@ -1249,6 +1259,20 @@ export function layout(
   }
   for (let i = bodyEnd; i < total; i++) push(box.lines[i]);
   while (lines.length < height) lines.push(blankLine(width, root.id));
+
+  // 根的 `<layer>` 合成在**视口之上**：模态框 / 固定状态栏不该被滚走
+  if (root.children.some(child => isElement(child) && child.tag === "layer")) {
+    compositeLayers(
+      root as ElementNode,
+      { lines, width, height, frozen: 0 },
+      width,
+      height,
+      {},
+      ctx.depth,
+      ctx,
+      undefined
+    );
+  }
 
   return {
     lines,

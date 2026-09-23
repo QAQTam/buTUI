@@ -20,6 +20,13 @@ export interface FocusScope {
   focusedId(): number | null;
   /** 主动聚焦某个节点（`autoFocus` / 点击进入用） */
   focus(node: Node | undefined): void;
+  /**
+   * 把焦点限制在这个子树里（modal / dialog 用）；返回恢复函数。
+   *
+   * 恢复函数会**恢复之前的焦点**，所以 `<Dialog>` 关掉之后 Tab 会回到原来
+   * 那个输入框，而不是从头开始。
+   */
+  trap(node: Node): () => void;
 }
 
 const FocusContext = createContext<FocusScope | null>(null);

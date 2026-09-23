@@ -13,3 +13,5 @@ export * from "./input.tsx";
 export * from "./selection.ts";
 export * from "./list.tsx";
 export * from "./scroll.ts";
+export * from "./display.tsx";
+export * from "./modal.tsx";
