@@ -33,7 +33,11 @@ export interface RenderStats {
  * layout，不依赖 image。
  */
 export interface RenderHooks {
-  afterDraw?(frame: Frame, stats: RenderStats): string;
+  /**
+   * 返回值会被拼进同一批写入；返回 `undefined` / `""` 表示只做观察
+   * （比如滚动视口把当前帧的 top/total 收回去）。
+   */
+  afterDraw?(frame: Frame, stats: RenderStats): string | void;
 }
 
 const ESC = "\x1b[";
@@ -129,7 +133,11 @@ export class Renderer {
       full,
     };
 
-    if (this.hooks?.afterDraw) out += this.hooks.afterDraw(frame, stats);
+    if (this.hooks?.afterDraw) {
+      // 钩子可以只做观察（比如滚动视口测量位置），不必为了签名返回 ""
+      const extra = this.hooks.afterDraw(frame, stats);
+      if (extra) out += extra;
+    }
 
     if (out) this.write(out);
     this.previous = frame.lines;

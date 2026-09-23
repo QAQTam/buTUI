@@ -82,8 +82,25 @@ export interface TuiAppOptions {
    * 固定布局（表单 / 仪表盘）用 `"top"`。
    */
   scroll?: () => number | "top" | "bottom";
-  /** 帧后钩子：原生图片图层（`ImageLayer.render`）、调试统计等 */
-  afterDraw?: (frame: Frame, stats: RenderStats) => string;
+  /**
+   * 固定在视口顶部 / 底部的行数（不参与滚动）。
+   *
+   * 「固定页眉 + 可滚转录 + 固定状态栏」的骨架靠这两个数表达。注意语义是
+   * **取内容的前 / 后 N 行**，所以它们要放在 flow 的头尾（配合 `<layer>` 那种
+   * 覆盖式定位是另一回事 —— layer 会跟着父节点一起被滚走）。
+   *
+   * 与 `scroll` 搭配时：`scroll` 的偏移是**滚动区内**的行号，`frame().top` 报的
+   * 也是同一个坐标系，两者可以直接互传（`ScrollView.measure` 收的就是
+   * `frame()`）—— 应用不需要知道固定区有几行。
+   */
+  stickyTop?: number;
+  stickyBottom?: number;
+  /**
+   * 帧后钩子：原生图片图层（`ImageLayer.render`）、调试统计等。
+   *
+   * 返回值会拼进同一批写入；只做观察（比如 `ScrollView.measure`）可以不返回。
+   */
+  afterDraw?: (frame: Frame, stats: RenderStats) => string | void;
   /**
    * 应用级键位。返回 `true` 表示已消费 —— 不再派发给焦点节点。
    * 模态弹窗、全局快捷键（ctrl+u 之类）都写在这里。
@@ -161,7 +178,12 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
   /** 当前布局（布局层按 rev 缓存，现算很便宜；不要缓存成「上一帧」） */
   const computeFrame = (): Frame => {
     const { columns, rows } = size();
-    return layout(root, columns, rows, { depth: depth(), scrollTop: scrollTop() });
+    return layout(root, columns, rows, {
+      depth: depth(),
+      scrollTop: scrollTop(),
+      stickyTop: options.stickyTop ?? 0,
+      stickyBottom: options.stickyBottom ?? 0,
+    });
   };
 
   const paint = (): RenderStats => renderer.draw(computeFrame());

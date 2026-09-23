@@ -12,3 +12,4 @@ export * from "./editor.ts";
 export * from "./input.tsx";
 export * from "./selection.ts";
 export * from "./list.tsx";
+export * from "./scroll.ts";

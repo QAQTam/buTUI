@@ -66,6 +66,16 @@ export interface LayoutContext {
    * 只有可视窗口会被复制成帧，因此每帧成本是 O(视口高度) 而不是 O(总行数)。
    */
   scrollTop?: number | "bottom";
+  /**
+   * 固定在视口顶部的行数（不参与滚动）。
+   *
+   * 「固定页眉 + 可滚转录 + 固定页脚」是 TUI 最常见的骨架，而 `<layer>` 只能
+   * 相对**父节点**定位（父节点自己也会被滚走），所以这件事必须在视口这一层做。
+   * 语义上取内容的前 N 行 —— 应用自己知道页眉有几行。
+   */
+  stickyTop?: number;
+  /** 固定在视口底部的行数（不参与滚动）。语义上取内容的最后 N 行 */
+  stickyBottom?: number;
   /** 调试用：统计测量次数 */
   stats?: { measured: number; reused: number };
 }
@@ -432,14 +442,41 @@ function measureInline(
   ctx: LayoutContext,
   semantic: string | undefined
 ): Box {
+  // 不折行的两种写法：`truncate`（截断 + 省略号）/ `wrap={false}`（直接截断）。
+  // 状态栏、表格单元、单行标签都需要它 —— 否则文本一超宽就折成两行，
+  // 行高变得不可预测（`stickyBottom: 1` 这种「固定一行」的假设就崩了）。
+  const ellipsis = node.props.truncate === true;
+  const nowrap = ellipsis || node.props.wrap === false;
   // text 是 inline 容器：子节点横向流动，整体再按宽度折行
   const flat: Line = [];
   for (const child of node.children) {
     if (!inFlow(child)) continue;
-    const box = measureNode(child, innerWidth, Number.MAX_SAFE_INTEGER, style, depth, ctx, semantic);
+    const box = measureNode(
+      child,
+      nowrap ? Number.MAX_SAFE_INTEGER : innerWidth,
+      Number.MAX_SAFE_INTEGER,
+      style,
+      depth,
+      ctx,
+      semantic
+    );
     for (const line of box.lines) flat.push(...line);
   }
   if (flat.length === 0) return { lines: [], width: 0, height: 0, frozen: 0 };
+
+  if (nowrap) {
+    const limit = Math.max(0, innerWidth);
+    if (flat.length <= limit) {
+      return { lines: [flat], width: flat.length, height: 1, frozen: 0 };
+    }
+    if (ellipsis && limit > 0) {
+      const cells = flat.slice(0, limit - 1);
+      const dot = toCells("…", node, sgrOf(style, depth), semantic)[0];
+      if (dot) cells.push(dot);
+      return { lines: [cells], width: cells.length, height: 1, frozen: 0 };
+    }
+    return { lines: [flat.slice(0, limit)], width: limit, height: 1, frozen: 0 };
+  }
 
   const lines: Line[] = [];
   let current: Line = [];
@@ -464,6 +501,21 @@ function inFlow(child: Node): boolean {
   return !(isElement(child) && child.tag === "layer");
 }
 
+/**
+ * 「可以随便压窄」的节点：显式声明不折行的 text。
+ *
+ * 它们**最后**参与第一轮测量，先让别的兄弟节点拿走自己要的宽度，剩下的才归
+ * 它们。否则状态栏这种 `<row><text truncate>长文本</text><text>右对齐</text>`
+ * 会被第一个孩子按自然宽度吃光整行，右边那个直接被挤出去。
+ */
+function isSqueezable(node: Node): boolean {
+  return (
+    isElement(node) &&
+    node.tag === "text" &&
+    (node.props.truncate === true || node.props.wrap === false)
+  );
+}
+
 function measureRow(
   node: ElementNode,
   innerWidth: number,
@@ -485,16 +537,21 @@ function measureRow(
   const sizes: number[] = [];
   const grow: number[] = [];
   let fixedTotal = 0;
-  for (const kid of kids) {
+  // 可压缩的（truncate / wrap=false）放最后量，先让兄弟节点拿走自己的宽度
+  const order = kids
+    .map((_, i) => i)
+    .sort((a, b) => Number(isSqueezable(kids[a])) - Number(isSqueezable(kids[b])));
+  for (const i of order) {
+    const kid = kids[i];
     const explicit = isElement(kid) ? resolveSize(kid.props.width, innerWidth) : undefined;
     const growAmount = growOf(kid);
     if (explicit !== undefined) {
-      sizes.push(explicit);
-      grow.push(0);
+      sizes[i] = explicit;
+      grow[i] = 0;
       fixedTotal += explicit;
     } else if (growAmount > 0) {
-      sizes.push(0);
-      grow.push(growAmount);
+      sizes[i] = 0;
+      grow[i] = growAmount;
     } else {
       // 自然宽度：先按剩余空间测一次
       const natural = measureNode(
@@ -507,8 +564,8 @@ function measureRow(
         semantic
       );
       const width = Math.min(natural.width, Math.max(0, available - fixedTotal));
-      sizes.push(width);
-      grow.push(0);
+      sizes[i] = width;
+      grow[i] = 0;
       fixedTotal += width;
     }
   }
@@ -1113,9 +1170,16 @@ export interface Frame {
   lines: Line[];
   width: number;
   height: number;
-  /** 视口顶部对应的内容行号 */
+  /**
+   * 滚动区第一行在**滚动区内**的行号。
+   *
+   * 恒有 `0 <= top <= total - height`，所以「是否贴底」直接用
+   * `top >= total - height` 判断即可 —— `ScrollView` 就是这么做的，而且这个
+   * 等式在有固定页眉 / 页脚（`stickyTop` / `stickyBottom`）时依然成立：
+   * 固定区只缩小滚动区，不改变 `total - height` 的差值。
+   */
   top: number;
-  /** 内容总行数 */
+  /** 内容总行数（含固定页眉 / 页脚） */
   total: number;
   /** 语义 hit test：返回 `message:<id>` 这类标识（SPEC §4.2） */
   semanticAt(x: number, y: number): string | undefined;
@@ -1135,15 +1199,42 @@ export function layout(
   const box = measureNode(root, width, height, {}, ctx.depth, ctx, undefined);
 
   const total = box.lines.length;
-  const maxTop = Math.max(0, total - height);
+
+  // ── 固定页眉 / 页脚 ────────────────────────────────────────────────────
+  // 只滚动中间那段。`top` / `total` 仍然按**整块内容**算，这样
+  // `maxTop === total - height` 对调用方（比如 ScrollView）依然成立。
+  const rows = Math.max(0, Math.floor(height));
+  const stickyTop = Math.max(0, Math.min(Math.floor(ctx.stickyTop ?? 0) || 0, rows));
+  const stickyBottom = Math.max(
+    0,
+    Math.min(Math.floor(ctx.stickyBottom ?? 0) || 0, rows - stickyTop, total - stickyTop)
+  );
+  const bodyStart = Math.min(stickyTop, total);
+  const bodyEnd = Math.max(bodyStart, total - stickyBottom);
+  const bodyHeight = Math.max(0, rows - stickyTop - stickyBottom);
+
+  const maxTop = Math.max(0, bodyEnd - bodyStart - bodyHeight);
   const requested = ctx.scrollTop ?? 0;
-  const top = requested === "bottom" ? maxTop : Math.max(0, Math.min(requested, maxTop));
+  // 偏移是**滚动区内**的行号（不是整块内容的绝对行号）：
+  // 这样 `maxTop === total - height` 在有没有固定页眉/页脚时都成立，
+  // 调用方（ScrollView）不用知道固定区有几行。
+  const bodyTop =
+    requested === "bottom"
+      ? maxTop
+      : Math.max(0, Math.min(Math.floor(requested), maxTop));
+  const top = bodyTop;
+  const bodyOffset = bodyStart + bodyTop;
 
   // 只把可视窗口复制成帧：与总行数无关
   const lines: Line[] = [];
-  for (let i = top; i < Math.min(top + height, total); i++) {
-    lines.push(padLine(fitLine(box.lines[i], width), width, root.id));
+  const push = (line: Line): void => {
+    lines.push(padLine(fitLine(line, width), width, root.id));
+  };
+  for (let i = 0; i < bodyStart; i++) push(box.lines[i]);
+  for (let i = bodyOffset; i < Math.min(bodyOffset + bodyHeight, bodyEnd); i++) {
+    push(box.lines[i]);
   }
+  for (let i = bodyEnd; i < total; i++) push(box.lines[i]);
   while (lines.length < height) lines.push(blankLine(width, root.id));
 
   return {

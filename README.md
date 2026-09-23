@@ -4,8 +4,8 @@
 
 当前状态：**M1/M2 骨架 + 流式渲染 O(1) + 事件协议驱动的 agent UI +
 分支式 Undo + WebUI remote attach + 图片子系统（Kitty / iTerm2 / Sixel /
-半块 / 占位符）+ Artifact Canvas + 列表 / 虚拟列表已跑通**，`bun test` 327 个
-用例全绿。
+半块 / 占位符）+ Artifact Canvas + 列表 / 虚拟列表 + 滚动视口已跑通**，
+`bun test` 354 个用例全绿。
 
 ```
 应用（你的 agent / 工具 / TUI）
@@ -18,7 +18,7 @@
               → 终端 ANSI
 
 按需叠加：
-  @butui/components  编辑器模型 + Input + 选择模型 + List / VirtualList
+  @butui/components  编辑器模型 + Input + 选择模型 + List / VirtualList + 滚动视口
   @butui/stream  增量折行 + 增量 markdown（O(delta) 定稿）
   @butui/image   Kitty / iTerm2 / Sixel / 半块 / 占位符 + 安全加载
   @butui/agent   事件协议 + Session + SPEC §10.2 组件 + Artifact Canvas
@@ -73,6 +73,31 @@ Solid 2 的 `<Repeat count from>` 复用重叠区间的节点，所以「往下�
 
 `<List>` 是同一份实现但不裁剪（几十行的菜单）；`<VirtualList>` 只是名字更
 直白。行内容请写成 `renderItem={item => ...}`，`state.selected()` 是访问器。
+
+## 滚动视口（聊天式转录）
+
+```tsx
+import { createScrollView } from "@butui/components";
+
+const view = createScrollView();
+createTuiApp({
+  view: () => <box>{lines().map(line => <text>{line}</text>)}</box>,
+  scroll: view,                            // 可调用 → 直接当选项传
+  stickyBottom: 1,                         // 最后一行固定（状态栏）
+  afterDraw: frame => view.measure(frame), // 每帧收回真实位置
+  onKey: event => view.handleKey(event),   // ↑↓ PageUp/PageDown Home End
+  onMouse: event => view.handleWheel(event),
+});
+```
+
+**保证：** 贴底时新内容自动跟着走（`scroll()` 返回 `"bottom"`，不需要任何
+通知）；用户往回翻之后新内容**不会**把视口拽回去；滚回底部自动恢复跟随。
+这是聊天式 UI 最常写错的一处，所以收进底层（SPEC §5.13）。
+
+固定页眉 / 页脚用 `stickyTop` / `stickyBottom`（取内容的前 / 后 N 行）——
+`<layer>` 做不到，因为它相对父节点定位，父节点自己会被滚走。
+
+`bun --conditions=browser run scripts/scroll-demo.tsx` 可以直接看这个行为。
 
 ## 流式渲染 O(1)
 
@@ -420,7 +445,7 @@ Demo 的工作区是**内存实现**，但走的是完全一样的 journal / dif
 | `@butui/core` | 节点树、`rev` 失效传播、`childrenRevSum`、focus、事件冒泡、theme、ANSI 解析 |
 | `@butui/solid` | `@solidjs/universal` host ops、JSX 类型、Bun 编译插件 |
 | `@butui/runtime` | `createTuiApp`：终端、合帧重绘、事件分发 —— 应用作者的唯一入口 |
-| `@butui/components` | `createTextEditor`、`<Input>`、`createSelection`、`<List>` / `<VirtualList>`（焦点可观察靠 `useFocus`） |
+| `@butui/components` | `createTextEditor`、`<Input>`、`createSelection`、`<List>` / `<VirtualList>`、`createScrollView` |
 | `@butui/agent` | 事件协议（NDJSON）、Session reducer、SPEC §10.2 组件、Artifact Canvas |
 | `@butui/undo` | 工作区变更日志、行级 patch、undo 预览与执行（SPEC §8） |
 | `@butui/web` | WebUI：ANSI→HTML、DOM 组件、`mountWebUI`（复用同一个 Session） |

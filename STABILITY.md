@@ -36,7 +36,7 @@ const app = createTuiApp({
 | 布局 | `@butui/layout` | **稳定**（`Cell` / `Line` / `Frame` / `layout`） |
 | 渲染 | `@butui/renderer` | **稳定**（`Renderer` / `plainText` / `paintLine`） |
 | 终端 | `@butui/terminal` | **稳定**（`TerminalSession` / 输入解码 / 能力探测） |
-| 基础组件 | `@butui/components` | **稳定**（`createTextEditor` / `<Input>` / `createSelection` / `<List>` / `<VirtualList>`） |
+| 基础组件 | `@butui/components` | **稳定**（`createTextEditor` / `<Input>` / `createSelection` / `<List>` / `<VirtualList>` / `createScrollView`） |
 | 流式文本 | `@butui/stream` | **稳定**（`StreamSource` / `<stream>`） |
 | 图片 | `@butui/image` | **稳定**（`createImage` / `ImageLayer` / `renderImage`） |
 | Agent 协议与组件 | `@butui/agent` | **稳定**（`AgentEvent` / `UiCommand` / `Session`） |
@@ -206,7 +206,37 @@ const sel = createSelection({ count: () => filtered().length, onChange: i => pre
 **命令面板不需要新组件**：`<Input>` 聚焦时 `onKey={e => sel.handleKey(e)}`
 就让方向键归列表、字符归编辑器（`onKey` 先于编辑器）。
 
-### 4.9 Agent 协议
+### 4.9 滚动视口：`createScrollView`
+
+```tsx
+const view = createScrollView();
+createTuiApp({
+  view: () => <box>{lines().map(line => <text>{line}</text>)}</box>,
+  scroll: view,                            // 可调用 → 直接当选项传
+  stickyBottom: 1,                         // 最后一行固定（状态栏）
+  afterDraw: frame => view.measure(frame),
+  onKey: event => view.handleKey(event),
+  onMouse: event => view.handleWheel(event),
+});
+```
+
+**保证：** 贴底时新内容自动跟着走（`scroll()` 返回 `"bottom"`，不需要任何
+通知）；用户往回翻之后新内容**不会**把视口拽回去；滚回底部自动恢复跟随。
+`handleKey` 认 `↑↓ PageUp/PageDown Home End`（Ctrl/Alt/Meta 组合一律放行，
+交给编辑器）；`handleWheel` 认上下滚轮。
+
+- `view.measure(frame)` 每帧收一次真实位置（布局夹取后的 `top`）。**必须接**，
+  否则模型不知道内容有多长。
+- `view.top() / total() / height() / maxTop() / following() / atBottom()` 都是
+  响应式的，可以直接写进视图（状态栏 / 「↓ 新消息」提示）。
+- `frame().top` 与 `scroll` 选项是**同一个坐标系**（滚动区内的行号），固定
+  页眉页脚不会破坏 `maxTop === total - height`。
+
+**固定页眉 / 页脚**用 `createTuiApp({ stickyTop, stickyBottom })`：取内容的
+前 / 后 N 行固定在视口两端。注意 `<layer>` 做不到这件事 —— 它相对父节点定位，
+父节点自己会被滚走。
+
+### 4.10 Agent 协议
 
 ```ts
 import { createSession, decodeNdjson, encodeNdjson } from "@butui/agent";
@@ -222,8 +252,12 @@ remote attach / 多套渲染都是「换个传输层」。
 - **列表只有单列 + 固定行高**：`itemHeight` 是常数，变高行（折行文本、展开的
   卡片）不支持；`MultiSelect` / `Tree` / `Table` 还没做。
 - **编辑器没有选区 / 剪贴板历史 / 撤销栈**：只有光标与历史。
-- **没有 scroll 容器的手势/惯性**：`scrollOffset` 是纯数值；滚轮只在 `<List>`
-  里接了（其他容器要自己接 `onWheel`，方向看 `event.wheel`）。
+- **`flexShrink` 没有实现**：row 里只有显式 `truncate` / `wrap={false}` 的
+  text 会让位给兄弟节点；普通的折行文本仍然先按自然宽度拿满。
+- **`ScrollView` 的翻页步长按整屏高度算**：有固定页眉 / 页脚时会多滚固定区
+  那么几行（滚回底部会自动恢复跟随，所以只是「一页多一点点」）。
+- **没有 scroll 容器的手势/惯性**：`ScrollView` 管的是根视口；任意子树的
+  `scrollOffset` 仍然要应用自己算（`<List>` 已经封装了它自己的那一份）。
 - **没有布局调试工具**（类似 flexbox inspector）。
 - **焦点不会自动清理**：被移除的节点如果还是焦点，`focusedId()` 会保留它的
   id（下一次 tab 会自动跳到活着的节点）。组件里用 `isFocused` 不受影响。

@@ -69,6 +69,38 @@ describe("布局引擎（SPEC §9.1 P0）", () => {
     expect(app.frame().lines[1][5].sgr).toContain("48;2;125;211;252");
     app.unmount();
   });
+
+  test("truncate：不折行，截断并补省略号（状态栏一行到底）", () => {
+    const app = mount(() => <text truncate>abcdefghijklmnop</text>, { width: 8, height: 3 });
+    const text = app.frame().lines[0].map(c => c.ch).join("").replace(/\s+$/, "");
+    expect(text).toBe("abcdefg…");
+    // 只有一行 —— 不会因为超宽而折行
+    expect(app.frame().lines[1].map(c => c.ch).join("").trim()).toBe("");
+    app.unmount();
+  });
+
+  test("wrap={false}：不折行，直接截断（不加省略号）", () => {
+    const app = mount(() => <text wrap={false}>abcdefghijklmnop</text>, { width: 8, height: 3 });
+    const text = app.frame().lines[0].map(c => c.ch).join("").replace(/\s+$/, "");
+    expect(text).toBe("abcdefgh");
+    app.unmount();
+  });
+
+  test("truncate 在 row 里只占剩余宽度（不把兄弟节点挤走）", () => {
+    const app = mount(
+      () => (
+        <row gap={1}>
+          <text truncate>一段很长的说明文字要在这里被截断</text>
+          <text>END</text>
+        </row>
+      ),
+      { width: 12, height: 2 }
+    );
+    const text = app.frame().lines[0].map(c => c.ch).join("");
+    expect(text.endsWith("END")).toBe(true);
+    app.unmount();
+  });
+
   test("row 横向排列 + spacer 吃掉剩余空间", () => {
     const app = mount(
       () => (

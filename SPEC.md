@@ -522,6 +522,54 @@ Solid 的 provider 在自己的 root 里延迟读取 `props.children`，直接�
 
 ---
 
+### 5.13 滚动视口（v0.1 实现）
+
+聊天式转录的正确行为：**默认贴底，用户往回翻之后新内容不许把视口拽回去**。
+这是所有聊天 UI 都要处理、又几乎每个应用都写错一次的东西，所以收进
+`@butui/components` 的 `createScrollView()`：
+
+```tsx
+const view = createScrollView();
+createTuiApp({
+  view: () => <box>{lines().map(line => <text>{line}</text>)}</box>,
+  scroll: view,                            // 可调用 → 直接当选项传
+  stickyBottom: 1,                         // 最后一行固定（状态栏）
+  afterDraw: frame => view.measure(frame), // 收回真实位置
+  onKey: event => view.handleKey(event),   // ↑↓ PageUp/PageDown Home End
+  onMouse: event => view.handleWheel(event),
+});
+```
+
+四条设计要点：
+
+1. **「跟随」是一个状态，不是一个偏移。** 贴底时 `scroll()` 返回 `"bottom"`
+   而不是数字，于是内容变长时**不需要任何通知**就继续贴底 —— 这正是
+   `layout()` 支持 `"bottom"` 的意义。往上滚才切成具体偏移。
+2. **模型只存意图，真实位置由布局回报。** 布局会把 `scrollTop` 夹进
+   `[0, total - height]`，`Frame.top` 是夹取后的真值；`measure()` 每帧把它收
+   回来，滚过头下一帧自愈（画出来的本来就是夹取后的那一屏，不用补重绘）。
+3. **`top` / `total` 是「滚动区内」的坐标系。** 有了固定页眉 / 页脚之后，
+   `maxTop === total - height` 依然成立，所以调用方不用知道固定区有几行。
+4. **滚到底 = 重新跟随。** 用户自己滚回底部，跟随自动恢复，不用应用再调一次。
+
+**`stickyTop` / `stickyBottom`（runtime 选项）。** `<layer>` 只能相对**父节点**
+定位，父节点自己也会被滚走 —— 所以「固定页眉 + 可滚转录 + 固定页脚」必须在
+视口这一层做。语义是**取内容的前 / 后 N 行**，所以页眉页脚要放在 flow 的头尾。
+`Frame.top` 报的是滚动区内的行号，`scroll` 选项收的也是同一个坐标系。
+
+**顺手补掉的两个底层缺陷：**
+
+- **`truncate` / `wrap={false}` 只有类型没有实现。** 状态栏一超宽就折成两行，
+  行高变得不可预测（`stickyBottom: 1` 立刻错位 —— demo 里就是这么发现的）。
+  现在 `truncate` 截断并补 `…`，`wrap={false}` 直接截断，都是单行。
+- **row 里超长的 text 会把兄弟节点挤出去。** `truncate` 的节点现在**最后**参与
+  第一轮测量：先让别的兄弟拿走自己要的宽度，剩下的才归它。否则
+  `<row><text truncate>长文本</text><text>右对齐</text></row>` 里右边那个直接
+  消失。
+
+
+---
+
 ### 5.5 禁止事项
 
 - 不从 OpenTUI 复制 reconciler
