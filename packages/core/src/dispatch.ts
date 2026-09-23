@@ -12,7 +12,16 @@ export function handlerName(event: ButuiEvent): string {
     case "key":
       return "onKey";
     case "mouse":
-      return event.action === "wheel" ? "onWheel" : "onClick";
+      switch (event.action) {
+        case "wheel":
+          return "onWheel";
+        case "press":
+          return "onMouseDown";
+        case "release":
+          return "onMouseUp";
+        case "move":
+          return "onMouseMove";
+      }
     case "paste":
       return "onPaste";
     case "focus":
@@ -22,6 +31,14 @@ export function handlerName(event: ButuiEvent): string {
     default:
       return "onEvent";
   }
+}
+
+function handlerNames(event: ButuiEvent): readonly string[] {
+  const primary = handlerName(event);
+  // 兼容原来的 onClick 语义：没有 onMouseDown 时，按下仍触发 onClick。
+  // release / move 不再回退到 onClick，否则拖拽会被当成连续点击。
+  if (event.type === "mouse" && event.action === "press") return [primary, "onClick"];
+  return [primary];
 }
 
 export interface DispatchOptions {
@@ -38,7 +55,7 @@ export function dispatchEvent(
   options: DispatchOptions = {}
 ): number {
   if (!target) return 0;
-  const name = handlerName(event);
+  const names = handlerNames(event);
   let delivered = 0;
   let cur: Node | null = target;
 
@@ -52,12 +69,16 @@ export function dispatchEvent(
     if (isElement(cur)) {
       // disabled 节点既不触发自己的 handler，也不继续向上冒泡
       if (cur.props.disabled) break;
-      const handler = cur.props[name];
-      if (typeof handler === "function") {
+      for (const name of names) {
+        const handler = cur.props[name];
+        if (typeof handler !== "function") continue;
         delivered++;
         (handler as (event: ButuiEvent) => void)(event);
         if (isPropagationStopped(event)) break;
+        // 同一节点只取第一个可用别名：有 onMouseDown 就不再触发 onClick。
+        break;
       }
+      if (isPropagationStopped(event)) break;
     }
     if (options.until && cur === options.until) break;
     cur = cur.parent;

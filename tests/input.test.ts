@@ -71,6 +71,22 @@ describe("终端输入解码（SPEC §9.3 / §9.4）", () => {
     expect(release.type === "mouse" && release.action).toBe("release");
   });
 
+  test("SGR 按住左键移动：motion 位不能被当成第二次按下", () => {
+    const decoder = new InputDecoder();
+    const events = feed(
+      decoder,
+      "\x1b[<0;2;2M\x1b[<32;5;2M\x1b[<0;5;2m"
+    );
+    expect(events.map(e => (e.type === "mouse" ? e.action : undefined))).toEqual([
+      "press",
+      "move",
+      "release",
+    ]);
+    const move = events[1];
+    expect(move.type === "mouse" && move.button).toBe("left");
+    expect(move.type === "mouse" && move.x).toBe(4);
+  });
+
   test("鼠标滚轮", () => {
     const decoder = new InputDecoder();
     const events = feed(decoder, "\x1b[<64;1;1M\x1b[<65;1;1M");

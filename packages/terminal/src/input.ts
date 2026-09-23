@@ -228,8 +228,9 @@ export class InputDecoder {
     // SGR 鼠标：`<b;x;yM` / `<b;x;ym`
     if (body.startsWith("<") && (final === "M" || final === "m")) {
       const [b, x, y] = body.slice(1).split(";").map(Number);
-      const buttonBits = b & 0b11000011;
-      const wheel = (b & 0b01000000) !== 0;
+      const buttonCode = b & 0b11;
+      const motion = (b & 0b0100000) !== 0;
+      const wheel = (b & 0b1000000) !== 0;
       // 鼠标的修饰键位是 4/8/16（shift/meta/ctrl），不是键盘那套 1/2/4；
       // 直接 1 + (b & 0b11100) 会把 shift 认成 ctrl。
       const mouseBits =
@@ -243,11 +244,21 @@ export class InputDecoder {
       if (wheel) {
         // 低位 0/1/2/3 = 上/下/左/右（xterm 的 64..67）
         action = "wheel";
-        wheelDir = (["up", "down", "left", "right"] as const)[b & 0b11];
-      } else if (buttonBits === 0) button = "left";
-      else if (buttonBits === 1) button = "middle";
-      else if (buttonBits === 2) button = "right";
-      else if (buttonBits === 3) action = "move";
+        wheelDir = (["up", "down", "left", "right"] as const)[buttonCode];
+      } else if (motion) {
+        // 1002 模式下 b=32+button 表示「按住某键移动」；b=35 表示无按键移动。
+        action = "move";
+        button =
+          buttonCode === 0
+            ? "left"
+            : buttonCode === 1
+              ? "middle"
+              : buttonCode === 2
+                ? "right"
+                : "none";
+      } else if (buttonCode === 0) button = "left";
+      else if (buttonCode === 1) button = "middle";
+      else if (buttonCode === 2) button = "right";
       events.push(
         eventTarget({
           type: "mouse" as const,

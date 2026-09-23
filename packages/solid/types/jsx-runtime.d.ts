@@ -67,6 +67,9 @@ export namespace JSX {
     focusable?: boolean;
     disabled?: boolean;
     semantic?: Semantic;
+    onMouseDown?: (event: BtnMouseEvent) => void;
+    onMouseUp?: (event: BtnMouseEvent) => void;
+    onMouseMove?: (event: BtnMouseEvent) => void;
     onClick?: (event: BtnMouseEvent) => void;
     onKey?: (event: KeyEvent) => void;
     onPaste?: (event: PasteEvent) => void;
@@ -97,6 +100,9 @@ export namespace JSX {
     wrap?: boolean;
     truncate?: boolean;
     semantic?: Semantic;
+    onMouseDown?: (event: BtnMouseEvent) => void;
+    onMouseUp?: (event: BtnMouseEvent) => void;
+    onMouseMove?: (event: BtnMouseEvent) => void;
     onClick?: (event: BtnMouseEvent) => void;
     /**
      * 交互属性与 `BoxProps` 对齐。

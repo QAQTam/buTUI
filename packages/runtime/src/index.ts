@@ -40,10 +40,16 @@ import {
   onMutation,
   trapFocus,
 } from "@butui/core";
-import { type Frame, layout } from "@butui/layout";
+import {
+  type Frame,
+  type TextSelectionPoint,
+  type TextSelectionRange,
+  layout,
+  selectionText,
+} from "@butui/layout";
 import { type RenderStats, Renderer } from "@butui/renderer";
 import { provideAppScope, provideFocusScope, render } from "@butui/solid";
-import { TerminalSession, terminalSize } from "@butui/terminal";
+import { TerminalSession, osc52, terminalSize } from "@butui/terminal";
 import { createSignal, flush } from "solid-js";
 
 export interface TuiSize {
@@ -63,6 +69,20 @@ export interface TuiTerminal {
   write(chunk: string): void;
   onEvent(listener: (event: ButuiEvent) => void): () => void;
   onResize(listener: (size: TuiSize) => void): () => void;
+}
+
+export interface TextSelectionSnapshot {
+  range: TextSelectionRange;
+  text: string;
+}
+
+export interface TextSelectionOptions {
+  /** 运行中可临时关闭（例如权限弹窗期间）。默认开启。 */
+  enabled?: () => boolean;
+  /** 鼠标松开后自动写 OSC 52 剪贴板；默认 true。 */
+  copyOnSelect?: boolean;
+  /** 选择定稿（松开 / 清除）时回调；拖动过程不会高频触发。 */
+  onSelection?: (selection: TextSelectionSnapshot | null) => void;
 }
 
 export interface TuiAppOptions {
@@ -109,6 +129,13 @@ export interface TuiAppOptions {
   onKey?: (event: KeyEvent) => boolean | void;
   /** 应用级鼠标：**焦点节点没处理时**才会走到这里（比如语义动作分发） */
   onMouse?: (event: MouseEvent) => boolean | void;
+  /**
+   * 鼠标文本选择。
+   *
+   * 默认开启：左键拖拽按 cell 选区，松开时通过 OSC 52 尝试写入系统剪贴板。
+   * 传 `false` 完全关闭；传对象可动态开关 / 关闭自动复制 / 订阅定稿。
+   */
+  selection?: boolean | TextSelectionOptions;
   onPaste?: (event: PasteEvent) => boolean | void;
   /** 色彩能力；默认读终端 */
   colorDepth?: ColorDepth;
@@ -151,6 +178,14 @@ export interface TuiApp {
   focus(node: Node | undefined): void;
   /** 最近一帧（hit test 与断言用） */
   frame(): Frame;
+  /** 当前文本选择；没有有效选择时为 null */
+  selection(): TextSelectionSnapshot | null;
+  /** 当前选中文本；没有选择时为空串 */
+  selectedText(): string;
+  /** 清除文本选择并触发一次 `onSelection(null)`（若有） */
+  clearSelection(): void;
+  /** 把当前选择写 OSC 52；没有文本时返回 false */
+  copySelection(): boolean;
   dispose(): void;
 }
 
@@ -164,6 +199,69 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
   const [focusRev, bumpFocus] = createSignal(0);
   const focusedId = (): number | null => (focusRev(), focusId);
   const depth = (): ColorDepth => options.colorDepth ?? terminal.colorDepth;
+
+  const selectionOptions: TextSelectionOptions | undefined =
+    options.selection === false
+      ? undefined
+      : typeof options.selection === "object"
+        ? options.selection
+        : {};
+  let selectionAnchor: TextSelectionPoint | undefined;
+  let selectionFocus: TextSelectionPoint | undefined;
+  let selecting = false;
+  let selectionHasText = false;
+
+  const selectionAllowed = (): boolean =>
+    selectionOptions !== undefined && (selectionOptions.enabled?.() ?? true);
+
+  const currentSelectionRange = (): TextSelectionRange | undefined => {
+    if (!selectionHasText || !selectionAnchor || !selectionFocus) return undefined;
+    return {
+      anchor: { ...selectionAnchor },
+      focus: { ...selectionFocus },
+    };
+  };
+
+  const cloneSnapshot = (
+    range: TextSelectionRange,
+    text: string
+  ): TextSelectionSnapshot => ({
+    range: {
+      anchor: { ...range.anchor },
+      focus: { ...range.focus },
+    },
+    text,
+  });
+
+  const notifySelection = (snapshot: TextSelectionSnapshot | null): void => {
+    selectionOptions?.onSelection?.(snapshot);
+  };
+
+  const resetSelection = (notify: boolean): void => {
+    const had = selectionHasText;
+    selectionAnchor = undefined;
+    selectionFocus = undefined;
+    selecting = false;
+    selectionHasText = false;
+    if (notify && had) notifySelection(null);
+    requestPaint();
+  };
+
+  const refreshSelectionHighlight = (): void => {
+    if (!selectionAnchor || !selectionFocus) {
+      selectionHasText = false;
+      return;
+    }
+    if (
+      selectionAnchor.x === selectionFocus.x &&
+      selectionAnchor.y === selectionFocus.y
+    ) {
+      selectionHasText = false;
+      return;
+    }
+    const range = { anchor: selectionAnchor, focus: selectionFocus };
+    selectionHasText = selectionText(computeFrame(), range) !== "";
+  };
 
   const renderer = new Renderer(chunk => terminal.write(chunk), {
     ...(options.afterDraw !== undefined ? { afterDraw: options.afterDraw } : {}),
@@ -179,11 +277,13 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
   /** 当前布局（布局层按 rev 缓存，现算很便宜；不要缓存成「上一帧」） */
   const computeFrame = (): Frame => {
     const { columns, rows } = size();
+    const selection = currentSelectionRange();
     return layout(root, columns, rows, {
       depth: depth(),
       scrollTop: scrollTop(),
       stickyTop: options.stickyTop ?? 0,
       stickyBottom: options.stickyBottom ?? 0,
+      ...(selection ? { selection } : {}),
     });
   };
 
@@ -241,6 +341,76 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
    */
   const keyListeners = new Set<(event: KeyEvent) => boolean | void>();
 
+  const writeSelectionClipboard = (text: string): boolean => {
+    if (text.length === 0) return false;
+    terminal.write(osc52(text, { multiplexer: "auto" }));
+    return true;
+  };
+
+  const selectionSnapshot = (): TextSelectionSnapshot | null => {
+    const range = currentSelectionRange();
+    if (!range) return null;
+    const text = selectionText(computeFrame(), range);
+    return text === "" ? null : cloneSnapshot(range, text);
+  };
+
+  /**
+   * 返回是否消费了这次鼠标事件。
+   *
+   * 按下和松开仍要参与普通 hit test（否则第一次点击列表会失效）；拖动 move
+   * 只归选择器，避免 1002 mouse-motion 被当成连续 click。
+   */
+  const handleSelectionMouse = (event: MouseEvent): boolean => {
+    if (!selectionOptions) return false;
+    if (!selecting && !selectionAllowed()) return false;
+
+    if (event.action === "press") {
+      if (event.button !== "left") {
+        if (selecting || selectionHasText) resetSelection(true);
+        return false;
+      }
+      const replacing = selectionHasText;
+      selectionAnchor = { x: event.x, y: event.y };
+      selectionFocus = { ...selectionAnchor };
+      selecting = true;
+      selectionHasText = false;
+      if (replacing) notifySelection(null);
+      requestPaint();
+      return true;
+    }
+
+    if (event.action === "move") {
+      if (!selecting) return false;
+      selectionFocus = { x: event.x, y: event.y };
+      refreshSelectionHighlight();
+      requestPaint();
+      return true;
+    }
+
+    if (event.action === "release") {
+      if (!selecting) return false;
+      selectionFocus = { x: event.x, y: event.y };
+      selecting = false;
+      refreshSelectionHighlight();
+      const range = currentSelectionRange();
+      const text = range ? selectionText(computeFrame(), range) : "";
+      if (!range || text === "") {
+        const had = selectionHasText;
+        selectionHasText = false;
+        if (had) notifySelection(null);
+        requestPaint();
+        return true;
+      }
+      selectionHasText = true;
+      if (selectionOptions.copyOnSelect ?? true) writeSelectionClipboard(text);
+      notifySelection(cloneSnapshot(range, text));
+      requestPaint();
+      return true;
+    }
+
+    return false;
+  };
+
   const send = (event: ButuiEvent): number => {
     const delivered = dispatch(event);
     flush();
@@ -271,10 +441,14 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
     }
 
     if (event.type === "mouse") {
+      const selectionHandled = handleSelectionMouse(event);
+      // move 由选择器消费；press / release 仍按普通 hit test 派发，
+      // 保证点击组件和拖拽选择可以共存。
+      if (event.action === "move" && selectionHandled) return 1;
       const target = nodeById(root, computeFrame().nodeAt(event.x, event.y));
       const delivered = dispatchEvent(target, event);
       if (delivered === 0) options.onMouse?.(event);
-      return delivered;
+      return delivered || (selectionHandled ? 1 : 0);
     }
 
     if (event.type === "paste") {
@@ -330,6 +504,7 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
       disposeView,
       terminal.onEvent(send),
       terminal.onResize(next => {
+        if (selectionHasText || selecting) resetSelection(true);
         setSize(next);
         renderer.invalidate(); // 尺寸变了必须整屏重画
         // 和 send() 一样立刻提交：resize 之后马上读 frame() 必须是一致的
@@ -372,6 +547,10 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
     isFocused: node => node !== undefined && node.id === focusedId(),
     focus: node => focusNode(root, node),
     frame: computeFrame,
+    selection: selectionSnapshot,
+    selectedText: () => selectionSnapshot()?.text ?? "",
+    clearSelection: () => resetSelection(true),
+    copySelection: () => writeSelectionClipboard(selectionSnapshot()?.text ?? ""),
     dispose,
   };
 

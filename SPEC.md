@@ -642,6 +642,55 @@ turn 建一个**纯文本流**（不是 markdown：思考里全是半截句子�
 
 ---
 
+### 5.18 鼠标文本选择与 OSC 52（v0.1 实现）
+
+文本选择是 agent TUI 的刚需：用户要复制命令输出、代码块、错误栈和模型回答。
+它不能逼每个应用自己维护一份「屏幕坐标 → 字符偏移」映射，也不能破坏流式
+渲染的 O(1) 契约。
+
+**分层：**
+
+```text
+terminal    SGR 1006 press / move / release；OSC 52 编码
+runtime     锚点 / 焦点、拖拽状态、松开时定稿与自动复制
+layout      selectionText() 提取；在最终帧复制出的 cell 上打 selected
+renderer    只在选中 run 前后开关反显，并参与逐行差分
+```
+
+**1. 选择是帧视图状态，不是布局状态。** `LayoutContext.selection` 只影响
+`layout()` 最后复制可视窗口那一步；`measureNode()`、`Box.frozen` 与节点 `rev`
+完全不知道选区。于是拖拽选择不会让任何布局缓存失效，流式追加仍然只处理
+delta，选区成本只与可视选中区域有关。
+
+**2. 坐标按显示列处理。** `selectionText(frame, range)`：
+
+- 锚点 / 焦点按 `(y, x)` 阅读顺序归一化；
+- 同一行取闭区间，跨行首行到行尾、中间全行、末行到焦点；
+- 宽字符边界落在任一 cell 都复制完整 grapheme；
+- frame 为铺满终端补的尾部空白不会进入剪贴板。
+
+**3. 反显是 renderer 的 run 状态。** cell 只带 `selected?: boolean`；renderer
+在 run 开始发 `SGR 7`、结束发 `SGR 27`，并把这个字段纳入行差分。不会把选区
+编码成颜色，也不要求 layout 理解终端样式。
+
+**4. 松开才定稿。** 拖动过程只更新高亮，`onSelection` 不会随 mouse-move
+高频触发；松开后默认写 OSC 52，`copyOnSelect: false` 可关闭，应用也可以调用
+`app.copySelection()` / `app.clearSelection()`。
+
+**5. OSC 52 是 best-effort。** UTF-8 先 base64，默认 `ESC ] 52 ; c ; … BEL`；
+tmux 环境下自动包 passthrough。协议没有确认通道，终端可以忽略，因此 API
+只表示「已尝试」，严格剪贴板需求由应用在 `onSelection` 中接平台实现。
+
+**顺手修掉的真实输入 bug：** SGR 鼠标按住左键移动是 `b=32+button`，旧解码器
+只认 `buttonCode===3` 为 move，于是真实拖拽被当成连续 press。现在按 motion
+bit（32）判定，并保留 held button；这也让 `<Box onMouseMove>` 一类事件终于
+有正确来源。
+
+**明确取舍：** 选区坐标是当前视口，不是内容锚点；拖到屏幕边缘不会自动滚动；
+resize 会清除。稳定锚点需要应用把语义节点 / 文本保存到 `onSelection`。
+
+---
+
 ### 5.17 应用上下文（v0.1 实现）
 
 组件要能问「现在多宽 / 什么色深 / 我想订一个全局键」，但既不该认识 runtime，
@@ -1055,6 +1104,7 @@ P1：
 - focus events
 - Kitty keyboard protocol
 - capability detection
+- OSC 52 剪贴板（tmux passthrough）
 - `NO_COLOR` / `TERM=dumb` 降级
 
 ### 9.4 交互
@@ -1068,7 +1118,7 @@ P1：
 - 点击、拖拽、滚轮
 - overlay / portal
 - z-index
-- selection
+- ~~selection~~ ✅ 见 §5.18
 
 ### 9.5 动画
 

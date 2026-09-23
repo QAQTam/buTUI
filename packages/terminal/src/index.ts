@@ -65,6 +65,44 @@ export const CONTROL = {
   kittyKeysOff: `${ESC}<u`,
 } as const;
 
+export type ClipboardTarget = "clipboard" | "primary";
+
+export interface Osc52Options {
+  target?: ClipboardTarget;
+  /**
+   * 多路复用器透传。
+   *
+   * `"auto"` 在 `$TMUX` 存在时自动包一层 tmux passthrough；`"none"` 直接发
+   * OSC 52。终端不支持 OSC 52 时会安静忽略 —— 这个 API 只能表示「已尝试」，
+   * 不能等待系统剪贴板确认。
+   */
+  multiplexer?: "auto" | "tmux" | "none";
+  /** 结束符。BEL 兼容面最广；部分终端只认 ST（`ESC \`）。 */
+  terminator?: "bel" | "st";
+}
+
+/**
+ * 生成 OSC 52 剪贴板序列。
+ *
+ * 文本先按 UTF-8 编码再 base64，避免换行 / 控制字符破坏 OSC；调用方把它写进
+ * 终端即可。tmux 下需要 passthrough，否则外层 tmux 会吞掉 OSC。
+ */
+export function osc52(text: string, options: Osc52Options = {}): string {
+  const target = options.target === "primary" ? "p" : "c";
+  const encoded = Buffer.from(text, "utf8").toString("base64");
+  const end = options.terminator === "st" ? "\x1b\\" : "\x07";
+  const sequence = `\x1b]52;${target};${encoded}${end}`;
+  const mode =
+    options.multiplexer === "auto"
+      ? process.env.TMUX
+        ? "tmux"
+        : "none"
+      : (options.multiplexer ?? "none");
+  if (mode !== "tmux") return sequence;
+  // tmux DCS passthrough：内部的 ESC 必须写两遍。
+  return `\x1bPtmux;${sequence.replaceAll("\x1b", "\x1b\x1b")}\x1b\\`;
+}
+
 export interface TerminalSessionOptions {
   stdin?: NodeJS.ReadStream;
   stdout?: NodeJS.WriteStream;
@@ -164,6 +202,18 @@ export class TerminalSession {
   /** 直接写原始字节（渲染器用） */
   write(chunk: string): void {
     this.stdout.write(chunk);
+  }
+
+  /**
+   * 尝试把文本写进系统剪贴板（OSC 52）。
+   *
+   * 返回 `true` 只表示序列已写出，不表示终端真的接受了 —— 大多数终端没有
+   * 确认通道。需要严格确认的场景应接系统剪贴板库。
+   */
+  copy(text: string, options: Osc52Options = {}): boolean {
+    if (text.length === 0) return false;
+    this.write(osc52(text, options));
+    return true;
   }
 
   onEvent(listener: (event: ButuiEvent) => void): () => void {

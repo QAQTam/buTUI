@@ -4,8 +4,8 @@
 
 当前状态：**M1/M2 骨架 + 流式渲染 O(1) + 事件协议驱动的 agent UI +
 分支式 Undo + WebUI remote attach + 图片子系统（Kitty / iTerm2 / Sixel /
-半块 / 占位符）+ Artifact Canvas + 列表 / 虚拟列表 / 滚动视口 / 弹窗 / 表格 / 树已跑通**，
-`bun test` 468 个用例全绿。
+半块 / 占位符）+ Artifact Canvas + 列表 / 虚拟列表 / 滚动视口 / 弹窗 / 表格 /
+树 + 鼠标选区 / OSC 52 已跑通**，`bun test` 478 个用例全绿。
 
 ```
 应用（你的 agent / 工具 / TUI）
@@ -108,6 +108,34 @@ createTuiApp({
 `<layer>` 做不到，因为它相对父节点定位，父节点自己会被滚走。
 
 `bun --conditions=browser run scripts/scroll-demo.tsx` 可以直接看这个行为。
+
+## 鼠标选区与 OSC 52 复制
+
+`createTuiApp` 默认接管左键拖拽：选区以 cell 为单位，CJK / emoji 边界不会劈开
+grapheme；松开鼠标后尝试通过 OSC 52 写入系统剪贴板。
+
+```tsx
+const app = createTuiApp({
+  view: () => <App />,
+  selection: {
+    copyOnSelect: true,                     // 默认
+    onSelection: selection => {
+      console.log(selection?.text ?? "cleared");
+    },
+  },
+});
+
+app.selectedText();   // 当前选择
+app.copySelection();  // 手动重写剪贴板
+app.clearSelection();
+```
+
+**保证：选择状态不进入布局缓存。** `layout()` 只在复制可视窗口时给 cell 打
+`selected` 标记，不会 `touch()` 节点或让 `Box.frozen` 失效。因此流式输出继续
+是 `O(|delta| + W)`；只有拖拽造成的可视行差分，成本与已累积内容无关。
+
+OSC 52 是**尽力而为**：终端可以不支持、也可以静默忽略，协议没有确认通道。
+需要严格系统剪贴板确认时，应用应在 `onSelection` 里接平台剪贴板实现。
 
 ## 流式渲染 O(1)
 
@@ -460,16 +488,16 @@ Demo 的工作区是**内存实现**，但走的是完全一样的 journal / dif
 |---|---|
 | `@butui/core` | 节点树、`rev` 失效传播、`childrenRevSum`、focus、事件冒泡、theme、ANSI 解析 |
 | `@butui/solid` | `@solidjs/universal` host ops、JSX 类型、Bun 编译插件 |
-| `@butui/runtime` | `createTuiApp`：终端、合帧重绘、事件分发 —— 应用作者的唯一入口 |
+| `@butui/runtime` | `createTuiApp`：终端、合帧重绘、事件分发、鼠标选区 / OSC 52 —— 应用作者的唯一入口 |
 | `@butui/components` | `createTextEditor` / `<Input>` / `<Textarea>` / `<Markdown>` / `<Code>`、`createSelection` / `<List>` / `<VirtualList>`、`createScrollView`、`<Select>` / `<Tabs>` / `<Table>` / `<Tree>`、`<Button>` / `<Dialog>` / `<Modal>`、`ProgressBar` / `Spinner` / `Badge` / `Divider` / `KeyHint` |
 | `@butui/agent` | 事件协议（NDJSON）、Session reducer、SPEC §10.2 组件、Artifact Canvas |
 | `@butui/undo` | 工作区变更日志、行级 patch、undo 预览与执行（SPEC §8） |
 | `@butui/web` | WebUI：ANSI→HTML、DOM 组件、`mountWebUI`（复用同一个 Session） |
 | `@butui/stream` | 增量折行、增量 markdown、Solid 绑定与组件 |
 | `@butui/image` | 协议探测、PNG 编解码、Kitty/iTerm2/Sixel/半块/占位符、安全加载、图形图层 |
-| `@butui/layout` | flex 子集 → cell 网格，带 `frozen` 的增量合成与视口窗口 |
-| `@butui/renderer` | cell → ANSI，逐行差分 + SGR 状态机 |
-| `@butui/terminal` | raw mode、备用屏、输入解码、能力探测 |
+| `@butui/layout` | flex 子集 → cell 网格，带 `frozen` 的增量合成、视口窗口、选区提取 |
+| `@butui/renderer` | cell → ANSI，逐行差分 + SGR / 选区状态机 |
+| `@butui/terminal` | raw mode、备用屏、输入解码、能力探测、OSC 52 |
 | `@butui/test` | headless render、快照、事件注入 |
 
 ## 必须知道的坑
@@ -633,11 +661,11 @@ Bun.plugin(onLoad)
 
 ## 还没做
 
-- `@butui/components` 继续长（现在有 Input / List / VirtualList / 滚动视口；
-  Select / Table / Tree 待做）
-- CommandPalette / ToolGraph / AgentTimeline（§10.2 剩余组件；命令面板用
-  `<Input onKey={e => sel.handleKey(e)}>` + `<List>` 组合就够，不必再包一层）
-- 编辑器还缺选区 / 剪贴板历史 / 撤销栈；列表只支持单列 + 固定行高
+- `@butui/components` 继续长：Diff / ScrollBar / Slider / ASCIIFont /
+  LineNumberRenderable 等；CommandPalette 用 `<Input onKey={e => sel.handleKey(e)}>`
+  + `<List>` 组合就够，不必再包一层
+- 编辑器模型还缺内部选区 / 剪贴板历史 / 撤销栈（全局鼠标选区已由 runtime 提供）；
+  列表只支持单列 + 固定行高
 - Artifact Canvas：artifact 的持久化（现在只在 Session 内存里）、WebUI 侧的服务端图片路由
 - 图片子系统：半块图的终端背景透出、Kitty 图片随滚动的位置缓存
 - 动画、Kitty keyboard protocol 的发送侧

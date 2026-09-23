@@ -30,6 +30,14 @@ export interface Cell {
   /** 完整 SGR 序列（含 reset），空串表示默认样式 */
   sgr: string;
   /**
+   * 文本选择高亮。
+   *
+   * 这是**帧视图**属性，不是布局缓存的一部分：`layout()` 在把缓存行复制进
+   * 可视窗口时打标，渲染器负责在选中 run 前后开 / 关反显。这样拖拽选择
+   * 不会让任何布局节点失效，也不会污染 `Box.frozen` 前缀。
+   */
+  selected?: boolean;
+  /**
    * 原生图形标记（SPEC §12）。
    *
    * 占位 cell 上盖一个图片 id，`ImageLayer` 扫帧时把同一 id 的 cell 聚成矩形，
@@ -40,6 +48,23 @@ export interface Cell {
 }
 
 export type Line = Cell[];
+
+/** 视口坐标（0-based cell）；选择范围始终以「屏幕当前帧」为坐标系。 */
+export interface TextSelectionPoint {
+  x: number;
+  y: number;
+}
+
+/**
+ * 文本选择范围。
+ *
+ * `anchor` 是按下鼠标的位置，`focus` 是当前拖动位置；两者顺序没有语义，
+ * `normalizeTextSelection()` 会按阅读顺序排序。
+ */
+export interface TextSelectionRange {
+  anchor: TextSelectionPoint;
+  focus: TextSelectionPoint;
+}
 
 export interface Box {
   lines: Line[];
@@ -76,6 +101,12 @@ export interface LayoutContext {
   stickyTop?: number;
   /** 固定在视口底部的行数（不参与滚动）。语义上取内容的最后 N 行 */
   stickyBottom?: number;
+  /**
+   * 当前文本选择（视口坐标）。
+   *
+   * 只影响复制出来的可视窗口：布局测量与增量缓存完全不知道选择状态。
+   */
+  selection?: TextSelectionRange;
   /** 调试用：统计测量次数 */
   stats?: { measured: number; reused: number };
 }
@@ -1215,6 +1246,105 @@ export interface Frame {
   text(): string;
 }
 
+function selectionPoint(point: TextSelectionPoint): TextSelectionPoint {
+  return {
+    x: Math.max(0, Math.floor(Number.isFinite(point.x) ? point.x : 0)),
+    y: Math.max(0, Math.floor(Number.isFinite(point.y) ? point.y : 0)),
+  };
+}
+
+/** 把锚点 / 焦点按阅读顺序排好；调用方不用关心拖动方向。 */
+export function normalizeTextSelection(range: TextSelectionRange): {
+  start: TextSelectionPoint;
+  end: TextSelectionPoint;
+} {
+  const a = selectionPoint(range.anchor);
+  const b = selectionPoint(range.focus);
+  if (a.y < b.y || (a.y === b.y && a.x <= b.x)) return { start: a, end: b };
+  return { start: b, end: a };
+}
+
+/**
+ * 一行可见文本的结束列（exclusive）。
+ *
+ * frame 会把每一行补到终端宽度；复制时显然不能把这些布局补白带上。这里按
+ * 「最后一个非空白可见 cell」裁剪，行内空格和 CJK / emoji 都原样保留。
+ */
+function contentEnd(line: Line): number {
+  let end = 0;
+  let x = 0;
+  for (const cell of line) {
+    if (cell.width === 0) continue;
+    if (cell.ch.trim() !== "") end = x + cell.width;
+    x += cell.width;
+  }
+  return end;
+}
+
+function lineSelectionBounds(
+  line: Line,
+  y: number,
+  range: TextSelectionRange
+): { from: number; to: number } | undefined {
+  const { start, end } = normalizeTextSelection(range);
+  if (y < start.y || y > end.y) return undefined;
+  const endExclusive = contentEnd(line);
+  if (endExclusive === 0) return undefined;
+  const from = y === start.y ? start.x : 0;
+  const to = Math.min(y === end.y ? end.x : Number.MAX_SAFE_INTEGER, endExclusive - 1);
+  if (from > to) return undefined;
+  return { from, to };
+}
+
+/**
+ * 从一帧中提取选区文本。
+ *
+ * 坐标是视口 cell 坐标；跨行时首行取 `[anchor.x, end]`、中间行取全行、末行取
+ * `[0, focus.x]`。边界落在宽字符的任一 cell 上都会复制完整 grapheme，行尾
+ * 布局补白不会被带上。
+ */
+export function selectionText(frame: Frame, range: TextSelectionRange): string {
+  const { start, end } = normalizeTextSelection(range);
+  const maxY = frame.lines.length - 1;
+  if (maxY < 0 || start.y > maxY) return "";
+  const endY = Math.min(end.y, maxY);
+  const out: string[] = [];
+  for (let y = start.y; y <= endY; y++) {
+    const line = frame.lines[y];
+    if (!line) {
+      out.push("");
+      continue;
+    }
+    const bounds = lineSelectionBounds(line, y, range);
+    if (!bounds) {
+      out.push("");
+      continue;
+    }
+    let text = "";
+    let x = 0;
+    for (const cell of line) {
+      if (cell.width === 0) continue;
+      const next = x + cell.width;
+      if (next - 1 >= bounds.from && x <= bounds.to) text += cell.ch;
+      x = next;
+    }
+    out.push(text);
+  }
+  return out.join("\n");
+}
+
+function markSelection(line: Line, y: number, range: TextSelectionRange): void {
+  const bounds = lineSelectionBounds(line, y, range);
+  if (!bounds) return;
+  let x = 0;
+  for (const cell of line) {
+    if (cell.width === 0) continue;
+    const next = x + cell.width;
+    if (next - 1 >= bounds.from && x <= bounds.to) cell.selected = true;
+    x = next;
+  }
+}
+
 export function layout(
   root: Node,
   width: number,
@@ -1254,8 +1384,10 @@ export function layout(
   // 只把可视窗口复制成帧：与总行数无关
   const lines: Line[] = [];
   const push = (line: Line): void => {
-    // 拷贝一份：下面合成根 layer 时会原地改 cell，不能改到布局缓存里的行
-    lines.push([...padLine(fitLine(line, width), width, root.id)]);
+    // 拷贝一份：下面合成根 layer / 标选择时会原地改 cell，不能改到布局缓存里的行
+    const visible = [...padLine(fitLine(line, width), width, root.id)];
+    if (ctx.selection) markSelection(visible, lines.length, ctx.selection);
+    lines.push(visible);
   };
   for (let i = 0; i < bodyStart; i++) push(box.lines[i]);
   for (let i = bodyOffset; i < Math.min(bodyOffset + bodyHeight, bodyEnd); i++) {

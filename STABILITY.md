@@ -62,6 +62,10 @@ interface TuiApp {
   requestPaint(): void;             // 请求一帧，微任务合并
   send(event: ButuiEvent): number;  // 自定义输入源 / 测试注入
   frame(): Frame;                   // 当前布局（现算，不是「上一帧」）
+  selection(): TextSelectionSnapshot | null; // 当前鼠标选区
+  selectedText(): string;
+  clearSelection(): void;
+  copySelection(): boolean;         // 再写一次 OSC 52
   focusedId(): number | null;       // 响应式焦点
   isFocused(node?: Node): boolean;  // O(1)
   focus(node?: Node): void;
@@ -85,6 +89,9 @@ interface TuiApp {
    所以「send 之后读 `frame()`」永远是一致的。真正的**绘制**仍在微任务里合并。
 8. **`frame()` 是现算的当前布局**（布局层按 rev 缓存，很便宜），不是「上一次
    画出来的帧」—— 测试和 hit test 拿到的都是最新状态。
+9. **文本选择默认开启且不进入布局缓存。** 左键拖拽只给最终帧的 cell 打
+   `selected` 标记，不 `touch()` 节点；松开时默认写 OSC 52。`selection: false`
+   可完全关闭。OSC 52 是 best-effort，不保证终端接受。
 
 **不保证：** 一帧内的重绘次数上限；`paint()` 之外的时序细节；`root` 的子结构。
 
@@ -317,7 +324,38 @@ createTuiApp({
 前 / 后 N 行固定在视口两端。注意 `<layer>` 做不到这件事 —— 它相对父节点定位，
 父节点自己会被滚走。
 
-### 4.14 Agent 协议
+### 4.14 鼠标文本选择与剪贴板
+
+`createTuiApp` 默认提供全局文本选择，不需要组件配合：
+
+```tsx
+const app = createTuiApp({
+  view: () => <App />,
+  selection: {
+    copyOnSelect: true,                    // 默认
+    onSelection: selection => {
+      if (selection) console.log(selection.text);
+    },
+  },
+});
+
+app.selectedText();
+app.copySelection();
+app.clearSelection();
+```
+
+- 左键按下开始，`move` 更新，松开定稿；CJK / emoji 边界落在任一 cell 都会
+  复制完整 grapheme。
+- 跨行首行到行尾、中间全行、末行到焦点；frame 为填满终端补的尾部空白不会
+  进入剪贴板。
+- `onSelection` 只在定稿 / 清除时调用，不会为每个 mouse-move 高频触发。
+- `selection: false` 完全关闭；`enabled: () => false` 可动态暂停。
+- 默认 `copyOnSelect: true` 写 OSC 52（tmux 下自动 passthrough）。
+- 选择是**当前视口坐标**，不是内容锚点。resize 会清除；滚动 / 内容重排后
+  选区仍指向新的同一屏幕位置。需要跨滚动稳定锚点时，应用要在
+  `onSelection` 里保存语义节点与文本。
+
+### 4.15 Agent 协议
 
 ```ts
 import { createSession, decodeNdjson, encodeNdjson } from "@butui/agent";
@@ -341,8 +379,12 @@ remote attach / 多套渲染都是「换个传输层」。
 ## 5. 已知缺口（不要依赖，也不建议自己绕）
 
 - **列表只有单列 + 固定行高**：`itemHeight` 是常数，变高行（折行文本、展开的
-  卡片）不支持；`MultiSelect` / `Tree` / `Table` 还没做。
-- **编辑器没有选区 / 剪贴板历史 / 撤销栈**：只有光标与历史。
+  卡片）不支持；`MultiSelect` 还没做。
+- **编辑器模型没有内部选区 / 剪贴板历史 / 撤销栈**：只有光标与历史。全局鼠标
+  选区是 runtime 能力，不修改编辑器模型。
+- **文本选择是视口坐标且不会自动滚动**：拖到屏幕边缘不会继续滚，滚动 /
+  内容重排后选区指向同一屏幕位置；需要稳定内容锚点时要由应用保存。
+- **OSC 52 没有确认通道**：终端可忽略；严格剪贴板需求要接平台实现。
 - **`flexShrink` 没有实现**：row 里只有显式 `truncate` / `wrap={false}` 的
   text 会让位给兄弟节点；普通的折行文本仍然先按自然宽度拿满。
 - **`ScrollView` 的翻页步长按整屏高度算**：有固定页眉 / 页脚时会多滚固定区

@@ -22,6 +22,20 @@ describe("渲染器（SPEC §6 / §17）", () => {
     expect(paintLine(cells)).toBe("中a");
   });
 
+  test("选区用反显包住文本，并在 run 边界正确关闭", () => {
+    const cells = line("abcd");
+    cells[1].selected = true;
+    cells[2].selected = true;
+    expect(paintLine(cells)).toBe("a\x1b[7mbc\x1b[27md");
+  });
+
+  test("只有选区变化也算差分", () => {
+    const before = line("abc");
+    const after = line("abc");
+    after[1].selected = true;
+    expect(diffFrames([before], [after])).toEqual([0]);
+  });
+
   test("首帧整屏绘制，后续只重绘变化行", () => {
     let output = "";
     const renderer = new Renderer(chunk => {

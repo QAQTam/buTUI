@@ -59,6 +59,7 @@ function cellsEqual(a: Line | undefined, b: Line | undefined): boolean {
     const x = a[i];
     const y = b[i];
     if (x.ch !== y.ch || x.sgr !== y.sgr || x.graphic !== y.graphic) return false;
+    if (x.selected !== y.selected) return false;
   }
   return true;
 }
@@ -67,14 +68,24 @@ function cellsEqual(a: Line | undefined, b: Line | undefined): boolean {
 export function paintLine(line: Line): string {
   let out = "";
   let currentSgr = "";
+  let inverse = false;
   for (const cell of line) {
     if (cell.width === 0) continue; // 宽字符的后继占位，不重复输出
     if (cell.sgr !== currentSgr) {
+      // 换基础样式前先关掉选区反显；RESET 也会把它关掉。
+      if (inverse) out += "\x1b[27m";
       out += cell.sgr || RESET;
       currentSgr = cell.sgr;
+      inverse = false;
+    }
+    const selected = cell.selected === true;
+    if (selected !== inverse) {
+      out += selected ? "\x1b[7m" : "\x1b[27m";
+      inverse = selected;
     }
     out += cell.ch;
   }
+  if (inverse) out += "\x1b[27m";
   if (currentSgr !== "") out += RESET;
   return out;
 }
