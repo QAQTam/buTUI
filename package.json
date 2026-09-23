@@ -9,11 +9,13 @@
   "scripts": {
     "test": "bun --conditions=browser test",
     "demo": "bun --conditions=browser run examples/agent-demo/src/main.ts",
-    "typecheck": "bun --conditions=browser x tsc --noEmit"
+    "typecheck": "bun --conditions=browser x tsc --noEmit",
+    "web": "bun --conditions=browser run examples/web-demo/src/server.ts"
   },
   "devDependencies": {
     "@butui/agent": "workspace:*",
     "@butui/core": "workspace:*",
+    "@butui/example-web-demo": "workspace:*",
     "@butui/layout": "workspace:*",
     "@butui/renderer": "workspace:*",
     "@butui/solid": "workspace:*",
@@ -21,7 +23,11 @@
     "@butui/terminal": "workspace:*",
     "@butui/test": "workspace:*",
     "@butui/undo": "workspace:*",
+    "@butui/web": "workspace:*",
+    "@solidjs/compiler": "2.0.0-rc.9",
+    "@solidjs/web": "2.0.0-rc.9",
     "@types/bun": "latest",
+    "happy-dom": "^20.14.5",
     "solid-js": "2.0.0-rc.9",
     "typescript": "^5.9.3"
   }

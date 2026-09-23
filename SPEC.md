@@ -351,6 +351,32 @@ reconcile（N=9000 时 4.4 ms/push）。`createStore(..., { shallow: true })` �
 
 ---
 
+### 5.10 WebUI 落地（v0.1 实现）
+
+§2.2 的「终端和 WebUI 共用业务状态与事件协议」与 §3 的「不把 TUI 和 WebUI
+强行做成同一套组件代码」由 `@butui/web` 验证：
+
+- **共享**：`@butui/agent` 的 Session / reducer / NDJSON 协议。
+- **不共享**：渲染层。TUI 是 `generate: "universal"` + cell 网格；WebUI 是
+  `generate: "dom"` + `@solidjs/web`。
+- 两边在根节点打同样的语义标识，`tests/web-ui.test.tsx` 直接断言集合一致。
+
+三个实现细节：
+
+1. **编译目标靠路径区分**。`@butui/solid/plugin` 的 `targets` 选项按顺序匹配
+   文件路径，未命中回落 universal。同一个仓库里两种 renderer 共存。
+2. **WebUI 的 .tsx 要加 `/** @jsxImportSource @solidjs/web */`**，否则会被根
+   tsconfig 的 `jsxImportSource` 按 TUI 的 intrinsic elements 类型检查。
+3. **流式 markdown 在 DOM 侧也用命令式 append**：`StreamSource.lines` 是只增
+   不改的数组，DOM 节点一旦创建就不该重建。每次只追加新增行，尾部单独更新
+   —— 与 TUI 侧 `measureStreamNode` 是同一个思路，产物从 cell 变成 DOM。
+
+Remote attach（§16 v0.3）也一并跑通：服务端只发 NDJSON 事件、不认识 UI；
+浏览器侧建 Session、连流、把 UiCommand POST 回去。`tests/web-remote.test.ts`
+真的起服务、连流、POST 命令、断言事件到达。
+
+---
+
 ### 5.5 禁止事项
 
 - 不从 OpenTUI 复制 reconciler

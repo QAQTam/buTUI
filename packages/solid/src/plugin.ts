@@ -13,13 +13,30 @@
  */
 import { transform } from "@solidjs/compiler";
 
+/**
+ * 一个编译目标。
+ *
+ * TUI 走 `generate: "universal"` + `@butui/solid`；WebUI 走
+ * `generate: "dom"` + `@solidjs/web`（SPEC §5.3 / §5.4）。两者可以在同一个
+ * 仓库里共存，靠路径区分。
+ */
+export interface ButuiTarget {
+  /** 匹配文件路径；按 targets 数组顺序，先命中先用 */
+  include: RegExp;
+  generate: "universal" | "dom" | "ssr";
+  /** host ops / DOM 运行时模块名 */
+  moduleName: string;
+}
+
 export interface ButuiPluginOptions {
-  /** host ops 的模块名，默认 `@butui/solid` */
+  /** host ops 的模块名，默认 `@butui/solid`（universal 目标的兜底） */
   moduleName?: string;
   /** 要编译的扩展名，默认 `[".tsx", ".jsx"]` */
   extensions?: string[];
   /** 开发模式（保留调试名），默认跟随 NODE_ENV */
   dev?: boolean;
+  /** 额外编译目标；没有命中时回落到 `moduleName` + universal */
+  targets?: ButuiTarget[];
 }
 
 const TS = new Bun.Transpiler({ loader: "ts" });
@@ -29,6 +46,14 @@ export function butui(options: ButuiPluginOptions = {}): Bun.BunPlugin {
   const extensions = options.extensions ?? [".tsx", ".jsx"];
   const dev = options.dev ?? process.env.NODE_ENV !== "production";
   const filter = new RegExp(`(${extensions.map(escapeRegExp).join("|")})$`);
+  const targets = options.targets ?? [];
+
+  const resolveTarget = (path: string): { generate: "universal" | "dom" | "ssr"; moduleName: string } => {
+    for (const target of targets) {
+      if (target.include.test(path)) return target;
+    }
+    return { generate: "universal", moduleName };
+  };
 
   return {
     name: "butui-solid",
@@ -36,12 +61,13 @@ export function butui(options: ButuiPluginOptions = {}): Bun.BunPlugin {
       build.onLoad({ filter }, async args => {
         if (args.path.includes("node_modules")) return undefined;
         const source = await Bun.file(args.path).text();
+        const target = resolveTarget(args.path);
         let code: string;
         try {
           ({ code } = transform(source, {
             filename: args.path,
-            generate: "universal",
-            moduleName,
+            generate: target.generate,
+            moduleName: target.moduleName,
             dev,
           }));
         } catch (error) {

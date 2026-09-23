@@ -3,7 +3,7 @@
 > 面向 coding agent 的 Agent UI Runtime。设计文档见 [SPEC.md](./SPEC.md)。
 
 当前状态：**M1/M2 骨架 + 流式渲染 O(1) + 事件协议驱动的 agent UI +
-分支式 Undo 已跑通**，`bun test` 127 个用例全绿。
+分支式 Undo + WebUI remote attach 已跑通**，`bun test` 139 个用例全绿。
 
 ```
 Solid signal / store
@@ -11,6 +11,7 @@ Solid signal / store
   → @butui/core    (节点树 / 失效传播 / focus / 事件冒泡 / theme / ANSI 解析)
   → @butui/agent   (事件协议 reducer + Session + SPEC §10.2 组件)
   → @butui/undo    (workspace 日志 + 行级 patch + 分支式 undo)
+  → @butui/web     (DOM 渲染，复用同一份 Session / 事件协议)
   → @butui/stream  (增量折行 + 增量 markdown，O(delta) 定稿)
   → @butui/layout  (flex 子集 + 增量合成 + 视口窗口)
   → @butui/renderer(cell buffer + 逐行差分 + SGR 状态机)
@@ -167,6 +168,61 @@ patch 用的是**编辑脚本**而不是 unified diff 文本：
 
 `tests/undo-patch.test.ts` 用 300 轮随机文本验证两个方向都能精确还原。
 
+## TUI / WebUI 共享协议，不共享组件
+
+SPEC §2.2 的主张是「终端和 WebUI 共用业务状态与事件协议」，§3 又明确把
+「把 TUI 和 WebUI 强行做成同一套组件代码」列为非目标。`@butui/web` 验证了这条：
+
+```
+                 ┌─────────────────┐
+   AgentEvent ──▶│  @butui/agent   │◀── UiCommand
+                 │  Session/reducer│
+                 └────────┬────────┘
+                          │ 同一份状态
+              ┌───────────┴───────────┐
+              ▼                       ▼
+      @butui/solid (cell)     @butui/web (DOM)
+      generate: universal     generate: dom
+```
+
+同一个 Session 挂两套渲染，`tests/web-ui.test.tsx` 直接断言两边暴露的语义标识
+一致（`message:m1` / `tool:c1` / `todo:panel` / `status:bar`）。
+
+编译上靠**路径区分目标**：
+
+```ts
+Bun.plugin(butui({
+  targets: [
+    { include: /packages\/web\/.*\.tsx$/, generate: "dom", moduleName: "@solidjs/web" },
+    // 其余回落 universal + @butui/solid
+  ],
+}));
+```
+
+WebUI 的 `.tsx` 文件要加 `/** @jsxImportSource @solidjs/web */`，否则会被
+根 tsconfig 的 `jsxImportSource: "@butui/solid"` 类型检查成 `box`/`text`。
+
+### Remote attach demo
+
+```bash
+bun run web          # → http://localhost:3210
+```
+
+服务端只做两件事：跑 agent、把事件写成 NDJSON 流；它不认识任何 UI。浏览器侧
+不到 30 行：建 Session、连流、把 UiCommand POST 回去。多个客户端连同一个流会
+收到同一份事件（`tests/web-remote.test.ts` 真的起服务 + 连流 + POST 命令验证）。
+
+```ts
+const response = await fetch("/events");
+const reader = response.body!.getReader();
+const decode = createNdjsonDecoder<AgentEvent>();
+for (;;) {
+  const { value, done } = await reader.read();
+  if (done) break;
+  for (const event of decode(text.decode(value, { stream: true }))) session.dispatch(event);
+}
+```
+
 ## 快速开始
 
 ```bash
@@ -179,6 +235,12 @@ bun --conditions=browser run examples/agent-demo/src/main.ts
 
 # 流式基准
 bun --conditions=browser run scripts/stream-bench.tsx
+
+# WebUI（remote attach demo）
+bun run web
+
+# 把 WebUI 渲染成 HTML
+bun --conditions=browser run scripts/web-snapshot.tsx
 
 # 纯文本快照
 bun --conditions=browser run scripts/snapshot.tsx 72 22
@@ -198,6 +260,7 @@ Demo 的工作区是**内存实现**，但走的是完全一样的 journal / dif
 | `@butui/solid` | `@solidjs/universal` host ops、JSX 类型、Bun 编译插件 |
 | `@butui/agent` | 事件协议（NDJSON）、Session reducer、SPEC §10.2 组件 |
 | `@butui/undo` | 工作区变更日志、行级 patch、undo 预览与执行（SPEC §8） |
+| `@butui/web` | WebUI：ANSI→HTML、DOM 组件、`mountWebUI`（复用同一个 Session） |
 | `@butui/stream` | 增量折行、增量 markdown、Solid 绑定与组件 |
 | `@butui/layout` | flex 子集 → cell 网格，带 `frozen` 的增量合成与视口窗口 |
 | `@butui/renderer` | cell → ANSI，逐行差分 + SGR 状态机 |
@@ -267,7 +330,16 @@ const call = state.calls.find(...);        // ← 查不到！
 `@butui/agent` 里 `tool.result` 要把 workspace 变更记到对应的 tool call 上，
 第一版就是在 setter 外面查的，结果 journal 里的 `turnId` 全是空串。
 
-### 7. 在响应式 root 外部批量注入事件后要 `settle()`
+### 7. Solid 2 的 `createEffect` 需要**两个**参数
+
+```ts
+createEffect(() => signal(), value => doWork(value));
+```
+
+单参数在 prod 构建里会抛 `undefined is not an object (evaluating 't.effect')`，
+而且会让整个响应式 root `[REACTIVITY_HALTED]`。
+
+### 8. 在响应式 root 外部批量注入事件后要 `settle()`
 
 ```ts
 for (const event of events) session.dispatch(event);
@@ -316,7 +388,8 @@ Bun.plugin(onLoad)
 
 - `@butui/undo`：checkpoint / branch / revert 的**执行**（SPEC §8）——
   协议与展示已经就位，缺的是 workspace patch / conflict 检测
-- `@butui/web`：复用同一套事件协议（§13 已就绪，只差 DOM adapter）
+- **图片子系统**（SPEC §12）：Kitty / iTerm2 好做，sixel 需要补 PNG 解码
+- `@butui/components` / `@butui/agent` 的 ArtifactCanvas / CommandPalette / ToolGraph
 - 事件协议（SPEC §13 NDJSON）与 `@butui/web` adapter
 - 图片子系统（SPEC §12）：Kitty / iTerm2 好做，sixel 需要补 PNG 解码
 - 虚拟列表、动画、Kitty keyboard protocol 的发送侧

@@ -7,6 +7,7 @@
       "devDependencies": {
         "@butui/agent": "workspace:*",
         "@butui/core": "workspace:*",
+        "@butui/example-web-demo": "workspace:*",
         "@butui/layout": "workspace:*",
         "@butui/renderer": "workspace:*",
         "@butui/solid": "workspace:*",
@@ -14,7 +15,11 @@
         "@butui/terminal": "workspace:*",
         "@butui/test": "workspace:*",
         "@butui/undo": "workspace:*",
+        "@butui/web": "workspace:*",
+        "@solidjs/compiler": "2.0.0-rc.9",
+        "@solidjs/web": "2.0.0-rc.9",
         "@types/bun": "latest",
+        "happy-dom": "^20.14.5",
         "solid-js": "2.0.0-rc.9",
         "typescript": "^5.9.3",
       },
@@ -27,6 +32,15 @@
         "@butui/renderer": "workspace:*",
         "@butui/solid": "workspace:*",
         "@butui/terminal": "workspace:*",
+        "solid-js": "2.0.0-rc.9",
+      },
+    },
+    "examples/web-demo": {
+      "name": "@butui/example-web-demo",
+      "dependencies": {
+        "@butui/agent": "workspace:*",
+        "@butui/solid": "workspace:*",
+        "@butui/web": "workspace:*",
         "solid-js": "2.0.0-rc.9",
       },
     },
@@ -104,6 +118,17 @@
         "@butui/core": "workspace:*",
       },
     },
+    "packages/web": {
+      "name": "@butui/web",
+      "version": "0.1.0",
+      "dependencies": {
+        "@butui/agent": "workspace:*",
+        "@butui/core": "workspace:*",
+        "@butui/stream": "workspace:*",
+        "@solidjs/web": "2.0.0-rc.9",
+        "solid-js": "2.0.0-rc.9",
+      },
+    },
   },
   "packages": {
     "@butui/agent": ["@butui/agent@workspace:packages/agent"],
@@ -111,6 +136,8 @@
     "@butui/core": ["@butui/core@workspace:packages/core"],
 
     "@butui/example-agent-demo": ["@butui/example-agent-demo@workspace:examples/agent-demo"],
+
+    "@butui/example-web-demo": ["@butui/example-web-demo@workspace:examples/web-demo"],
 
     "@butui/layout": ["@butui/layout@workspace:packages/layout"],
 
@@ -125,6 +152,8 @@
     "@butui/test": ["@butui/test@workspace:packages/test"],
 
     "@butui/undo": ["@butui/undo@workspace:packages/undo"],
+
+    "@butui/web": ["@butui/web@workspace:packages/web"],
 
     "@emnapi/core": ["@emnapi/core@1.11.3", "", { "dependencies": { "@emnapi/wasi-threads": "1.2.3", "tslib": "^2.4.0" } }, "sha512-zLpS5asjEb7lq8jYLq37N6XKaE41DIexlY1rF/z4/tIl3wo13Sqm28fRyfIsKZD+NZ8mM5RoKkpW/rBcuoSZSg=="],
 
@@ -152,15 +181,27 @@
 
     "@solidjs/universal": ["@solidjs/universal@2.0.0-rc.9", "", { "peerDependencies": { "solid-js": "^2.0.0-rc.9" } }, "sha512-5yontrAU9SYd+P8xHsaNiz55C9vbhSCXRHYlS4R7UMo7qtEa2i6qLYaQRaokpxtIOrZ776vPT0iCNttcxIgBrA=="],
 
+    "@solidjs/web": ["@solidjs/web@2.0.0-rc.9", "", { "dependencies": { "seroval": "~1.6.7", "seroval-plugins": "~1.6.7" }, "peerDependencies": { "solid-js": "^2.0.0-rc.9" } }, "sha512-pfiWoLDnLc+QYWc7UyLqO+5QrPEf3oTiNmmRC+C+uM6AZ5VH0bZMNPtLM5rJ29LKPiTwQitKV843IQDf/oeyhQ=="],
+
     "@tybys/wasm-util": ["@tybys/wasm-util@0.10.4", "", { "dependencies": { "tslib": "^2.4.0" } }, "sha512-W3c4gRigFS0T/Ma4qIYF3GDAc5AQdHb1yL5znJT1Zv1YaD9Kitx656wBjvr19qbiosmZT8lWDM5BEMynUqX65A=="],
 
     "@types/bun": ["@types/bun@1.4.2", "", { "dependencies": { "bun-types": "1.4.2" } }, "sha512-GimotNn7+ZV0uVArItBbriZsR1oNf0+WTzPkdcFrzShI7k2norL0uzEaJT8T33dWr7O/c9ZDuAFQrctKCi72oQ=="],
 
     "@types/node": ["@types/node@26.6.2", "", { "dependencies": { "undici-types": "~8.9.0" } }, "sha512-X1P21scMv4zGKLYqjdGjaKa7COa0RKVYYZZN/NfvLQ1JegxFhdhpZG/Lyn8AXx6CDUavKAd11v6BvfpkDByK8g=="],
 
+    "@types/whatwg-mimetype": ["@types/whatwg-mimetype@3.0.2", "", {}, "sha512-c2AKvDT8ToxLIOUlN51gTiHXflsfIFisS4pO7pDPoKouJCESkhZnEy623gwP9laCy5lnLDAw1vAzu2vM2YLOrA=="],
+
+    "@types/ws": ["@types/ws@8.18.1", "", { "dependencies": { "@types/node": "*" } }, "sha512-ThVF6DCVhA8kUGy+aazFQ4kXQ7E1Ty7A3ypFOe0IcJV8O/M511G99AW24irKrW56Wt44yG9+ij8FaqoBGkuBXg=="],
+
+    "buffer-image-size": ["buffer-image-size@0.6.4", "", { "dependencies": { "@types/node": "*" } }, "sha512-nEh+kZOPY1w+gcCMobZ6ETUp9WfibndnosbpwB1iJk/8Gt5ZF2bhS6+B6bPYz424KtwsR6Rflc3tCz1/ghX2dQ=="],
+
     "bun-types": ["bun-types@1.4.2", "", { "dependencies": { "@types/node": "*" } }, "sha512-bxV1FgK7yBIzjRe5zBozIM4Bem11ZJcCXSrjWRG3YWLt8yFDePu4cLjpebO8OvPeIE9trbyPF4fuj3Cia4Fj3w=="],
 
     "csstype": ["csstype@3.2.3", "", {}, "sha512-z1HGKcYy2xA8AGQfwrn0PAy+PB7X/GSj3UVJW9qKyn43xWa+gl5nXmU4qqLMRzWVLFC8KusUX8T/0kCiOYpAIQ=="],
+
+    "entities": ["entities@7.0.1", "", {}, "sha512-TWrgLOFUQTH994YUyl1yT4uyavY5nNB5muff+RtWaqNVCAK408b5ZnnbNAUEWLTCpum9w6arT70i1XdQ4UeOPA=="],
+
+    "happy-dom": ["happy-dom@20.14.5", "", { "dependencies": { "@types/node": ">=20.0.0", "@types/whatwg-mimetype": "^3.0.2", "@types/ws": "^8.18.1", "buffer-image-size": "^0.6.4", "entities": "^7.0.1", "whatwg-mimetype": "^3.0.0", "ws": "^8.21.0" } }, "sha512-x/RzkpWO40bTjIoT30iQtt64FLLmH/iRcUCN2X//bLx7H3ifkdfPXyqsro/OYtqzIAhiLMMA7mmiOR9C3NOKjQ=="],
 
     "seroval": ["seroval@1.6.7", "", {}, "sha512-AeDcLh0yO2SFm9W71essgnSzLV9DI8ZH0x0knXn2DMnUZj728mpLbxjlbB6IqKCmqh8JA3cEqRyGoNkt584JcQ=="],
 
@@ -173,5 +214,9 @@
     "typescript": ["typescript@5.9.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw=="],
 
     "undici-types": ["undici-types@8.9.0", "", {}, "sha512-KTDyRTYX8sWmKXAikPHHSyc63CRPETMctyjKFupcC6OBLXT3xsN0e9aF7m+mIXutFWpUXuedtowG7iLOzp0kQg=="],
+
+    "whatwg-mimetype": ["whatwg-mimetype@3.0.0", "", {}, "sha512-nt+N2dzIutVRxARx1nghPKGv1xHikU7HKdfafKkLNLindmPU/ch3U31NOCGGA/dmPcmb1VlofO0vnKAcsm0o/Q=="],
+
+    "ws": ["ws@8.21.3", "", { "peerDependencies": { "bufferutil": "^4.0.1", "utf-8-validate": ">=5.0.2" }, "optionalPeers": ["bufferutil", "utf-8-validate"] }, "sha512-201TZ/kPWxoPr/OKWjquZR1SWKXcvxdH+e1xrx89b3YbmzLMFCLfnaG1HFIgWzJOEWZ7MvpK++odZufgYR50Rw=="],
   }
 }

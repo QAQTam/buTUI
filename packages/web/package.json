@@ -1,0 +1,21 @@
+{
+  "name": "@butui/web",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "dependencies": {
+    "@butui/agent": "workspace:*",
+    "@butui/core": "workspace:*",
+    "@butui/stream": "workspace:*",
+    "@solidjs/web": "2.0.0-rc.9",
+    "solid-js": "2.0.0-rc.9"
+  },
+  "sideEffects": false
+}

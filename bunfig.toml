@@ -13,7 +13,7 @@
 #    @butui/solid 会在启动时检查，命中 server 构建就直接抛错。
 #
 # 2) 顶层 preload 只作用于 `bun run`，`bun test` 需要单独的 [test].preload。
-preload = ["@butui/solid/preload"]
+preload = ["./preload.ts", "./tests/dom-setup.ts"]
 
 [test]
-preload = ["@butui/solid/preload"]
+preload = ["./preload.ts", "./tests/dom-setup.ts"]
