@@ -396,4 +396,82 @@ describe("plugin capabilities", () => {
       );
     });
   });
+
+  test("approveCapability 可在 import 前逐个审批", async () => {
+    await withTempDir(async dir => {
+      const marker = `__butui_plugin_approved_${Date.now()}`;
+      await writeFile(
+        path.join(dir, "plugin.ts"),
+        `globalThis.${marker} = true;
+         export default { id: "approved", slots: { header: () => ({ kind: "ok" }) } };`
+      );
+      await writeFile(
+        path.join(dir, "butui.plugin.json"),
+        JSON.stringify({
+          entry: "./plugin.ts",
+          id: "approved",
+          capabilities: ["fs:read", "network"],
+        })
+      );
+
+      const deniedRequests: Array<{ capability: string; pluginId: string }> = [];
+      const deniedHost = {};
+      const denied = await loadPlugins<Node, Slots>({
+        registry: new SlotRegistry<Node, Slots>(deniedHost, {}),
+        host: deniedHost,
+        context: {},
+        cwd: dir,
+        entries: ["./plugin.ts"],
+        allowedCapabilities: ["fs:read"],
+        approveCapability(request) {
+          deniedRequests.push({
+            capability: request.capability,
+            pluginId: request.pluginId,
+          });
+          return false;
+        },
+      });
+      expect(denied.ids).toEqual([]);
+      expect(deniedRequests).toEqual([
+        { capability: "network", pluginId: "approved" },
+      ]);
+      expect(denied.errors[0]?.error.message).toContain(
+        "requires capabilities denied: network"
+      );
+      expect((globalThis as Record<string, unknown>)[marker]).toBeUndefined();
+
+      const approvedRequests: Array<{
+        capability: string;
+        path: string;
+      }> = [];
+      const host = {};
+      const registry = new SlotRegistry<Node, Slots>(host, {});
+      const approved = await loadPlugins<Node, Slots>({
+        registry,
+        host,
+        context: {},
+        cwd: dir,
+        entries: ["./plugin.ts"],
+        allowedCapabilities: ["fs:read"],
+        approveCapability(request) {
+          approvedRequests.push({
+            capability: request.capability,
+            path: request.path,
+          });
+          return request.capability === "network";
+        },
+      });
+
+      expect(approved.ids).toEqual(["approved"]);
+      expect(approvedRequests).toEqual([
+        {
+          capability: "network",
+          path: path.join(dir, "plugin.ts"),
+        },
+      ]);
+      expect((globalThis as Record<string, unknown>)[marker]).toBe(true);
+      approved.dispose();
+      delete (globalThis as Record<string, unknown>)[marker];
+    });
+  });
 });

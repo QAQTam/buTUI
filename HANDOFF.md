@@ -283,7 +283,7 @@ const bar = createScrollBar({
 - `@butui/plugins`：`Plugin` / `SlotRegistry` / `createSlotRegistry`。
 - `@butui/plugins/solid`：`createSolidSlotRegistry` / `createSlot` / `<Slot>`。
 - `@butui/plugins/loader`：manifest / JSON+TS 配置 / 动态 import / 工厂插件 /
-  直接依赖自动发现 / capability 门控。
+  直接依赖自动发现 / capability 白名单 + `approveCapability` 运行时审批。
 - 排序：`order` → 注册顺序 → `id`。
 - 模式：`append` / `replace` / `single_winner`。
 - 生命周期：`setup`（可返回 cleanup）→ `dispose`。
@@ -614,8 +614,8 @@ git diff --check
 
 ## 10. 已知缺口
 
-- 插件已有 manifest / 配置 / 直接依赖发现 / capability 门控；无运行时沙箱 /
-  权限审批 / 跨进程隔离。
+- 插件已有 manifest / 配置 / 直接依赖发现 / capability 白名单和运行时审批钩子；
+  仍无 worker / 跨进程隔离、审批 UI 和 capability lease。
 - 鼠标已有 hover / 双击 / 右键 / pointer capture / local 坐标 / drag 生命周期 /
   OSC 22 指针 / 拖动惯性；无 pointerId、多指针。惯性只接 ScrollBar / Slider。
 - Keymap 已有多键 chord / 前缀超时，Command Palette 已有基础 UI；无用户自定义
@@ -650,8 +650,8 @@ git diff --check
    决定默认策略、文件清理和崩溃恢复语义。
 3. **numeric index sidecar 生命周期**：1M 磁盘换出原型已完成；下一步由
    bugent 决定默认策略、目录清理和恢复语义。
-4. **插件运行时约束 / 审批**：capability 目前只是 import 前门控，下一步做权限
-   审批 UI 或 worker 隔离。
+4. **插件 capability lease / UI**：运行时审批钩子已完成；下一步做审批 UI、
+   有效期 / revoke 语义和 worker 隔离。
 5. **Portal / Dynamic / Toast / Tooltip**：补齐 OpenTUI 已有的通用组件接口。
 6. **动画编排增强**：更复杂的 stagger、滚动回弹和动画调试工具。
 7. **WebUI diff / 水平 ScrollBar**：等真实需求出现后再做。

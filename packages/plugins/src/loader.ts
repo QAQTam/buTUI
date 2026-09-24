@@ -53,6 +53,14 @@ export type PluginModuleExport<
   | Plugin<TNode, TSlots, TContext>
   | PluginModuleFactory<TNode, TSlots, TContext>;
 
+export interface CapabilityApprovalRequest {
+  pluginId: string;
+  module: string;
+  path: string;
+  capability: PluginCapability;
+  manifest: PluginManifest;
+}
+
 export interface LoadPluginsOptions<
   TNode,
   TSlots extends object,
@@ -70,6 +78,13 @@ export interface LoadPluginsOptions<
    * 能力必须在白名单内，否则插件在 import 前被拒绝。
    */
   allowedCapabilities?: readonly PluginCapability[] | "all";
+  /**
+   * 运行时审批钩子；只对白名单外的 capability 调用。
+   * 返回 false 时插件不会 import。
+   */
+  approveCapability?: (
+    request: CapabilityApprovalRequest
+  ) => boolean | Promise<boolean>;
   /**
    * 严格模式：要求每个插件都有 manifest。默认 false。
    *
@@ -116,7 +131,13 @@ export async function loadPlugins<
     const label = entry.id ?? entry.module;
     try {
       const resolved = await resolvePluginEntry(entry, cwd);
-      assertCapabilities(entry, resolved.manifest, options, label);
+      await assertCapabilities(
+        entry,
+        resolved.manifest,
+        options,
+        resolved.manifest?.id ?? label,
+        resolved.path
+      );
       const module = await importer(pathToFileURL(resolved.path).href);
       const candidate = extractPluginExport(module);
       if (candidate === undefined) {
@@ -186,12 +207,17 @@ export async function loadPlugins<
   };
 }
 
-function assertCapabilities<TNode, TSlots extends object, TContext extends PluginContext>(
+async function assertCapabilities<
+  TNode,
+  TSlots extends object,
+  TContext extends PluginContext,
+>(
   entry: PluginConfigEntry,
   manifest: PluginManifest | undefined,
   options: LoadPluginsOptions<TNode, TSlots, TContext>,
-  label: string
-): void {
+  label: string,
+  path: string
+): Promise<void> {
   if (options.requireCapabilities && !manifest) {
     throw new Error(
       `Plugin "${label}" does not declare a manifest with capabilities`
@@ -200,13 +226,35 @@ function assertCapabilities<TNode, TSlots extends object, TContext extends Plugi
 
   const required = manifest?.capabilities ?? [];
   if (required.length === 0) return;
-  const granted = entry.capabilities ?? options.allowedCapabilities ?? "all";
+
+  const granted =
+    entry.capabilities ??
+    (options.allowedCapabilities === "all"
+      ? "all"
+      : options.allowedCapabilities) ??
+    "all";
   if (granted === "all") return;
 
-  const missing = required.filter(capability => !granted.includes(capability));
-  if (missing.length > 0) {
+  const denied: PluginCapability[] = [];
+  for (const capability of required) {
+    if (granted.includes(capability)) continue;
+    if (!options.approveCapability) {
+      denied.push(capability);
+      continue;
+    }
+    const approved = await options.approveCapability({
+      pluginId: label,
+      module: entry.module,
+      path,
+      capability,
+      manifest: manifest!,
+    });
+    if (!approved) denied.push(capability);
+  }
+  if (denied.length > 0) {
+    const reason = options.approveCapability ? "denied" : "not granted";
     throw new Error(
-      `Plugin "${label}" requires capabilities not granted: ${missing.join(", ")}`
+      `Plugin "${label}" requires capabilities ${reason}: ${denied.join(", ")}`
     );
   }
 }
