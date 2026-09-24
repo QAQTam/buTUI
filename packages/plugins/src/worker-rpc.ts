@@ -36,11 +36,16 @@ export interface WorkerRpcHost {
   dispose(): void;
 }
 
+export type WorkerRpcEndpointEvent = "message" | "error" | "messageerror";
+
 export interface WorkerRpcEndpoint {
-  addEventListener(type: "message", listener: (event: MessageEvent) => void): void;
+  addEventListener(
+    type: WorkerRpcEndpointEvent,
+    listener: (event: Event) => void
+  ): void;
   removeEventListener(
-    type: "message",
-    listener: (event: MessageEvent) => void
+    type: WorkerRpcEndpointEvent,
+    listener: (event: Event) => void
   ): void;
   postMessage(message: WorkerRpcMessage): void;
 }
@@ -64,9 +69,10 @@ export function createWorkerRpc(
   const pending = new Map<number, PendingCall>();
   let nextId = 1;
   let disposed = false;
+  let failure: Error | undefined;
 
-  const onMessage = (event: MessageEvent): void => {
-    const message = event.data;
+  const onMessage = (event: Event): void => {
+    const message = (event as MessageEvent).data;
     if (!isWorkerRpcResult(message) && !isWorkerRpcError(message)) return;
     const call = pending.get(message.id);
     if (!call) return;
@@ -76,7 +82,33 @@ export function createWorkerRpc(
     else call.reject(errorFromMessage(message.error));
   };
 
+  const onFailure = (event: Event): void => {
+    if (disposed || failure) return;
+    failWorker(
+      errorFromEvent(
+        event,
+        event.type === "messageerror"
+          ? "worker message could not be deserialized"
+          : "worker failed"
+      )
+    );
+  };
+
+  const failWorker = (error: Error): void => {
+    failure = error;
+    target.removeEventListener("message", onMessage);
+    target.removeEventListener("error", onFailure);
+    target.removeEventListener("messageerror", onFailure);
+    for (const call of pending.values()) {
+      if (call.timer) clearTimeout(call.timer);
+      call.reject(error);
+    }
+    pending.clear();
+  };
+
   target.addEventListener("message", onMessage);
+  target.addEventListener("error", onFailure);
+  target.addEventListener("messageerror", onFailure);
 
   return {
     call<T = unknown>(
@@ -86,6 +118,7 @@ export function createWorkerRpc(
       if (disposed) {
         return Promise.reject(new Error("[butui] worker RPC 已关闭"));
       }
+      if (failure) return Promise.reject(failure);
       const id = nextId++;
       return new Promise<T>((resolve, reject) => {
         const entry: PendingCall = {
@@ -115,6 +148,8 @@ export function createWorkerRpc(
       if (disposed) return;
       disposed = true;
       target.removeEventListener("message", onMessage);
+      target.removeEventListener("error", onFailure);
+      target.removeEventListener("messageerror", onFailure);
       for (const call of pending.values()) {
         if (call.timer) clearTimeout(call.timer);
         call.reject(new Error("[butui] worker RPC 已关闭"));
@@ -141,8 +176,8 @@ export function serveWorkerRpc(
 ): () => void {
   let active = true;
 
-  const onMessage = async (event: MessageEvent): Promise<void> => {
-    const message = event.data;
+  const onMessage = async (event: Event): Promise<void> => {
+    const message = (event as MessageEvent).data;
     if (!isWorkerRpcRequest(message)) return;
     try {
       const handler = getHandler(handlers, message.method);
@@ -244,4 +279,18 @@ function errorFromMessage(error: WorkerRpcError["error"]): Error {
   const value = new Error(error.message);
   if (error.stack) value.stack = error.stack;
   return value;
+}
+
+function errorFromEvent(event: Event, fallback: string): Error {
+  const source = event as { error?: unknown; message?: unknown };
+  if (source.error instanceof Error) {
+    const value = new Error(`[butui] worker RPC failed: ${source.error.message}`);
+    if (source.error.stack) value.stack = source.error.stack;
+    return value;
+  }
+  const message =
+    typeof source.message === "string" && source.message
+      ? source.message
+      : fallback;
+  return new Error(`[butui] worker RPC failed: ${message}`);
 }

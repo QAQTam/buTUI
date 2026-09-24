@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { createWorkerRpc, serveWorkerRpc } from "@butui/plugins";
 import type {
   WorkerRpcEndpoint,
+  WorkerRpcEndpointEvent,
   WorkerRpcMessage,
 } from "@butui/plugins";
 
@@ -26,21 +27,29 @@ async function captureRejection(promise: Promise<unknown>): Promise<Error> {
 }
 
 class TestEndpoint implements WorkerRpcEndpoint {
-  private readonly listeners = new Set<(event: MessageEvent) => void>();
+  private readonly listeners = new Map<
+    WorkerRpcEndpointEvent,
+    Set<(event: Event) => void>
+  >();
   readonly messages: WorkerRpcMessage[] = [];
 
   addEventListener(
-    type: "message",
-    listener: (event: MessageEvent) => void
+    type: WorkerRpcEndpointEvent,
+    listener: (event: Event) => void
   ): void {
-    if (type === "message") this.listeners.add(listener);
+    let listeners = this.listeners.get(type);
+    if (!listeners) {
+      listeners = new Set();
+      this.listeners.set(type, listeners);
+    }
+    listeners.add(listener);
   }
 
   removeEventListener(
-    type: "message",
-    listener: (event: MessageEvent) => void
+    type: WorkerRpcEndpointEvent,
+    listener: (event: Event) => void
   ): void {
-    if (type === "message") this.listeners.delete(listener);
+    this.listeners.get(type)?.delete(listener);
   }
 
   postMessage(message: WorkerRpcMessage): void {
@@ -48,8 +57,13 @@ class TestEndpoint implements WorkerRpcEndpoint {
   }
 
   emit(data: unknown): void {
-    const event = { data } as MessageEvent;
-    for (const listener of [...this.listeners]) listener(event);
+    this.emitEvent("message", { data } as MessageEvent);
+  }
+
+  emitEvent(type: WorkerRpcEndpointEvent, event: Event): void {
+    for (const listener of [...(this.listeners.get(type) ?? [])]) {
+      listener(event);
+    }
   }
 }
 
@@ -131,6 +145,29 @@ describe("Worker RPC", () => {
     expect(await pending).toBe(7);
     expect(rpc.pending).toBe(0);
     rpc.dispose();
+  });
+
+  test("worker error / messageerror 会 fail-fast 并封禁后续调用", async () => {
+    for (const type of ["error", "messageerror"] as const) {
+      const endpoint = new TestEndpoint();
+      const rpc = createWorkerRpc(endpoint, { timeoutMs: 1_000 });
+      const rejected = captureRejection(rpc.call("never"));
+
+      endpoint.emitEvent(type, {
+        type,
+        error: new Error("worker crashed"),
+        message: "worker crashed",
+      } as ErrorEvent);
+
+      const failure = await rejected;
+      expect(failure.message).toContain("worker RPC failed: worker crashed");
+      expect(rpc.pending).toBe(0);
+
+      const afterFailure = await captureRejection(rpc.call("again"));
+      expect(afterFailure).toBe(failure);
+      expect(endpoint.messages).toHaveLength(1);
+      rpc.dispose();
+    }
   });
 
   test("server 拒绝原型方法，并在 cleanup 后停止回包", async () => {
