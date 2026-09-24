@@ -7,6 +7,8 @@ export interface AuditEvent {
   at: number;
   type: string;
   pluginId?: string;
+  sourceId?: string;
+  sourceSeq?: number;
   prevHash?: string;
   hash?: string;
   signature?: string;
@@ -93,6 +95,8 @@ export interface AuditRotationSummary {
 export interface AuditAckRange {
   from: number;
   to: number;
+  /** 多 source 时标识缺口所属 source；单 source ack 可省略。 */
+  sourceId?: string;
 }
 
 export interface AuditAck {
@@ -144,6 +148,42 @@ export interface AuditDeduper {
   readonly size: number;
   accept(events: readonly AuditEvent[]): readonly AuditEvent[];
   clear(): void;
+}
+
+export interface AuditGap {
+  sourceId: string;
+  from: number;
+  to: number;
+}
+
+export interface AuditOrderResult {
+  committed: readonly AuditEvent[];
+  pending: readonly AuditEvent[];
+  duplicates: readonly AuditEvent[];
+  gaps: readonly AuditGap[];
+  watermarks: Readonly<Record<string, number>>;
+}
+
+export interface AuditOrderOptions {
+  getSourceId?: (event: AuditEvent) => string;
+  getSourceSeq?: (event: AuditEvent) => number;
+  initialWatermarks?: Readonly<Record<string, number>>;
+}
+
+export interface AuditOrderBuffer {
+  accept(events: readonly AuditEvent[]): AuditOrderResult;
+  watermark(sourceId: string): number;
+  snapshot(): Readonly<Record<string, number>>;
+  reset(): void;
+}
+
+export interface AuditReceiverResult extends AuditOrderResult {
+  ack: AuditAck;
+}
+
+export interface AuditReceiver {
+  readonly buffer: AuditOrderBuffer;
+  receive(events: readonly AuditEvent[]): AuditReceiverResult;
 }
 
 export interface MemoryAuditLogOptions extends AuditIntegrityOptions {
@@ -622,6 +662,114 @@ export function createAuditDeduper(
   };
 }
 
+export function createAuditOrderBuffer(
+  options: AuditOrderOptions = {}
+): AuditOrderBuffer {
+  const getSourceId = options.getSourceId ?? defaultAuditSourceId;
+  const getSourceSeq = options.getSourceSeq ?? defaultAuditSourceSeq;
+  const initial = new Map<string, number>();
+  for (const [sourceId, seq] of Object.entries(options.initialWatermarks ?? {})) {
+    initial.set(sourceId, normalizeSourceSeq(seq));
+  }
+  const watermarks = new Map(initial);
+  const pending = new Map<string, Map<number, AuditEvent>>();
+
+  const accept = (events: readonly AuditEvent[]): AuditOrderResult => {
+    const committed: AuditEvent[] = [];
+    const duplicates: AuditEvent[] = [];
+    for (const event of events) {
+      const sourceId = getSourceId(event);
+      const sourceSeq = normalizeSourceSeq(getSourceSeq(event));
+      const watermark = watermarks.get(sourceId) ?? 0;
+      if (sourceSeq <= watermark) {
+        duplicates.push(event);
+        continue;
+      }
+      let queue = pending.get(sourceId);
+      if (!queue) {
+        queue = new Map();
+        pending.set(sourceId, queue);
+      }
+      if (queue.has(sourceSeq)) {
+        duplicates.push(event);
+        continue;
+      }
+      queue.set(sourceSeq, event);
+      let next = (watermarks.get(sourceId) ?? 0) + 1;
+      while (queue.has(next)) {
+        committed.push(queue.get(next)!);
+        queue.delete(next);
+        next++;
+      }
+      watermarks.set(sourceId, next - 1);
+      if (queue.size === 0) pending.delete(sourceId);
+    }
+
+    const gaps: AuditGap[] = [];
+    for (const [sourceId, queue] of pending) {
+      const watermark = watermarks.get(sourceId) ?? 0;
+      let cursor = watermark + 1;
+      for (const seq of [...queue.keys()].sort((left, right) => left - right)) {
+        if (seq > cursor) gaps.push({ sourceId, from: cursor, to: seq - 1 });
+        cursor = seq + 1;
+      }
+    }
+    const pendingEvents = [...pending.values()].flatMap(queue =>
+      [...queue.values()]
+    );
+    return {
+      committed,
+      pending: pendingEvents,
+      duplicates,
+      gaps,
+      watermarks: Object.fromEntries(watermarks),
+    };
+  };
+
+  return {
+    accept,
+    watermark(sourceId) {
+      return watermarks.get(sourceId) ?? 0;
+    },
+    snapshot() {
+      return Object.fromEntries(watermarks);
+    },
+    reset() {
+      watermarks.clear();
+      for (const [sourceId, seq] of initial) watermarks.set(sourceId, seq);
+      pending.clear();
+    },
+  };
+}
+
+export function createAuditReceiver(
+  options: AuditOrderOptions = {}
+): AuditReceiver {
+  const getSourceId = options.getSourceId ?? defaultAuditSourceId;
+  const buffer = createAuditOrderBuffer(options);
+  return {
+    buffer,
+    receive(events) {
+      const result = buffer.accept(events);
+      const sources = new Set(result.committed.map(getSourceId));
+      const last = result.committed[result.committed.length - 1];
+      const ack: AuditAck = {
+        accepted: result.committed.length,
+        ...(result.gaps.length > 0
+          ? { retry: true, missing: result.gaps }
+          : {}),
+        ...(last && sources.size <= 1
+          ? {
+              committedSeq: last.seq,
+              ...(last.hash ? { committedHead: last.hash } : {}),
+            }
+          : {}),
+      };
+      return { ...result, ack };
+    },
+  };
+}
+
 export async function readAuditLog(
   path: string,
   options: ReadAuditLogOptions = {}
@@ -768,6 +916,23 @@ function auditDedupeKey(event: AuditEvent): string {
   return `${event.seq}:${identity}`;
 }
 
+function defaultAuditSourceId(event: AuditEvent): string {
+  if (event.sourceId) return event.sourceId;
+  if (event.pluginId) return `plugin:${event.pluginId}`;
+  return "default";
+}
+
+function defaultAuditSourceSeq(event: AuditEvent): number {
+  return event.sourceSeq ?? event.seq;
+}
+
+function normalizeSourceSeq(value: number): number {
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new Error("[butui] audit source seq must be a positive safe integer");
+  }
+  return value;
+}
+
 function backoffDelay(
   baseMs: number,
   maxMs: number,
@@ -865,7 +1030,8 @@ function isAuditAck(value: unknown): value is AuditAck {
         !Number.isSafeInteger(from) ||
         !Number.isSafeInteger(to) ||
         from < 0 ||
-        to < from
+        to < from ||
+        (range.sourceId !== undefined && typeof range.sourceId !== "string")
       ) {
         return false;
       }

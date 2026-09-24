@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
   createAuditDeduper,
+  createAuditOrderBuffer,
+  createAuditReceiver,
   createFileAuditLog,
   createHttpAuditSink,
   createMemoryAuditLog,
@@ -8,10 +10,18 @@ import {
   verifyAuditEvents,
   withAuditSinks,
  } from "@butui/plugins";
-import type { AuditRotationSummary } from "@butui/plugins";
+import type { AuditEvent, AuditRotationSummary } from "@butui/plugins";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+
+function sourceEvent(
+  sourceId: string,
+  sourceSeq: number,
+  seq: number
+): AuditEvent {
+  return { seq, at: 1, type: "event", sourceId, sourceSeq };
+}
 
 describe("audit log", () => {
   test("memory log 维护 seq / at 并支持查询过滤", () => {
@@ -277,6 +287,40 @@ describe("audit log", () => {
     ]);
     expect(deduper.accept(audit.query())).toEqual([]);
     expect(deduper.size).toBe(2);
+  });
+
+  test("order buffer 按 sourceSeq 暂存缺口并在补齐后连续提交", () => {
+    const receiver = createAuditReceiver();
+    const first = receiver.receive([
+      sourceEvent("a", 2, 2),
+      sourceEvent("b", 1, 3),
+    ]);
+    expect(first.committed.map(event => event.seq)).toEqual([3]);
+    expect(first.pending.map(event => event.seq)).toEqual([2]);
+    expect(first.gaps).toEqual([{ sourceId: "a", from: 1, to: 1 }]);
+    expect(first.ack).toMatchObject({
+      accepted: 1,
+      retry: true,
+      missing: [{ sourceId: "a", from: 1, to: 1 }],
+    });
+
+    const second = receiver.receive([sourceEvent("a", 1, 1)]);
+    expect(second.committed.map(event => event.sourceSeq)).toEqual([1, 2]);
+    expect(second.gaps).toEqual([]);
+    expect(second.ack).toMatchObject({ accepted: 2 });
+    expect(second.ack.retry).toBeUndefined();
+    expect(second.watermarks).toEqual({ a: 2, b: 1 });
+  });
+
+  test("order buffer 丢弃 watermark 以下和重复 pending", () => {
+    const buffer = createAuditOrderBuffer();
+    expect(buffer.accept([sourceEvent("a", 1, 1)]).committed).toHaveLength(1);
+    expect(buffer.accept([sourceEvent("a", 1, 2)]).duplicates).toHaveLength(1);
+
+    const pending = buffer.accept([sourceEvent("a", 3, 3)]);
+    expect(pending.pending).toHaveLength(1);
+    expect(pending.gaps).toEqual([{ sourceId: "a", from: 2, to: 2 }]);
+    expect(buffer.accept([sourceEvent("a", 3, 4)]).duplicates).toHaveLength(1);
   });
 
   test("memory 上限只保留最新事件，但 seq 不倒退", () => {

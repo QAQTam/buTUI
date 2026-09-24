@@ -3,9 +3,9 @@
 > 交接时间：2026-09-24
 > 仓库：`/home/qaqtamsy/项目/buTUI-v0.2-frontier`
 > 功能基线提交：`61d889b feat(components): add capability approval dialog`
-> 工作区状态：本文件与 explicit audit ack 一并提交
-> 本轮能力：partial commit ack + retry-after + tail retry
-> 当前回归：`751 pass / 0 fail`，86 个测试文件，`tsc --noEmit` 通过
+> 工作区状态：本文件与 audit ordering 一并提交
+> 本轮能力：source watermark + gap buffering + ordered commit
+> 当前回归：`753 pass / 0 fail`，86 个测试文件，`tsc --noEmit` 通过
 
 ## 1. 项目定位
 
@@ -473,7 +473,8 @@ const bar = createScrollBar({
   确定性 batch id、指数退避和失败队列保留；显式 ack 支持 committed seq / head、
   accepted、missing、retryAfterMs，只重试未确认尾部。可选 hash chain / HMAC
   signature，`verifyAuditEvents` 检测篡改、重排和错误密钥，`createAuditDeduper`
-  支持接收端按 seq + hash 去重。审计失败不破坏原操作。
+  支持接收端按 seq + hash 去重；`createAuditOrderBuffer` / `createAuditReceiver`
+  按 sourceId + sourceSeq 维护水位并暂存缺口。审计失败不破坏原操作。
   Worker / process 只做崩溃和堆隔离，不是 capability 或 OS sandbox。
 
 关键实测：
@@ -601,7 +602,7 @@ bridge、真实 tool event 对接或 bugent 快捷键迁移。
 当前：
 
 ```text
-751 pass / 0 fail
+753 pass / 0 fail
 86 test files
 tsc --noEmit pass
 ```
@@ -660,7 +661,7 @@ git diff --check
   capability proxy、restart supervision、NDJSON process transport、protocol
   handshake、path / rate 策略、process resource limits、cgroup v2 lifecycle 和
   NDJSON audit rotation / remote sink / hash chain / HMAC / batch retry / dedupe /
-  explicit ack；仍无自动 cgroup 委派、OS 权限 sandbox 和跨节点顺序保证。
+  explicit ack / source ordering；仍无自动 cgroup 委派和 OS 权限 sandbox。
 - 鼠标已有 hover / 双击 / 右键 / pointer capture / local 坐标 / drag 生命周期 /
   OSC 22 指针 / 拖动惯性；无 pointerId、多指针。惯性只接 ScrollBar / Slider。
 - Keymap 已有多键 chord / 前缀超时，Command Palette 已有基础 UI；无用户自定义
@@ -699,8 +700,8 @@ git diff --check
    Worker RPC、crash fail-fast、capability proxy、restart supervision、NDJSON
    process transport、protocol handshake、path / rate 策略、process resource
    limits、cgroup v2 lifecycle 与 NDJSON audit rotation / remote sink / hash chain /
-   HMAC / batch retry / dedupe / explicit ack 已完成；下一步做自动 cgroup 委派、
-   权限 sandbox，以及跨节点顺序保证。
+   HMAC / batch retry / dedupe / explicit ack / source ordering 已完成；下一步做
+   自动 cgroup 委派与 OS 权限 sandbox。
 5. **Portal / Dynamic / Toast / Tooltip**：补齐 OpenTUI 已有的通用组件接口。
 6. **动画编排增强**：更复杂的 stagger、滚动回弹和动画调试工具。
 7. **WebUI diff / 水平 ScrollBar**：等真实需求出现后再做。
