@@ -313,6 +313,37 @@ describe("TerminalSession backpressure", () => {
     app.dispose();
   });
 
+  test.skipIf(process.platform === "win32")(
+    "runtime runPty 运行子进程并恢复 frame",
+    async () => {
+      const { stdin, stdout } = streams(true);
+      const session = new TerminalSession({
+        stdin,
+        stdout,
+        altScreen: false,
+        mouse: false,
+        bracketedPaste: false,
+        focusEvents: false,
+      });
+      const app = createTuiApp({
+        terminal: session,
+        view: () => createElement("text"),
+        onQuit: () => {},
+      });
+
+      const exitCode = await app.runPty("child", "tool", {
+        cmd: [process.execPath, "-e", "process.exit(0)"],
+        cols: 80,
+        rows: 24,
+      });
+
+      expect(exitCode).toBe(0);
+      expect(session.frameLease?.state).toBe("active");
+      expect(session.outputArbiter.current()).toBe(session.frameLease);
+      app.dispose();
+    }
+  );
+
   test("write 透传 false，drain 事件转发给订阅者", () => {
     const { stdin, stdout } = streams(false);
     const session = new TerminalSession({

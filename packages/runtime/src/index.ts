@@ -59,6 +59,7 @@ import {
   osc22,
   osc52,
   terminalSize,
+  type PtyRunOptions,
   type RawLeaseContext,
 } from "@butui/terminal";
 import { createSignal, flush } from "solid-js";
@@ -102,6 +103,8 @@ export interface TuiTerminal {
     reason: string,
     run: (context: RawLeaseContext) => Promise<T> | T
   ): Promise<T>;
+  /** 可选：运行一个 Bun PTY 子进程。 */
+  runPty?(owner: string, reason: string, options: PtyRunOptions): Promise<number>;
   /** 可选：恢复前是否必须整屏重画。 */
   requiresFullDamage?(): boolean;
   /** 可选：终端层自行去重 / stop 时恢复 default */
@@ -266,6 +269,8 @@ export interface TuiApp {
     reason: string,
     run: (context: RawLeaseContext) => Promise<T> | T
   ): Promise<T>;
+  /** 在 raw lease 内运行 Bun PTY 子进程，结束后恢复 frame。 */
+  runPty(owner: string, reason: string, options: PtyRunOptions): Promise<number>;
   /** 立刻画一帧（一般不用调；变更会自动重绘） */
   paint(): RenderStats;
   /** 请求一帧（按 `render.mode` 合并；默认同一 tick 内只画一次） */
@@ -1236,6 +1241,33 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
     }
   }
 
+  async function runPty(
+    owner: string,
+    reason: string,
+    options: PtyRunOptions
+  ): Promise<number> {
+    if (!terminal.runPty) {
+      throw new Error("[butui] terminal 不支持 PTY");
+    }
+    if (disposed || suspended) {
+      throw new Error("[butui] runtime 已暂停或关闭");
+    }
+
+    suspended = true;
+    if (selectionHasText || selecting) resetSelection(false);
+    renderScheduler?.cancel();
+    appAnimationScheduler?.stop();
+    presentedFrames.invalidate();
+    try {
+      return await terminal.runPty(owner, reason, options);
+    } finally {
+      suspended = false;
+      renderer.invalidate();
+      presentedFrames.invalidate();
+      requestPaint();
+    }
+  }
+
   const dispose = (): void => {
     if (disposed) return;
     stop();
@@ -1255,6 +1287,7 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
     suspend,
     resume,
     withRawLease,
+    runPty,
     paint,
     requestPaint,
     send,

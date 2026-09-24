@@ -310,6 +310,15 @@ export class TerminalSession {
     }
   }
 
+  /** 运行一个 Bun PTY 子进程；结束时自动恢复 frame lease。 */
+  runPty(
+    owner: string,
+    reason: string,
+    options: PtyRunOptions
+  ): Promise<number> {
+    return runPtyWithRawLease(this, owner, reason, options);
+  }
+
   start(): void {
     if (this.started) return;
     this.started = true;

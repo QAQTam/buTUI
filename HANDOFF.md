@@ -637,8 +637,8 @@ git diff --check
   `appliedStorePath` 后可磁盘换出，10M 实测 heap 增量约 0.19MB。
 - `<StreamWindow>` 已有 runtime 集成测试，但尚未接入真实 agent transcript 页面；
   FrameClock 滚动合并已通过 FakeTerminal，端到端真实 PTY 数据仍待采集。
-- `runPtyWithRawLease` 已有 Bun.Terminal 生命周期和 resize 转发测试；具体工具调用、
-  多 PTY owner 策略和真实 bugent 工具集成仍待接入。
+- `runPtyWithRawLease` / `TerminalSession.runPty` / `TuiApp.runPty` 已有生命周期与
+  resize 测试；具体工具调用、多 PTY owner 策略和真实 bugent 工具集成仍待接入。
 
 ## 11. 推荐下一步
 
