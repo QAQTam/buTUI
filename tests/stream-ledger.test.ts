@@ -195,15 +195,23 @@ describe("StreamLedger", () => {
         envelope(2, { type: "append", delta: "!" })
       )).status
     ).toBe("applied");
-    const line = streams.project("stream-1").stableLines[0]!;
-    expect(line.spilled).toBe(true);
-    expect(line.text).toBe("");
+    const projection = streams.project("stream-1");
+    expect(projection.stableLines).toEqual([]);
+    expect(projection.spilledSegments).toMatchObject([
+      {
+        streamId: "stream-1",
+        firstLineId: "line-1",
+        lastLineId: "line-1",
+        count: 1,
+        bytes: 5,
+      },
+    ]);
     expect(store.stats()).toEqual({ records: 1, bytes: 5 });
     expect(memory.stats().usedBytes).toBe(1);
 
     expect(await streams.hydrate("stream-1")).toBe(1);
     expect(streams.project("stream-1").stableLines[0]?.text).toBe("hello");
-    expect(streams.project("stream-1").stableLines[0]?.spilled).toBeUndefined();
+    expect(streams.project("stream-1").spilledSegments).toEqual([]);
   });
 
   test("stats 汇总 streams / lines / tombstones", () => {
@@ -214,6 +222,8 @@ describe("StreamLedger", () => {
       streams: 1,
       openStreams: 0,
       stableLines: 1,
+      inMemoryLines: 1,
+      spilledLines: 0,
       tailLines: 0,
       tombstones: 1,
       reservedBytes: 0,

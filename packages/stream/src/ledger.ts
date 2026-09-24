@@ -91,12 +91,24 @@ export interface StreamProjection {
   stableLines: readonly StreamLineRecord[];
   volatileTail: readonly StreamTailLine[];
   tombstones: readonly StreamTombstone[];
+  /** 已离开内存的连续 stable line 范围；不含逐行 LineId 数组。 */
+  spilledSegments: readonly SpilledSegment[];
+}
+
+export interface SpilledSegment {
+  streamId: StreamId;
+  firstLineId: LineId;
+  lastLineId: LineId;
+  count: number;
+  bytes: number;
 }
 
 export interface StreamLedgerStats {
   streams: number;
   openStreams: number;
   stableLines: number;
+  inMemoryLines: number;
+  spilledLines: number;
   tailLines: number;
   tombstones: number;
   reservedBytes: number;
@@ -128,6 +140,7 @@ interface StreamState {
   lastSeq: number;
   stableLines: StreamLineRecord[];
   tailLines: StreamTailLine[];
+  spilledSegments: SpilledSegment[];
   tombstones: StreamTombstone[];
   applied: Map<number, string>;
   memoryReservations: MemoryReservation[];
@@ -157,6 +170,7 @@ export class StreamLedger {
       lastSeq: 0,
       stableLines: [],
       tailLines: [],
+      spilledSegments: [],
       tombstones: [],
       applied: new Map(),
       memoryReservations: [],
@@ -286,6 +300,10 @@ export class StreamLedger {
     }
     const stream = this.streams.get(streamId);
     if (!stream) return 0;
+    if (lineIds && stream.spilledSegments.length > 0) {
+      throw new Error("[butui] partial hydrate of spilled segments 尚未支持");
+    }
+
     const wanted = lineIds ? new Set(lineIds) : undefined;
     let hydrated = 0;
     for (const line of stream.stableLines) {
@@ -299,7 +317,27 @@ export class StreamLedger {
       delete line.spilled;
       hydrated++;
     }
-    return hydrated;
+
+    if (wanted || stream.spilledSegments.length === 0) return hydrated;
+
+    const restored: StreamLineRecord[] = [];
+    for (const segment of stream.spilledSegments) {
+      for (const lineId of lineIdsForSegment(segment)) {
+        const record = await this.spillStore.read(streamId, lineId);
+        if (!record) {
+          throw new Error(`[butui] cold-read-error: ${streamId}/${lineId}`);
+        }
+        restored.push({
+          id: lineId,
+          text: record.text,
+          stableAtRevision: record.stableAtRevision,
+          digest: record.digest,
+        });
+      }
+    }
+    stream.stableLines = [...restored, ...stream.stableLines];
+    stream.spilledSegments = [];
+    return hydrated + restored.length;
   }
 
   private async spillOldest(
@@ -341,11 +379,8 @@ export class StreamLedger {
     });
     const result = await retention.spill(streamId, spillLines);
     const ids = new Set(spillLines.map(line => line.id));
-    for (const line of stream.stableLines) {
-      if (!ids.has(line.id)) continue;
-      line.text = "";
-      line.spilled = true;
-    }
+    stream.stableLines = stream.stableLines.filter(line => !ids.has(line.id));
+    appendSpilledSegment(stream, result.manifest);
 
     let released = 0;
     while (
@@ -369,18 +404,24 @@ export class StreamLedger {
       stableLines: stream.stableLines,
       volatileTail: stream.tailLines,
       tombstones: stream.tombstones,
+      spilledSegments: stream.spilledSegments,
     };
   }
 
   stats(): StreamLedgerStats {
     let openStreams = 0;
-    let stableLines = 0;
+    let inMemoryLines = 0;
+    let spilledLines = 0;
     let tailLines = 0;
     let tombstones = 0;
     let reservedBytes = 0;
     for (const stream of this.streams.values()) {
       if (stream.status === "open") openStreams++;
-      stableLines += stream.stableLines.length;
+      inMemoryLines += stream.stableLines.length;
+      spilledLines += stream.spilledSegments.reduce(
+        (sum, segment) => sum + segment.count,
+        0
+      );
       tailLines += stream.tailLines.length;
       tombstones += stream.tombstones.length;
       for (const reservation of stream.memoryReservations) {
@@ -390,7 +431,9 @@ export class StreamLedger {
     return {
       streams: this.streams.size,
       openStreams,
-      stableLines,
+      stableLines: inMemoryLines + spilledLines,
+      inMemoryLines,
+      spilledLines,
       tailLines,
       tombstones,
       reservedBytes,
@@ -408,6 +451,46 @@ export class StreamLedger {
   lineId(): LineId {
     return `line-${this.nextLineId++}`;
   }
+}
+
+function lineIdsForSegment(segment: SpilledSegment): LineId[] {
+  const match = /(\d+)$/.exec(segment.firstLineId);
+  if (!match) {
+    throw new Error(
+      `[butui] spilled segment 缺少可推导的 LineId: ${segment.firstLineId}`
+    );
+  }
+  const start = Number(match[1]);
+  const prefix = segment.firstLineId.slice(0, match.index);
+  const ids = Array.from(
+    { length: segment.count },
+    (_, index) => `${prefix}${start + index}`
+  );
+  if (ids[ids.length - 1] !== segment.lastLineId) {
+    throw new Error(`[butui] spilled segment 不连续: ${segment.streamId}`);
+  }
+  return ids;
+}
+
+function appendSpilledSegment(
+  stream: StreamState,
+  manifest: SpillManifest
+): void {
+  if (manifest.count === 0 || !manifest.firstLineId || !manifest.lastLineId) return;
+  const previous = stream.spilledSegments[stream.spilledSegments.length - 1];
+  if (previous && previous.streamId === manifest.streamId) {
+    previous.lastLineId = manifest.lastLineId;
+    previous.count += manifest.count;
+    previous.bytes += manifest.bytes;
+    return;
+  }
+  stream.spilledSegments.push({
+    streamId: manifest.streamId,
+    firstLineId: manifest.firstLineId,
+    lastLineId: manifest.lastLineId,
+    count: manifest.count,
+    bytes: manifest.bytes,
+  });
 }
 
 function appendTailText(
