@@ -36,7 +36,7 @@ const app = createTuiApp({
 | 布局 | `@butui/layout` | **稳定**（`Cell` / `Line` / `Frame` / `layout`） |
 | 渲染 | `@butui/renderer` | **稳定**（`Renderer` / `plainText` / `paintLine`） |
 | 终端 | `@butui/terminal` | **稳定**（`TerminalSession` / 输入解码 / 能力探测 / `osc22` / `osc52`） |
-| 基础组件 | `@butui/components` | **稳定**（编辑器 / 选择 / 列表 / 滚动 / ScrollBar / Slider / SplitPane / CommandPalette / Toast / Tooltip / Popover / Portal / Dynamic / MultiSelect / Diff / 弹窗 / 展示组件） |
+| 基础组件 | `@butui/components` | **稳定**（编辑器 / 选择 / 列表 / 滚动 / ScrollBar / Slider / SplitPane / CommandPalette / Toast / Tooltip / Popover / Portal / Dynamic / MultiSelect / Form / Diff / 弹窗 / 展示组件） |
 | 插件 / Slot | `@butui/plugins` | **稳定**（`Plugin` / `SlotRegistry`；Solid 适配在 `@butui/plugins/solid`；loader 在 `@butui/plugins/loader`） |
 | 命令 / Keymap | `@butui/keymap` | **稳定**（`CommandRegistry` / `Keymap`；Solid 适配在 `@butui/keymap/solid`） |
 | 流式文本 | `@butui/stream` | **稳定**（`StreamSource` / `DiffStream` / `<stream>`） |
@@ -790,6 +790,27 @@ const popover = createPopoverController();
 - 四向定位并夹取到终端视口；固定 width / height。
 - 内容可交互；Esc 关闭并触发 `onDismiss`。
 - 不劫持全局点击，不自动实现 click-outside。
+
+### 4.32 Form：`createForm` / `<Form>` / `<FormField>`
+
+```tsx
+const form = createForm({
+  initialValues: { name: "" },
+  validate: values => values.name ? {} : { name: "必填" },
+  onSubmit: values => save(values),
+});
+
+<Form form={form}>
+  <FormField name="name" label="名称" required>
+    <Input value={form.value("name")} onChange={value => form.setValue("name", value)} />
+  </FormField>
+</Form>
+```
+
+- model 提供 values / dirty / touched / errors / submitting / submitted。
+- validate 支持同步 / 异步；失败时 onSubmit 不执行。
+- `<Form>` 提供 `useForm()` context，Enter 默认提交。
+- `<FormField>` 展示 label / required / touched error；字段值仍由应用控制。
 
 ## 5. 已知缺口（不要依赖，也不建议自己绕）
 

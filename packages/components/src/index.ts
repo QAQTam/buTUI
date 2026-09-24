@@ -40,6 +40,8 @@ export * from "./capability-approval.tsx";
 export * from "./select.tsx";
 export * from "./multi-select.ts";
 export * from "./multi-select.tsx";
+export * from "./form.ts";
+export * from "./form.tsx";
 export * from "./table.tsx";
 export * from "./tree.tsx";
 export * from "./highlight.ts";

@@ -1267,6 +1267,30 @@ const popover = createPopoverController();
 
 ---
 
+### 5.34 Form（v0.1 实现）
+
+```tsx
+const form = createForm({
+  initialValues: { name: "" },
+  validate: values => values.name ? {} : { name: "必填" },
+  onSubmit: values => save(values),
+});
+
+<Form form={form}>
+  <FormField name="name" label="名称" required>
+    <Input value={form.value("name")} onChange={value => form.setValue("name", value)} />
+  </FormField>
+</Form>
+```
+
+- model 管 values / dirty / touched / errors / submitting / submitted。
+- validate 可同步或异步；失败阻止 onSubmit。
+- `<Form>` 提供 `useForm()` context，Enter 默认提交。
+- `<FormField>` 提供 label / required / touched error。
+- 字段组件仍由应用组合，不复制 Input / Select 状态。
+
+---
+
 ### 5.17 应用上下文（v0.1 实现）
 
 组件要能问「现在多宽 / 什么色深 / 我想订一个全局键」，但既不该认识 runtime，
@@ -1780,6 +1804,7 @@ P1：
 - `Dynamic`：`createDynamic` / `<Dynamic>` 函数组件与 intrinsic tag 切换（见 §5.31）
 - `MultiSelect`：`createMultiSelect` / `<MultiSelect>` 受控多选与全选 / 反选（见 §5.32）
 - `Popover`：`createPopoverController` / `<Popover>` 交互式 overlay（见 §5.33）
+- `Form`：`createForm` / `<Form>` / `useForm` / `<FormField>`（见 §5.34）
 - `Select` / `Tabs`：`<Select>`（↑↓ + Enter）与 `<Tabs>`（←→ 立即切换）
 - `Table`：列宽显式给或按内容算，支持左 / 中 / 右对齐
 - `Tree`：受控展开（`expanded` + `onToggle`），←→ 展开收起、→ 进子节点
