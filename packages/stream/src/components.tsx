@@ -5,6 +5,7 @@
  * `setProp`（version / tail），布局侧只把新增行转成 cell。没有中间数组，
  * 也没有 O(N) 的 reconcile。
  */
+import { useAppScope } from "@butui/solid";
 import { onCleanup } from "solid-js";
 import { createSmoothStream, type SmoothStreamOptions } from "./smooth.ts";
 import type { StreamSource } from "./source.ts";
@@ -23,10 +24,14 @@ export interface StreamTextProps {
 
 function streamSourceFor(props: StreamTextProps): StreamSource {
   if (!props.smooth) return props.source;
-  const smooth = createSmoothStream(
-    props.source,
-    typeof props.smooth === "object" ? props.smooth : {}
-  );
+  const scope = useAppScope();
+  const options = typeof props.smooth === "object" ? props.smooth : {};
+  const smooth = createSmoothStream(props.source, {
+    ...options,
+    ...(scope?.frameClock && options.clock === undefined
+      ? { clock: scope.frameClock }
+      : {}),
+  });
   onCleanup(() => smooth.dispose());
   return smooth;
 }

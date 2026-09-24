@@ -16,8 +16,9 @@
  * `createTuiApp({ keymap })` → 组件的 `useKeyboard` → 内建（ctrl+c / tab）→
  * 焦点节点冒泡。应用永远是第一优先级，组件只能在「应用没要」的前提下抢键。
  */
-import type { ColorDepth, KeyEvent, Node } from "@butui/core";
+import type { ColorDepth, FrameClock, KeyEvent, Node } from "@butui/core";
 import { createContext, onCleanup, useContext } from "solid-js";
+import type { AnimationScheduler } from "./animation.ts";
 
 export interface AppSize {
   columns: number;
@@ -43,6 +44,10 @@ export interface AppScope {
   captureMouse?(node: Node): void;
   releaseMouse?(): void;
   capturedMouse?(): Node | undefined;
+  /** runtime 的统一帧时钟；组件不直接订阅时仍保留可选能力。 */
+  frameClock?: FrameClock;
+  /** runtime 注入的动画调度器；useAnimationFrame 会优先使用它。 */
+  animationScheduler?: AnimationScheduler;
 }
 
 const AppContext = createContext<AppScope | null>(null);

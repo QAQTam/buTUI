@@ -52,7 +52,7 @@ import {
   selectionText,
 } from "@butui/layout";
 import { type RenderStats, Renderer } from "@butui/renderer";
-import { provideAppScope, provideFocusScope, render } from "@butui/solid";
+import { AnimationScheduler, provideAppScope, provideFocusScope, render } from "@butui/solid";
 import { TerminalSession, osc22, osc52, terminalSize } from "@butui/terminal";
 import { createSignal, flush } from "solid-js";
 import {
@@ -391,6 +391,7 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
   };
 
   let renderScheduler: RenderScheduler | undefined;
+  let appAnimationScheduler: AnimationScheduler | undefined;
   let renderBlocked = false;
   const canDrain = typeof terminal.onDrain === "function";
   const paint = (): RenderStats => {
@@ -416,6 +417,9 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
   };
 
   renderScheduler = new RenderScheduler(runFrame, options.render);
+  appAnimationScheduler = new AnimationScheduler({
+    clock: renderScheduler.frameClock,
+  });
   const requestPaint = (): void => {
     if (disposed) return;
     dirty = true;
@@ -879,7 +883,7 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
   };
 
   function start(): void {
-    if (started || disposed) return;
+    if (started || disposed || !renderScheduler || !appAnimationScheduler) return;
     started = true;
 
     // 视图挂到 root 上，外面包一层焦点上下文；Solid 的写入会在 flush 里提交
@@ -897,6 +901,8 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
             captureMouse,
             releaseMouse,
             capturedMouse,
+            frameClock: renderScheduler.frameClock,
+            animationScheduler: appAnimationScheduler,
           },
           () =>
             provideFocusScope(
@@ -944,6 +950,7 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
     if (!started) return;
     started = false;
     renderScheduler?.cancel();
+    appAnimationScheduler?.stop();
     renderBlocked = false;
     pressedMouse = undefined;
     hoveredMouseNode = undefined;
@@ -959,6 +966,7 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
     offMutation();
     offFocus();
     disposed = true;
+    appAnimationScheduler?.stop();
     renderScheduler?.dispose();
   };
 

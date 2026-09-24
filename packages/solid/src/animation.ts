@@ -10,6 +10,7 @@
  */
 import { FrameClock, type FrameRequestHandle } from "@butui/core";
 import { createEffect, createSignal, flush, type Accessor } from "solid-js";
+import { useAppScope } from "./app-context.ts";
 
 export interface AnimationSchedulerOptions {
   /** 默认 30fps；终端不需要 60fps 的手机级动画 */
@@ -17,6 +18,10 @@ export interface AnimationSchedulerOptions {
   now?: () => number;
   /** 嵌入 runtime 时注入共享 FrameClock；不传则自己创建一个。 */
   clock?: FrameClock;
+  /** 默认 decorative；SmoothStream 使用 reveal。 */
+  lane?: "reveal" | "decorative";
+  /** 同一个 FrameClock 上必须唯一；默认 animation。 */
+  coalesceKey?: string;
 }
 
 export class AnimationScheduler {
@@ -24,6 +29,8 @@ export class AnimationScheduler {
   private readonly interval: number;
   private readonly now: () => number;
   private readonly clock: FrameClock;
+  private readonly lane: "reveal" | "decorative";
+  private readonly coalesceKey: string;
   private handle: FrameRequestHandle | undefined;
   private lastTickAt = Number.NEGATIVE_INFINITY;
   private revision = 0;
@@ -31,8 +38,15 @@ export class AnimationScheduler {
   constructor(options: AnimationSchedulerOptions = {}) {
     const fps = Math.max(1, Math.min(120, options.fps ?? 30));
     this.interval = Math.max(1, Math.round(1000 / fps));
-    this.now = options.now ?? (() => performance.now());
-    this.clock = options.clock ?? new FrameClock({ fps }, { now: this.now });
+    this.lane = options.lane ?? "decorative";
+    this.coalesceKey = options.coalesceKey ?? "animation";
+    this.clock =
+      options.clock ??
+      new FrameClock(
+        { fps },
+        options.now ? { now: options.now } : {}
+      );
+    this.now = options.now ?? (() => this.clock.now());
   }
 
   get active(): boolean {
@@ -78,11 +92,11 @@ export class AnimationScheduler {
       : now;
 
     this.handle = this.clock.request({
-      lane: "decorative",
+      lane: this.lane,
       reason: "animation",
       sessionRevision: ++this.revision,
       deadline,
-      coalesceKey: "animation",
+      coalesceKey: this.coalesceKey,
       work: tick => {
         this.handle = undefined;
         if (this.listeners.size === 0) return;
@@ -117,11 +131,13 @@ export interface UseAnimationFrameOptions {
  */
 export function useAnimationFrame(options: UseAnimationFrameOptions = {}): Accessor<number> {
   const [time, setTime] = createSignal(0);
+  const scope = useAppScope();
+  const scheduler = options.scheduler ?? scope?.animationScheduler ?? animationScheduler;
   createEffect(
     () => options.enabled?.() ?? true,
     enabled => {
       if (!enabled) return;
-      return (options.scheduler ?? animationScheduler).subscribe(setTime);
+      return scheduler.subscribe(setTime);
     }
   );
   return time;

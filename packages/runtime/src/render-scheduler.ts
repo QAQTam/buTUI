@@ -35,6 +35,8 @@ export interface RenderSchedulerDependencies {
   setTimeout?: (callback: () => void, delay: number) => ReturnType<typeof setTimeout>;
   /** 测试注入；默认 clearTimeout。 */
   clearTimeout?: (handle: ReturnType<typeof setTimeout>) => void;
+  /** 嵌入方注入共享 FrameClock；不传时由 scheduler 自己创建并释放。 */
+  clock?: FrameClock;
 }
 
 const MIN_FPS = 1;
@@ -50,6 +52,7 @@ export class RenderScheduler {
   private readonly intervalMs: number;
   private readonly now: () => number;
   private readonly clock: FrameClock;
+  private readonly ownsClock: boolean;
   private pending = false;
   private handle: FrameRequestHandle | undefined;
   private lastPaintAt = Number.NEGATIVE_INFINITY;
@@ -65,7 +68,14 @@ export class RenderScheduler {
     const fps = clamp(options.fps ?? 120, MIN_FPS, MAX_FPS);
     this.intervalMs = 1000 / fps;
     this.now = dependencies.now ?? (() => performance.now());
-    this.clock = new FrameClock({ fps }, dependencies);
+    const { clock, ...clockDependencies } = dependencies;
+    this.ownsClock = clock === undefined;
+    this.clock = clock ?? new FrameClock({ fps }, clockDependencies);
+  }
+
+  /** 共享给 runtime animation / reveal 的底层时钟。 */
+  get frameClock(): FrameClock {
+    return this.clock;
   }
 
   get active(): boolean {
@@ -116,7 +126,7 @@ export class RenderScheduler {
     if (this.disposed) return;
     this.disposed = true;
     this.cancel();
-    this.clock.dispose();
+    if (this.ownsClock) this.clock.dispose();
   }
 }
 

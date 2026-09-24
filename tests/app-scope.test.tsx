@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { type KeyEvent, createModifiers, focusNode, walk, type Node } from "@butui/core";
-import { useColorDepth, useKeyboard, useSize } from "@butui/solid";
+import { type AppScope, useAppScope, useColorDepth, useKeyboard, useSize } from "@butui/solid";
 import { createTuiApp } from "@butui/runtime";
 import { mount } from "@butui/test";
 import { Show, createSignal } from "solid-js";
@@ -26,6 +26,11 @@ function KeyProbe(props: { log: string[]; enabled?: () => boolean }) {
     props.enabled ? { enabled: props.enabled } : {}
   );
   return <text>probe</text>;
+}
+
+function ScopeProbe(props: { onScope: (scope: AppScope | null) => void }) {
+  props.onScope(useAppScope());
+  return <text>scope</text>;
 }
 
 describe("useSize / useColorDepth", () => {
@@ -54,6 +59,22 @@ describe("useSize / useColorDepth", () => {
     // mount 提供了上下文，所以这里验证的是「有上下文时正常」
     expect(app.text()).toContain("10x1");
     app.unmount();
+  });
+
+  test("runtime 向组件注入共享 FrameClock 和 AnimationScheduler", () => {
+    const terminal = new FakeTerminal();
+    const captured: { scope: AppScope | null } = { scope: null };
+    const app = createTuiApp({
+      terminal,
+      view: () => <ScopeProbe onScope={value => (captured.scope = value)} />,
+      onQuit: () => {},
+    });
+
+    expect(captured.scope).not.toBeNull();
+    const scope = captured.scope as AppScope | null;
+    expect(scope?.frameClock).toBeDefined();
+    expect(scope?.animationScheduler).toBeDefined();
+    app.dispose();
   });
 });
 

@@ -16,21 +16,34 @@
  * ANSI 切片交给 `Bun.sliceAnsi`，CJK / emoji 不会被劈开；已定稿行只追加，
  * volatile tail 可以随 source 重写，但不会破坏已经显示的前缀。
  */
+import { FrameClock } from "@butui/core";
 import { AnimationScheduler, prefersReducedMotion } from "@butui/solid";
 import { createSignal } from "solid-js";
 import type { StreamLine, StreamSource } from "./source.ts";
 
 export const DEFAULT_SMOOTH_FPS = 120;
 
-const smoothSchedulers = new Map<number, AnimationScheduler>();
+const defaultSmoothClock = new FrameClock({ fps: DEFAULT_SMOOTH_FPS });
+const smoothSchedulers = new WeakMap<FrameClock, Map<number, AnimationScheduler>>();
 const EPSILON = 1e-6;
 
-function schedulerForFps(fps: number): AnimationScheduler {
+function schedulerForFps(fps: number, clock = defaultSmoothClock): AnimationScheduler {
   const normalized = Math.max(1, Math.min(240, Math.round(fps)));
-  let scheduler = smoothSchedulers.get(normalized);
+  let schedulers = smoothSchedulers.get(clock);
+  if (!schedulers) {
+    schedulers = new Map();
+    smoothSchedulers.set(clock, schedulers);
+  }
+
+  let scheduler = schedulers.get(normalized);
   if (!scheduler) {
-    scheduler = new AnimationScheduler({ fps: normalized });
-    smoothSchedulers.set(normalized, scheduler);
+    scheduler = new AnimationScheduler({
+      fps: normalized,
+      clock,
+      lane: "reveal",
+      coalesceKey: `smooth:${normalized}`,
+    });
+    schedulers.set(normalized, scheduler);
   }
   return scheduler;
 }
@@ -52,7 +65,9 @@ export interface SmoothStreamOptions {
   enabled?: boolean;
   /** 测试 / 嵌入方覆盖 reduced-motion 环境检测。 */
   reducedMotion?: boolean;
-  /** 测试 / 嵌入方注入时钟；给定时忽略 fps。 */
+  /** runtime 共享 FrameClock；不传时使用模块内默认 clock。 */
+  clock?: FrameClock;
+  /** 测试 / 嵌入方注入调度器；给定时忽略 fps / clock。 */
   scheduler?: AnimationScheduler;
 }
 
@@ -73,7 +88,7 @@ export function createSmoothStream(
   const catchUpMs = Math.max(16, options.catchUpMs ?? 180);
   const maxColumnsPerFrame = Math.max(1, options.maxColumnsPerFrame ?? 128);
   const fps = Math.max(1, Math.min(240, options.fps ?? DEFAULT_SMOOTH_FPS));
-  const scheduler = options.scheduler ?? schedulerForFps(fps);
+  const scheduler = options.scheduler ?? schedulerForFps(fps, options.clock);
   const enabled =
     options.enabled !== false &&
     !(options.reducedMotion ?? prefersReducedMotion());

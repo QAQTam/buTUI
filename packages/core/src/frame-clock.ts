@@ -121,7 +121,7 @@ const QUALITY_BUDGET_MS: Record<QualityLevel, number> = {
 
 export class FrameClock {
   private readonly intervalMs: number;
-  private readonly now: () => number;
+  private readonly nowFn: () => number;
   private readonly microtask: (callback: () => void) => void;
   private readonly setTimer: (
     callback: () => void,
@@ -156,10 +156,15 @@ export class FrameClock {
     this.intervalMs = 1000 / fps;
     this.quality = options.quality ?? "full";
     if (options.budgetMs !== undefined) this.budgetOverride = Math.max(0, options.budgetMs);
-    this.now = dependencies.now ?? (() => performance.now());
+    this.nowFn = dependencies.now ?? (() => performance.now());
     this.microtask = dependencies.queueMicrotask ?? queueMicrotask;
     this.setTimer = dependencies.setTimeout ?? setTimeout;
     this.clearTimer = dependencies.clearTimeout ?? clearTimeout;
+  }
+
+  /** 当前调度时间；嵌入方和共享 scheduler 用它计算 deadline。 */
+  now(): number {
+    return this.nowFn();
   }
 
   get active(): boolean {
@@ -174,7 +179,7 @@ export class FrameClock {
     const key = request.coalesceKey ?? `request:${this.nextOrder}`;
     if (this.disposed) return this.handleFor(key);
 
-    const now = this.now();
+    const now = this.nowFn();
     const deadline = this.deadlineFor(request, now);
     const previous = this.queue.get(key);
     if (!previous || request.sessionRevision >= previous.sessionRevision) {
@@ -300,7 +305,7 @@ export class FrameClock {
 
     const next = this.earliestDeadline();
     if (next === undefined) return;
-    const now = this.now();
+    const now = this.nowFn();
     const epoch = this.wakeEpoch;
 
     if (now >= next) {
@@ -308,7 +313,7 @@ export class FrameClock {
       this.microtask(() => {
         if (this.disposed || epoch !== this.wakeEpoch) return;
         this.microtaskScheduled = false;
-        this.runDue(this.now());
+        this.runDue(this.nowFn());
       });
       return;
     }
@@ -316,7 +321,7 @@ export class FrameClock {
     this.timer = this.setTimer(() => {
       if (this.disposed || epoch !== this.wakeEpoch) return;
       this.timer = undefined;
-      this.runDue(this.now());
+      this.runDue(this.nowFn());
     }, next - now);
   }
 
@@ -347,7 +352,7 @@ export class FrameClock {
       }
 
       this.queue.delete(request.key);
-      const workStartedAt = this.now();
+      const workStartedAt = this.nowFn();
       const result = request.work({
         clockTime,
         frameId,
@@ -356,7 +361,7 @@ export class FrameClock {
         sessionRevision: request.sessionRevision,
         phase: "dispatch",
       });
-      usedMs += Math.max(0, this.now() - workStartedAt);
+      usedMs += Math.max(0, this.nowFn() - workStartedAt);
 
       if (request.lane === "maintenance") this.lastMaintenanceAt = clockTime;
       ran.push(request.lane);
@@ -366,12 +371,12 @@ export class FrameClock {
         this.queue.set(request.key, {
           ...request,
           sessionRevision: result.revision,
-          deadline: Math.max(this.now(), clockTime + this.intervalMs),
+          deadline: Math.max(this.nowFn(), clockTime + this.intervalMs),
         });
       }
     }
 
-    this.lastDispatchAt = Math.max(clockTime, this.now());
+    this.lastDispatchAt = Math.max(clockTime, this.nowFn());
     this.dispatches++;
     this.lastDispatch = {
       frameId,

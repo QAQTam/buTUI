@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { FrameClock } from "@butui/core";
 import { AnimationScheduler } from "@butui/solid";
 import { mount } from "@butui/test";
 import {
@@ -16,9 +17,58 @@ function manualScheduler() {
   return scheduler;
 }
 
+function manualFrameClock() {
+  let now = 0;
+  const microtasks: Array<() => void> = [];
+  const timers = new Map<number, { at: number; callback: () => void }>();
+  let nextHandle = 1;
+  const clock = new FrameClock({ fps: 120 }, {
+    now: () => now,
+    queueMicrotask: callback => {
+      microtasks.push(callback);
+    },
+    setTimeout: (callback, delay) => {
+      const handle = nextHandle++;
+      timers.set(handle, { at: now + delay, callback });
+      return handle as unknown as ReturnType<typeof setTimeout>;
+    },
+    clearTimeout: handle => {
+      timers.delete(handle as unknown as number);
+    },
+  });
+  return {
+    clock,
+    timers,
+    microtasks,
+    runMicrotasks() {
+      for (const callback of microtasks.splice(0)) callback();
+    },
+  };
+}
+
 describe("createSmoothStream —— reveal cursor", () => {
   test("默认 120fps", () => {
     expect(DEFAULT_SMOOTH_FPS).toBe(120);
+  });
+
+  test("可注入共享 FrameClock 的 reveal lane", () => {
+    const h = manualFrameClock();
+    const source = createTextStream({ width: 20 });
+    const smooth = createSmoothStream(source, {
+      clock: h.clock,
+      speed: 10,
+      catchUpMs: 100_000,
+      reducedMotion: false,
+    });
+
+    source.push("hello");
+    expect(h.microtasks).toHaveLength(1);
+    h.runMicrotasks();
+    expect(h.clock.stats().lastDispatch?.ran).toEqual(["reveal"]);
+    expect(h.timers.size).toBe(1);
+
+    smooth.dispose();
+    h.clock.dispose();
   });
 
   test("已有历史立即显示，挂载后的新内容才做 reveal", () => {
