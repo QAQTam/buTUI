@@ -2,10 +2,10 @@
 
 > 交接时间：2026-09-24  
 > 仓库：`/home/qaqtamsy/项目/buTUI`  
-> 功能基线提交：`5e5b2cd feat(components): Command Palette`
+> 功能基线提交：`623e221 feat(runtime): coalesce high-throughput rendering`
 > 工作区状态：功能提交后干净，本文件为对应交接刷新
-> 本轮能力：Command Palette 过滤 / 导航 / 执行 + Keymap chord 接入
-> 当前回归：`593 pass / 0 fail`，61 个测试文件，`tsc --noEmit` 通过
+> 本轮能力：高频 chunk frame 合帧 + 2000 chunk/s 压测
+> 当前回归：`597 pass / 0 fail`，62 个测试文件，`tsc --noEmit` 通过
 
 ## 1. 项目定位
 
@@ -67,6 +67,7 @@ bun --conditions=browser run scripts/shimmer-demo.tsx
 bun --conditions=browser run scripts/scroll-demo.tsx
 bun --conditions=browser run scripts/list-demo.tsx
 bun --conditions=browser run scripts/stream-bench.tsx
+bun --conditions=browser run scripts/render-bench.tsx
 ```
 
 真实 PTY 冒烟可参考之前的模式：
@@ -106,7 +107,7 @@ bun --conditions=browser run scripts/stream-bench.tsx
 | `@butui/web` | 实验性 DOM 渲染，不是当前优先级 |
 | `@butui/test` | headless mount、快照、事件注入 |
 
-源码约 18,500 行，测试约 11,200 行，61 个测试文件。
+源码约 18,700 行，测试约 11,350 行，62 个测试文件。
 
 ## 5. 已完成能力
 
@@ -114,6 +115,8 @@ bun --conditions=browser run scripts/stream-bench.tsx
 
 - `createTuiApp()`：备用屏、raw mode、鼠标、paste、focus、resize、退出还原。
 - 自动合帧：任何节点 `touch()` 都合并到下一帧，不需要应用调 `paint()`。
+- 默认 `render.mode="microtask"`；高频 chunk 可切 `frame + fps`，latest state
+  wins，尾帧不丢。
 - 键盘：应用 `onKey` → `keymap` → `useKeyboard` → 内建 tab / ctrl+c → 焦点节点。
 - 鼠标：语义 hit test、事件冒泡、`onMouseDown/Move/Up`。
 - `stickyTop` / `stickyBottom` 和根 `<layer>` 覆盖。
@@ -364,11 +367,22 @@ const bar = createScrollBar({
 - 可传 `shortcut()` 显示快捷键，可传 `limit` / `showAll` / `empty` 定制结果。
 - 已有 `scripts/command-palette-demo.tsx`、`tests/command-palette.test.tsx`。
 
+### 5.15 高频渲染合帧
+
+- `RenderScheduler`：microtask 与 frame 两种模式；默认行为不变。
+- `createTuiApp({ render: { mode: "frame", fps: 60 } })`：空闲后首帧走微任务，
+  帧预算内只标脏，deadline 读取最新树并绘制尾帧。
+- `paint()` 仍立即绘制，不受帧预算限制。
+- `scripts/render-bench.tsx` 用 1ms tick × 2 chunk 模拟 2000 chunk/s：
+  microtask 写入 1000 次 / 89640 字节，frame@60 写入 68 次 / 7439 字节。
+- 回归：`tests/render-scheduler.test.ts`、`tests/runtime.test.tsx`。
+
 ## 6. 稳定接口入口
 
 | 入口 | 文件 |
 |---|---|
 | `createTuiApp` / `TuiApp` / 文本选择 | `packages/runtime/src/index.ts` |
+| 高频渲染合帧调度 | `packages/runtime/src/render-scheduler.ts` |
 | `AgentEvent` / `tool.diff` 线协议 | `packages/agent/src/protocol.ts` |
 | Session / `diffFor()` | `packages/agent/src/session.ts` |
 | `DiffStream` / `DiffPatch` | `packages/stream/src/diff.ts` |
@@ -442,21 +456,23 @@ bridge、真实 tool event 对接或 bugent 快捷键迁移。
     flushPending。scope 变化要丢弃 pending，dispose 要清理 timer。
 25. Command Palette 不维护第二份命令表；结果必须从 CommandRegistry 读取，
     执行走 registry.execute()，when / 错误隔离不能绕过。
+26. `render.mode="frame"` 只压终端绘制，不压输入处理；需要每 token 立即绘制时
+    用 `paint()`，不要把 fps 设成 240 当“无合帧”。默认 microtask 语义必须保留。
 
 ### 包边界
 
-26. `@butui/agent` 不能静态依赖 `@butui/image`，browser 打包会碰 Bun builtin。
-27. `bun test` 的 preload 要写在 `[test].preload`，顶层 `preload` 只影响
+27. `@butui/agent` 不能静态依赖 `@butui/image`，browser 打包会碰 Bun builtin。
+28. `bun test` 的 preload 要写在 `[test].preload`，顶层 `preload` 只影响
     `bun run`。
-28. `@butui/web` 是实验层；当前 WebUI 尚未消费 `tool.diff`。
+29. `@butui/web` 是实验层；当前 WebUI 尚未消费 `tool.diff`。
 
 ## 9. 测试与验收
 
 当前：
 
 ```text
-593 pass / 0 fail
-61 test files
+597 pass / 0 fail
+62 test files
 tsc --noEmit pass
 ```
 
@@ -557,6 +573,7 @@ git -c user.name=AnyBuddy -c user.email=anybuddy@local commit
 [ ] bun --conditions=browser x tsc --noEmit 通过
 [ ] 需要真终端时跑 agent-demo / diff-demo / scrollbar-demo
 [ ] 修改流式路径时看 stream-o1
+[ ] 修改 runtime 合帧时看 render-scheduler + runtime
 [ ] 修改鼠标时看 selection + scrollbar 回归
 [ ] 修改 agent 协议时看 agent-protocol + agent-replay
 [ ] 修改插件 / Slot 时看 plugins + plugin-slot + plugin-loader
