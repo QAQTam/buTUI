@@ -7,8 +7,8 @@ import {
 } from "@butui/core";
 import { createTuiApp } from "@butui/runtime";
 import { useMouseCapture } from "@butui/solid";
-import { createSignal } from "solid-js";
-import { FakeTerminal } from "./helpers/terminal.ts";
+import { Show, createSignal } from "solid-js";
+import { FakeTerminal, tick } from "./helpers/terminal.ts";
 
 function mouse(
   action: MouseEvent["action"],
@@ -210,6 +210,113 @@ describe("mouse interaction", () => {
       "drag:5,0",
       "end:5,0",
     ]);
+    app.dispose();
+  });
+
+  test("presented routing 在 backpressure 期间不命中未展示的新节点", async () => {
+    const terminal = new FakeTerminal();
+    const [showA, setShowA] = createSignal(true);
+    let a = 0;
+    let b = 0;
+    const app = createTuiApp({
+      terminal,
+      size: { columns: 12, rows: 1 },
+      inputRouting: "presented",
+      selection: false,
+      onQuit: () => {},
+      view: () => (
+        <Show
+          when={showA()}
+          fallback={
+            <box width={5} height={1} onClick={() => b++}>
+              <text>B</text>
+            </box>
+          }
+        >
+          <box width={5} height={1} onClick={() => a++}>
+            <text>A</text>
+          </box>
+        </Show>
+      ),
+    });
+
+    terminal.blockWrites = true;
+    setShowA(false);
+    await tick();
+
+    app.send(mouse("press", 0, 0));
+    expect(a).toBe(0);
+    expect(b).toBe(0);
+
+    terminal.drain();
+    await tick();
+    app.send(mouse("press", 0, 0));
+    expect(b).toBe(1);
+    app.dispose();
+  });
+
+  test("presented routing 的 local 坐标使用用户看到的 bounds", async () => {
+    const terminal = new FakeTerminal();
+    const [offset, setOffset] = createSignal(0);
+    const coords: Array<number | undefined> = [];
+    const app = createTuiApp({
+      terminal,
+      size: { columns: 20, rows: 1 },
+      inputRouting: "presented",
+      selection: false,
+      onQuit: () => {},
+      view: () => (
+        <row>
+          <box width={offset()} />
+          <box
+            width={5}
+            height={1}
+            selectable={false}
+            onClick={event => coords.push(event.localX)}
+          >
+            <text>A</text>
+          </box>
+        </row>
+      ),
+    });
+
+    terminal.blockWrites = true;
+    setOffset(2);
+    await tick();
+
+    app.send(mouse("press", 1, 0));
+    expect(coords).toEqual([1]);
+
+    terminal.drain();
+    await tick();
+    app.send(mouse("press", 2, 0));
+    expect(coords).toEqual([1, 0]);
+    app.dispose();
+  });
+
+  test("presented routing 在 resize 后等待新 frame 再恢复命中", async () => {
+    const terminal = new FakeTerminal();
+    let clicks = 0;
+    const app = createTuiApp({
+      terminal,
+      size: { columns: 12, rows: 1 },
+      inputRouting: "presented",
+      selection: false,
+      onQuit: () => {},
+      view: () => (
+        <box width={5} height={1} onClick={() => clicks++}>
+          <text>A</text>
+        </box>
+      ),
+    });
+
+    terminal.resize({ columns: 20, rows: 2 });
+    app.send(mouse("press", 0, 0));
+    expect(clicks).toBe(0);
+
+    await tick();
+    app.send(mouse("press", 0, 0));
+    expect(clicks).toBe(1);
     app.dispose();
   });
 });

@@ -59,6 +59,7 @@ import {
   RenderScheduler,
   type RenderOptions,
 } from "./render-scheduler.ts";
+import { PresentedFrameStore } from "./presented-frame.ts";
 
 export type { RenderMode, RenderOptions } from "./render-scheduler.ts";
 
@@ -196,6 +197,13 @@ export interface TuiAppOptions {
   /** 应用级鼠标：**焦点节点没处理时**才会走到这里（比如语义动作分发） */
   onMouse?: (event: MouseEvent) => boolean | void;
   /**
+   * 鼠标 hit test 基准。
+   *
+   * `logical` 保持 v0.1 行为，每次用最新 layout；`presented` 使用最近成功写出的
+   * frame，慢终端下鼠标仍命中用户实际看到的 UI。默认 `logical`。
+   */
+  inputRouting?: "logical" | "presented";
+  /**
    * 鼠标文本选择。
    *
    * 默认开启：左键拖拽按 cell 选区，松开时通过 OSC 52 尝试写入系统剪贴板。
@@ -292,6 +300,7 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
   let selecting = false;
   let selectionHasText = false;
   let capturedMouseNode: Node | undefined;
+  let capturedMouseBounds: MouseBounds | undefined;
   let hoveredMouseNode: Node | undefined;
   let mousePointerStyle: MousePointerStyle | undefined;
   const mousePointerEnabled = options.mousePointer ?? true;
@@ -313,6 +322,9 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
   const velocityWindowMs = Math.max(1, options.mouse?.velocityWindowMs ?? 100);
   const maxVelocity = Math.max(0, options.mouse?.maxVelocity ?? 5);
   const frameBounds = new WeakMap<Frame, Map<number, MouseBounds>>();
+  const presentedFrames = new PresentedFrameStore();
+  let hasPresentedOnce = false;
+  let sessionRevision = 0;
 
   const selectionAllowed = (): boolean =>
     selectionOptions !== undefined && (selectionOptions.enabled?.() ?? true);
@@ -395,9 +407,14 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
   let renderBlocked = false;
   const canDrain = typeof terminal.onDrain === "function";
   const paint = (): RenderStats => {
-    const stats = renderer.draw(computeFrame());
+    const frame = computeFrame();
+    const stats = renderer.draw(frame);
     const blocked = canDrain && stats.blocked;
     renderBlocked = blocked;
+    if (!blocked) {
+      presentedFrames.present(frame, sessionRevision, performance.now());
+      hasPresentedOnce = true;
+    }
     if (blocked) renderScheduler?.markBlocked();
     else renderScheduler?.markPainted();
     return stats;
@@ -430,6 +447,7 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
   };
 
   const offMutation = onMutation(() => {
+    sessionRevision++;
     dirty = true;
     requestPaint();
   });
@@ -523,10 +541,16 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
 
   const captureMouse = (node: Node): void => {
     capturedMouseNode = node;
+    const frame =
+      options.inputRouting === "presented"
+        ? presentedFrames.current()?.layout
+        : undefined;
+    capturedMouseBounds = frame ? boundsOfInFrame(node, frame) : boundsOf(node);
   };
 
   const releaseMouse = (): void => {
     capturedMouseNode = undefined;
+    capturedMouseBounds = undefined;
   };
 
   const capturedMouse = (): Node | undefined => capturedMouseNode;
@@ -560,9 +584,11 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
     return clickCount;
   };
 
-  const boundsOf = (node: Node | undefined): MouseBounds | undefined => {
+  const boundsOfInFrame = (
+    node: Node | undefined,
+    frame: Frame
+  ): MouseBounds | undefined => {
     if (!node) return undefined;
-    const frame = computeFrame();
     let cache = frameBounds.get(frame);
     if (!cache) {
       cache = new Map();
@@ -599,11 +625,20 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
     return bounds;
   };
 
+  const boundsOf = (node: Node | undefined): MouseBounds | undefined =>
+    boundsOfInFrame(node, computeFrame());
+
   const applyLocalCoordinates = (
     event: MouseEvent,
-    target: Node | undefined
+    target: Node | undefined,
+    frame?: Frame
   ): void => {
-    const bounds = boundsOf(target);
+    const bounds =
+      target === capturedMouseNode && capturedMouseBounds
+        ? capturedMouseBounds
+        : frame
+          ? boundsOfInFrame(target, frame)
+          : boundsOf(target);
     if (!bounds) {
       delete event.localX;
       delete event.localY;
@@ -617,7 +652,8 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
     action: MouseEvent["action"],
     target: Node | undefined,
     source: MouseEvent,
-    options: { button?: MouseEvent["button"]; bubble?: boolean } = {}
+    options: { button?: MouseEvent["button"]; bubble?: boolean } = {},
+    frame?: Frame
   ): { delivered: number; event?: MouseEvent } => {
     if (!target) return { delivered: 0 };
     const event = eventTarget({
@@ -630,7 +666,7 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
       ...(source.velocityY !== undefined ? { velocityY: source.velocityY } : {}),
       modifiers: source.modifiers,
     }) as MouseEvent;
-    applyLocalCoordinates(event, target);
+    applyLocalCoordinates(event, target, frame);
     const delivered = dispatchEvent(target, event, {
       bubble: options.bubble ?? false,
     });
@@ -640,18 +676,20 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
   const dispatchHover = (
     action: "enter" | "leave",
     target: Node | undefined,
-    source: MouseEvent
-  ): number => dispatchSyntheticMouse(action, target, source).delivered;
+    source: MouseEvent,
+    frame?: Frame
+  ): number => dispatchSyntheticMouse(action, target, source, {}, frame).delivered;
 
   const updateMouseHover = (
     event: MouseEvent,
-    target: Node | undefined
+    target: Node | undefined,
+    frame?: Frame
   ): void => {
     if (target === hoveredMouseNode) return;
     const previous = hoveredMouseNode;
     hoveredMouseNode = target;
-    dispatchHover("leave", previous, event);
-    dispatchHover("enter", target, event);
+    dispatchHover("leave", previous, event, frame);
+    dispatchHover("enter", target, event, frame);
     requestPaint();
   };
 
@@ -692,7 +730,7 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
     };
   };
 
-  const updateMouseDrag = (event: MouseEvent): number => {
+  const updateMouseDrag = (event: MouseEvent, frame?: Frame): number => {
     if (!pressedMouse) return 0;
     recordMouseSample(event);
     const distance = Math.max(
@@ -708,16 +746,16 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
       delivered += dispatchSyntheticMouse("dragstart", target, event, {
         button: "left",
         bubble: true,
-      }).delivered;
+      }, frame).delivered;
     }
     delivered += dispatchSyntheticMouse("drag", target, event, {
       button: "left",
       bubble: true,
-    }).delivered;
+    }, frame).delivered;
     return delivered;
   };
 
-  const endMouseDrag = (event: MouseEvent): number => {
+  const endMouseDrag = (event: MouseEvent, frame?: Frame): number => {
     if (!pressedMouse) return 0;
     recordMouseSample(event);
     const velocity = releaseVelocity();
@@ -728,7 +766,7 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
       ? dispatchSyntheticMouse("dragend", target, event, {
           button: "left",
           bubble: true,
-        }).delivered
+        }, frame).delivered
       : 0;
     pressedMouse = undefined;
     return delivered;
@@ -823,14 +861,26 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
     }
 
     if (event.type === "mouse") {
-      const hitTarget = nodeById(root, computeFrame().nodeAt(event.x, event.y));
+      const presented =
+        options.inputRouting === "presented" ? presentedFrames.current() : undefined;
+      const logicalFrame =
+        options.inputRouting !== "presented" || !hasPresentedOnce
+          ? computeFrame()
+          : undefined;
+      const hitFrame = presented?.layout ?? logicalFrame;
+      const hitNodeId = presented
+        ? presented.index.hit(event.x, event.y)?.nodeId
+        : hitFrame?.nodeAt(event.x, event.y);
+      const hitTarget = nodeById(root, hitNodeId);
       const target = capturedMouseNode ?? hitTarget;
-      applyLocalCoordinates(event, target);
+      applyLocalCoordinates(event, target, presented?.layout);
       updateMousePointer(target);
       if (event.action === "press") {
-        endMouseDrag(event);
+        endMouseDrag(event, presented?.layout);
         event.clickCount = clickCountFor(event, target);
-        if (!capturedMouseNode && !selecting) updateMouseHover(event, hitTarget);
+        if (!capturedMouseNode && !selecting) {
+          updateMouseHover(event, hitTarget, presented?.layout);
+        }
         beginMouseDrag(event, target);
       }
       if (
@@ -839,10 +889,10 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
         event.action === "move" &&
         !selecting
       ) {
-        updateMouseHover(event, hitTarget);
+        updateMouseHover(event, hitTarget, presented?.layout);
       }
       const dragDelivered =
-        event.action === "move" ? updateMouseDrag(event) : 0;
+        event.action === "move" ? updateMouseDrag(event, presented?.layout) : 0;
       const selectionHandled = handleSelectionMouse(event, target);
       // move 由选择器消费；press / release 仍按普通 hit test 派发，
       // 保证点击组件和拖拽选择可以共存。
@@ -851,7 +901,7 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
       }
       const delivered = dispatchEvent(target, event);
       const dragEndDelivered =
-        event.action === "release" ? endMouseDrag(event) : 0;
+        event.action === "release" ? endMouseDrag(event, presented?.layout) : 0;
       if (delivered === 0 && dragDelivered === 0 && dragEndDelivered === 0) {
         options.onMouse?.(event);
       }
@@ -887,6 +937,7 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
   function start(): void {
     if (started || disposed || !renderScheduler || !appAnimationScheduler) return;
     started = true;
+    hasPresentedOnce = false;
 
     // 视图挂到 root 上，外面包一层焦点上下文；Solid 的写入会在 flush 里提交
     const disposeView = render(
@@ -925,6 +976,8 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
       terminal.onResize(next => {
         if (selectionHasText || selecting) resetSelection(true);
         setSize(next);
+        presentedFrames.invalidate();
+        capturedMouseBounds = undefined;
         renderer.invalidate(); // 尺寸变了必须整屏重画
         // 和 send() 一样立刻提交：resize 之后马上读 frame() 必须是一致的
         flush();
@@ -959,6 +1012,8 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
     pressedMouse = undefined;
     hoveredMouseNode = undefined;
     capturedMouseNode = undefined;
+    capturedMouseBounds = undefined;
+    presentedFrames.invalidate();
     setMousePointer("default");
     for (const dispose of disposers.splice(0)) dispose();
     terminal.stop();
