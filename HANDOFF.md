@@ -2,10 +2,10 @@
 
 > 交接时间：2026-09-24  
 > 仓库：`/home/qaqtamsy/项目/buTUI`  
-> 功能基线提交：`b7844cf feat(stream): add smooth reveal`
+> 功能基线提交：`55e34e7 perf(stream): target 120fps smooth reveal`
 > 工作区状态：功能提交后干净，本文件为对应交接刷新
-> 本轮能力：smooth reveal + 2000 chunk/s 逐列流动 demo
-> 当前回归：`604 pass / 0 fail`，63 个测试文件，`tsc --noEmit` 通过
+> 本轮能力：smooth reveal 提升到 120fps，并压内存 / CPU 热路径
+> 当前回归：`607 pass / 0 fail`，63 个测试文件，`tsc --noEmit` 通过
 
 ## 1. 项目定位
 
@@ -15,7 +15,7 @@ buTUI 是基于 Bun + TypeScript 的通用 TUI Runtime。参考 OpenTUI 的接�
 - 稳定的 `createTuiApp` 应用入口；
 - SolidJS 2 RC 的细粒度响应式 host renderer；
 - 流式文本 / Markdown / Diff 的 O(1) 或 O(视口) 增量路径；
-- smooth reveal：高频 chunk 下逐列推进可见 cursor，并自适应追赶；
+- smooth reveal：默认 120fps，逐列推进可见 cursor，并自适应追赶；
 - 鼠标、OSC 22 指针、拖动惯性、tween / spring / timeline / Shimmer、滚动、
   Slider、SplitPane、插件 / Slot、多键 Keymap、Command Palette 等通用交互能力；
 - agent 事件协议、Session、undo、artifact、图片等可组合上层。
@@ -70,6 +70,7 @@ bun --conditions=browser run scripts/list-demo.tsx
 bun --conditions=browser run scripts/stream-bench.tsx
 bun --conditions=browser run scripts/render-bench.tsx
 bun --conditions=browser run scripts/smooth-stream-demo.tsx
+bun --conditions=browser run scripts/smooth-bench.tsx
 ```
 
 真实 PTY 冒烟可参考之前的模式：
@@ -109,7 +110,7 @@ bun --conditions=browser run scripts/smooth-stream-demo.tsx
 | `@butui/web` | 实验性 DOM 渲染，不是当前优先级 |
 | `@butui/test` | headless mount、快照、事件注入 |
 
-源码约 19,100 行，测试约 11,500 行，63 个测试文件。
+源码约 19,300 行，测试约 11,550 行，63 个测试文件。
 
 ## 5. 已完成能力
 
@@ -377,19 +378,23 @@ const bar = createScrollBar({
   帧预算内只标脏，deadline 读取最新树并绘制尾帧。
 - `paint()` 仍立即绘制，不受帧预算限制。
 - `scripts/render-bench.tsx` 用 1ms tick × 2 chunk 模拟 2000 chunk/s：
-  microtask 写入 1000 次 / 89640 字节，frame@60 写入 68 次 / 7529 字节。
+  microtask 写入 1000 次 / 89640 字节，frame@60 写入 68 次 / 7439 字节，
+  smooth@120 写入 176 次 / 17921 字节。
 - 回归：`tests/render-scheduler.test.ts`、`tests/runtime.test.tsx`。
 
 ### 5.16 Smooth Reveal
 
-- `createSmoothStream(source, options)`：target 瞬时增长，reveal cursor 按
-  `speed`（列/秒）逐帧推进；`catchUpMs` 控制积压追平时间。
-- `maxColumnsPerFrame` 防止超大 backlog 一帧喷完；`lag()` / `finish()` /
-  `dispose()` 提供手动控制。
+- `createSmoothStream(source, options)`：默认 120fps；同一 fps 的流共享 timer。
+- target 瞬时增长，reveal cursor 按 `speed`（列/秒）逐帧推进；`catchUpMs`
+  控制积压追平时间，`maxColumnsPerFrame` 防止超大 backlog 一帧喷完。
+- `lag()` / `finish()` / `dispose()` 提供手动控制。
 - `<StreamText smooth>` / `<StreamMarkdown smooth>` 是组件入口；已有历史立即
   显示，只 reveal 挂载后新增内容。
-- `Bun.sliceAnsi` 保证 CJK / emoji / SGR 不被劈开；共享 60fps 时钟，无积压
-  自动退订；reduced-motion 下直接显示。
+- `Bun.sliceAnsi` 保证 CJK / emoji / SGR 不被劈开；无积压自动退订；
+  reduced-motion 下直接显示。
+- 热路径优化：target 没变不重建 tail；cursor 没跨可见列不触发 Solid/layout；
+  宽度缓存只覆盖未 reveal 行，reveal 后删除。
+- `scripts/smooth-bench.tsx`：20k 行 wrapper 增量约 265.5 KiB（约 13.6 B/行）。
 - `StreamSource.onChange()` 是 smooth 的 target 订阅点。
 - 已有 `scripts/smooth-stream-demo.tsx`、`tests/smooth-stream.test.tsx`。
 
@@ -478,20 +483,22 @@ bridge、真实 tool event 对接或 bugent 快捷键迁移。
 27. Smooth reveal 的 cursor 单位是终端列，不是 JS code unit；必须走
     `Bun.sliceAnsi`，否则 CJK / emoji / SGR 会被劈开。已有历史在创建时立即
     显示，不能把历史也重新“流”一遍。
+28. Smooth 默认 120fps；不要在 tick 里无条件重建 tail / 调 sliceAnsi。只缓存
+    未 reveal 行的宽度，并在 reveal 后删除；否则 CPU 和内存都会按历史行数涨。
 
 ### 包边界
 
-28. `@butui/agent` 不能静态依赖 `@butui/image`，browser 打包会碰 Bun builtin。
-29. `bun test` 的 preload 要写在 `[test].preload`，顶层 `preload` 只影响
+29. `@butui/agent` 不能静态依赖 `@butui/image`，browser 打包会碰 Bun builtin。
+30. `bun test` 的 preload 要写在 `[test].preload`，顶层 `preload` 只影响
     `bun run`。
-30. `@butui/web` 是实验层；当前 WebUI 尚未消费 `tool.diff`。
+31. `@butui/web` 是实验层；当前 WebUI 尚未消费 `tool.diff`。
 
 ## 9. 测试与验收
 
 当前：
 
 ```text
-604 pass / 0 fail
+607 pass / 0 fail
 63 test files
 tsc --noEmit pass
 ```
@@ -593,7 +600,7 @@ git -c user.name=AnyBuddy -c user.email=anybuddy@local commit
 [ ] bun --conditions=browser x tsc --noEmit 通过
 [ ] 需要真终端时跑 agent-demo / diff-demo / scrollbar-demo
 [ ] 修改流式路径时看 stream-o1
-[ ] 修改 smooth reveal 时看 smooth-stream + render-bench
+[ ] 修改 smooth reveal 时看 smooth-stream + render-bench + smooth-bench
 [ ] 修改 runtime 合帧时看 render-scheduler + runtime
 [ ] 修改鼠标时看 selection + scrollbar 回归
 [ ] 修改 agent 协议时看 agent-protocol + agent-replay
