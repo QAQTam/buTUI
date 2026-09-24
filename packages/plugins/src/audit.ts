@@ -90,9 +90,40 @@ export interface AuditRotationSummary {
   at: number;
 }
 
+export interface AuditSinkContext {
+  /** 确定性 batch id；远端可按此幂等去重。 */
+  batchId: string;
+  /** 从 0 开始的尝试次数。 */
+  attempt: number;
+}
+
 export interface AuditSink {
-  write(events: readonly AuditEvent[]): void | Promise<void>;
+  write(
+    events: readonly AuditEvent[],
+    context?: AuditSinkContext
+  ): void | Promise<void>;
   close?(): void | Promise<void>;
+}
+
+export interface AuditSinkFanoutOptions {
+  /** 首次失败后的额外尝试次数；默认 2。 */
+  maxRetries?: number;
+  /** 指数退避基准；默认 50ms。 */
+  retryDelayMs?: number;
+  /** 单次退避上限；默认 5s。 */
+  maxRetryDelayMs?: number;
+  sleep?: (delayMs: number) => Promise<void>;
+}
+
+export interface AuditDeduperOptions {
+  /** 最多保留的去重 key；默认 10,000。 */
+  maxEntries?: number;
+}
+
+export interface AuditDeduper {
+  readonly size: number;
+  accept(events: readonly AuditEvent[]): readonly AuditEvent[];
+  clear(): void;
 }
 
 export interface MemoryAuditLogOptions extends AuditIntegrityOptions {
@@ -340,27 +371,57 @@ export function createFileAuditLog(
 
 export function withAuditSinks(
   log: AuditLog,
-  sinks: readonly AuditSink[]
+  sinks: readonly AuditSink[],
+  options: AuditSinkFanoutOptions = {}
 ): AuditLog {
   const queues = new Map<AuditSink, AuditEvent[]>();
   for (const sink of sinks) queues.set(sink, []);
+  const maxRetries = normalizeRetries(options.maxRetries ?? 2);
+  const retryDelayMs = normalizeDelay(options.retryDelayMs ?? 50);
+  const maxRetryDelayMs = normalizeDelay(options.maxRetryDelayMs ?? 5_000);
+  const sleep =
+    options.sleep ??
+    ((delayMs: number) =>
+      new Promise<void>(resolve => setTimeout(resolve, delayMs)));
   let disposed = false;
+  let flushPromise: Promise<void> | undefined;
 
-  const flushSinks = async (): Promise<void> => {
+  const performFlush = async (): Promise<void> => {
     const errors: Error[] = [];
     for (const [sink, queue] of queues) {
       if (queue.length === 0) continue;
       const batch = [...queue];
-      try {
-        await sink.write(batch);
-        queue.splice(0, batch.length);
-      } catch (error) {
-        errors.push(asError(error));
+      const batchId = createAuditBatchId(batch);
+      let delivered = false;
+      let lastError: Error | undefined;
+      for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        try {
+          await sink.write(batch, { batchId, attempt });
+          delivered = true;
+          break;
+        } catch (error) {
+          lastError = asError(error);
+          if (attempt < maxRetries) {
+            await sleep(
+              Math.min(maxRetryDelayMs, retryDelayMs * 2 ** attempt)
+            );
+          }
+        }
       }
+      if (delivered) queue.splice(0, batch.length);
+      else errors.push(lastError ?? new Error("audit sink failed"));
     }
     if (errors.length > 0) {
       throw new AggregateError(errors, "[butui] audit sink flush failed");
     }
+  };
+
+  const flushSinks = (): Promise<void> => {
+    if (flushPromise) return flushPromise;
+    flushPromise = performFlush().finally(() => {
+      flushPromise = undefined;
+    });
+    return flushPromise;
   };
 
   return {
@@ -426,8 +487,11 @@ export function createHttpAuditSink(
   const request = options.fetch ?? fetch;
   const timeoutMs = normalizeOptionalLimit(options.timeoutMs) ?? 5_000;
   return {
-    async write(events) {
+    async write(events, context) {
       if (events.length === 0) return;
+      const batchId = context?.batchId ?? createAuditBatchId(events);
+      const first = events[0]!;
+      const last = events[events.length - 1]!;
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
@@ -435,6 +499,10 @@ export function createHttpAuditSink(
           method: "POST",
           headers: {
             "content-type": "application/x-ndjson",
+            "x-butui-audit-batch": batchId,
+            "x-butui-audit-count": String(events.length),
+            "x-butui-audit-first-seq": String(first.seq),
+            ...(last.hash ? { "x-butui-audit-head": last.hash } : {}),
             ...options.headers,
           },
           body: serializeAudit(events),
@@ -448,6 +516,47 @@ export function createHttpAuditSink(
       } finally {
         clearTimeout(timer);
       }
+    },
+  };
+}
+
+export function createAuditBatchId(events: readonly AuditEvent[]): string {
+  if (events.length === 0) return "empty";
+  const first = events[0]!;
+  const last = events[events.length - 1]!;
+  const digest = createHash("sha256")
+    .update(serializeAudit(events))
+    .digest("hex")
+    .slice(0, 16);
+  return `${first.seq}-${last.seq}-${digest}`;
+}
+
+export function createAuditDeduper(
+  options: AuditDeduperOptions = {}
+): AuditDeduper {
+  const maxEntries = normalizeLimit(options.maxEntries ?? 10_000);
+  const seen = new Map<string, true>();
+
+  return {
+    get size() {
+      return seen.size;
+    },
+    accept(events) {
+      const accepted: AuditEvent[] = [];
+      for (const event of events) {
+        const key = auditDedupeKey(event);
+        if (seen.has(key)) continue;
+        seen.set(key, true);
+        if (seen.size > maxEntries) {
+          const oldest = seen.keys().next().value;
+          if (oldest !== undefined) seen.delete(oldest);
+        }
+        accepted.push(event);
+      }
+      return accepted;
+    },
+    clear() {
+      seen.clear();
     },
   };
 }
@@ -573,6 +682,29 @@ function isAuditEvent(value: unknown): value is AuditEvent {
 function normalizeLimit(value: number): number {
   if (!Number.isFinite(value)) return Number.MAX_SAFE_INTEGER;
   return Math.max(0, Math.floor(value));
+}
+
+function normalizeRetries(value: number): number {
+  if (!Number.isFinite(value) || value < 0) {
+    throw new Error("[butui] maxRetries must be a non-negative number");
+  }
+  return Math.floor(value);
+}
+
+function normalizeDelay(value: number): number {
+  if (!Number.isFinite(value) || value < 0) {
+    throw new Error("[butui] retry delay must be a non-negative number");
+  }
+  return Math.floor(value);
+}
+
+function auditDedupeKey(event: AuditEvent): string {
+  const identity =
+    event.hash ??
+    createHash("sha256")
+      .update(stableStringify(withoutIntegrityFields(event)))
+      .digest("hex");
+  return `${event.seq}:${identity}`;
 }
 
 function normalizeOptionalLimit(value: number | undefined): number | undefined {

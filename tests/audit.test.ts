@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  createAuditDeduper,
   createFileAuditLog,
   createHttpAuditSink,
   createMemoryAuditLog,
@@ -165,15 +166,21 @@ describe("audit log", () => {
     }
   });
 
-  test("AuditSink fan-out 批量发送 NDJSON，失败后保留队列重试", async () => {
-    const requests: Array<{ url: string; body: string }> = [];
-    let failures = 1;
+  test("AuditSink fan-out 批量发送 NDJSON，失败后指数退避重试", async () => {
+    const requests: Array<{
+      url: string;
+      body: string;
+      headers: Record<string, string>;
+    }> = [];
+    let failures = 2;
+    const delays: number[] = [];
     const sink = createHttpAuditSink({
       url: "https://audit.example/ingest",
       async fetch(url, init) {
         requests.push({
           url: String(url),
           body: String(init?.body ?? ""),
+          headers: init?.headers as Record<string, string>,
         });
         if (failures-- > 0) {
           return new Response("retry", { status: 503 });
@@ -183,22 +190,49 @@ describe("audit log", () => {
     });
     const audit = withAuditSinks(
       createMemoryAuditLog({ now: () => 1 }),
-      [sink]
+      [sink],
+      {
+        maxRetries: 2,
+        retryDelayMs: 10,
+        async sleep(delay) {
+          delays.push(delay);
+        },
+      }
     );
     audit.record({ type: "capability.granted", pluginId: "p" });
     audit.record({ type: "capability.denied", pluginId: "p" });
 
-    await expect(audit.flush()).rejects.toThrow("audit flush failed");
     await audit.flush();
-    expect(requests).toHaveLength(2);
-    expect(requests[1]!.url).toBe("https://audit.example/ingest");
+    expect(requests).toHaveLength(3);
+    expect(delays).toEqual([10, 20]);
+    expect(requests[2]!.url).toBe("https://audit.example/ingest");
+    expect(requests[2]!.headers["x-butui-audit-count"]).toBe("2");
+    expect(requests[2]!.headers["x-butui-audit-batch"]).toMatch(
+      /^1-2-[0-9a-f]{16}$/
+    );
     expect(
-      requests[1]!.body
+      requests[2]!.body
         .trim()
         .split("\n")
         .map(line => JSON.parse(line).type)
     ).toEqual(["capability.granted", "capability.denied"]);
     await audit.dispose();
+  });
+
+  test("deduper 按 seq + hash 丢弃重复批次", () => {
+    const audit = createMemoryAuditLog({
+      now: () => 1,
+      hashChain: true,
+    });
+    audit.record({ type: "a" });
+    audit.record({ type: "b" });
+    const deduper = createAuditDeduper({ maxEntries: 2 });
+
+    expect(deduper.accept(audit.query()).map(event => event.seq)).toEqual([
+      1, 2,
+    ]);
+    expect(deduper.accept(audit.query())).toEqual([]);
+    expect(deduper.size).toBe(2);
   });
 
   test("memory 上限只保留最新事件，但 seq 不倒退", () => {
