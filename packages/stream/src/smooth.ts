@@ -93,7 +93,7 @@ export function createSmoothStream(
     options.enabled !== false &&
     !(options.reducedMotion ?? prefersReducedMotion());
 
-  const revealedLines: StreamLine[] = [];
+  let revealedLines: StreamLine[] = [];
   const [version, setVersion] = createSignal(0);
   const listeners = new Set<() => void>();
   const pendingWidths = new Map<number, number>();
@@ -115,6 +115,7 @@ export function createSmoothStream(
   let renderedCursorColumns = -1;
   let renderedTailRevision = -1;
   let currentRate = speed;
+  let sourceLinesSnapshot: readonly StreamLine[] | undefined;
   let lastTickAt: number | undefined;
   let stopTick: (() => void) | undefined;
   let stopSource: (() => void) | undefined;
@@ -169,6 +170,28 @@ export function createSmoothStream(
 
   const totalLines = (): number => source.lines.length + tailLines.length;
 
+  const resetForReplacedLines = (): void => {
+    revealedLines = [];
+    pendingWidths.clear();
+    committedTotalWidth = 0;
+    knownCommitted = 0;
+    revealedWidth = 0;
+    cursorLine = 0;
+    cursorColumns = 0;
+    currentTail = "";
+    renderedLineCount = -1;
+    renderedCursorLine = -1;
+    renderedCursorColumns = -1;
+    renderedTailRevision = -1;
+    tailSource = "";
+    tailLines = [];
+    tailWidths = [];
+    tailPrefixWidths = [];
+    tailTotalWidth = 0;
+    tailDirty = true;
+    tailRevision++;
+  };
+
   /**
    * 对齐 source 的当前状态。
    *
@@ -176,6 +199,11 @@ export function createSmoothStream(
    * 时会夹回末尾，而不是显示已经不存在的内容。
    */
   const syncTarget = (): void => {
+    const linesReplaced =
+      sourceLinesSnapshot !== undefined && source.lines !== sourceLinesSnapshot;
+    sourceLinesSnapshot = source.lines;
+    if (linesReplaced) resetForReplacedLines();
+
     syncCommitted();
     if (tailDirty) {
       const nextTail = source.tail();
@@ -195,6 +223,14 @@ export function createSmoothStream(
     }
 
     const total = totalLines();
+    if (linesReplaced) {
+      while (revealedLines.length < source.lines.length) {
+        pushCommittedLine(revealedLines.length);
+      }
+      cursorLine = source.lines.length;
+      cursorColumns = 0;
+    }
+
     if (cursorLine > total) {
       cursorLine = total > 0 ? total - 1 : 0;
       cursorColumns = total > 0 ? lineWidth(cursorLine) : 0;
@@ -430,7 +466,9 @@ export function createSmoothStream(
   stopSource = source.onChange?.(onSourceChange);
 
   return {
-    lines: revealedLines,
+    get lines() {
+      return revealedLines;
+    },
     tail: () => currentTail,
     version,
     onChange(listener) {

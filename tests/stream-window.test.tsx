@@ -436,6 +436,7 @@ describe("createStreamWindow", () => {
           width={40}
           follow
           revision={revision}
+          smooth
         />
       ),
       { width: 40, height: 6 }
