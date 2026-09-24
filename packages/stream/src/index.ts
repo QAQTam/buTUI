@@ -6,5 +6,6 @@ export * from "./smooth.ts";
 export * from "./ledger.ts";
 export * from "./ledger-adapter.ts";
 export * from "./spill.ts";
+export * from "./spill-file.ts";
 export * from "./components.tsx";
 export { parseAnsiRuns, stripAnsi } from "@butui/core";
