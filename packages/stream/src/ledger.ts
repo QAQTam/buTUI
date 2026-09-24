@@ -171,7 +171,7 @@ interface StreamState {
   tailLines: StreamTailLine[];
   spilledSegments: SpilledSegmentState[];
   tombstones: StreamTombstone[];
-  applied: Map<number, string>;
+  applied: AppliedDigestIndex;
   memoryReservations: MemoryReservation[];
 }
 
@@ -183,6 +183,45 @@ interface SpilledSegmentState {
   bytes: number;
   lineRuns?: LineIdRun[];
   lineIds?: LineId[];
+}
+
+const APPLIED_CHUNK_BITS = 10;
+const APPLIED_CHUNK_SIZE = 1 << APPLIED_CHUNK_BITS;
+const APPLIED_CHUNK_MASK = APPLIED_CHUNK_SIZE - 1;
+
+interface AppliedDigestChunk {
+  values: Uint32Array;
+  present: Uint8Array;
+}
+
+class AppliedDigestIndex {
+  private readonly chunks = new Map<number, AppliedDigestChunk>();
+
+  set(seq: number, digest: string): void {
+    if (!Number.isSafeInteger(seq) || seq < 1) return;
+    const zeroBased = seq - 1;
+    const chunkIndex = Math.floor(zeroBased / APPLIED_CHUNK_SIZE);
+    let chunk = this.chunks.get(chunkIndex);
+    if (!chunk) {
+      chunk = {
+        values: new Uint32Array(APPLIED_CHUNK_SIZE),
+        present: new Uint8Array(APPLIED_CHUNK_SIZE),
+      };
+      this.chunks.set(chunkIndex, chunk);
+    }
+    const at = zeroBased & APPLIED_CHUNK_MASK;
+    chunk.values[at] = Number.parseInt(digest, 16) >>> 0;
+    chunk.present[at] = 1;
+  }
+
+  get(seq: number): string | undefined {
+    if (!Number.isSafeInteger(seq) || seq < 1) return undefined;
+    const zeroBased = seq - 1;
+    const chunk = this.chunks.get(Math.floor(zeroBased / APPLIED_CHUNK_SIZE));
+    const at = zeroBased & APPLIED_CHUNK_MASK;
+    if (!chunk || chunk.present[at] === 0) return undefined;
+    return chunk.values[at]!.toString(16).padStart(8, "0");
+  }
 }
 
 export class StreamLedger {
@@ -211,7 +250,7 @@ export class StreamLedger {
       tailLines: [],
       spilledSegments: [],
       tombstones: [],
-      applied: new Map(),
+      applied: new AppliedDigestIndex(),
       memoryReservations: [],
     });
   }

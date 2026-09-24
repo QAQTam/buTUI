@@ -81,6 +81,21 @@ describe("StreamLedger", () => {
     ).toEqual({ status: "rejected", reason: "gap" });
   });
 
+  test("跨 chunk 的 applied digest 仍可识别旧 duplicate / conflict", () => {
+    const streams = ledger();
+    for (let seq = 1; seq <= 5_000; seq++) {
+      expect(
+        streams.apply(envelope(seq, { type: "append", delta: "x\n" })).status
+      ).toBe("applied");
+    }
+
+    const first = envelope(1, { type: "append", delta: "x\n" });
+    expect(streams.apply(first)).toEqual({ status: "duplicate", seq: 1 });
+    expect(
+      streams.apply(envelope(1, { type: "append", delta: "different\n" }))
+    ).toEqual({ status: "rejected", reason: "conflict" });
+  });
+
   test("replace-tail 可替换 volatile tail，但不能越过 stable line", () => {
     const streams = ledger();
     streams.apply(envelope(1, { type: "append", delta: "hello world" }));
