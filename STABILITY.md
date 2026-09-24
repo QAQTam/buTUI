@@ -36,7 +36,7 @@ const app = createTuiApp({
 | 布局 | `@butui/layout` | **稳定**（`Cell` / `Line` / `Frame` / `layout`） |
 | 渲染 | `@butui/renderer` | **稳定**（`Renderer` / `plainText` / `paintLine`） |
 | 终端 | `@butui/terminal` | **稳定**（`TerminalSession` / 输入解码 / 能力探测 / `osc22` / `osc52`） |
-| 基础组件 | `@butui/components` | **稳定**（编辑器 / 选择 / 列表 / 滚动 / ScrollBar / Slider / SplitPane / CommandPalette / Toast / Tooltip / Portal / Dynamic / Diff / 弹窗 / 展示组件） |
+| 基础组件 | `@butui/components` | **稳定**（编辑器 / 选择 / 列表 / 滚动 / ScrollBar / Slider / SplitPane / CommandPalette / Toast / Tooltip / Portal / Dynamic / MultiSelect / Diff / 弹窗 / 展示组件） |
 | 插件 / Slot | `@butui/plugins` | **稳定**（`Plugin` / `SlotRegistry`；Solid 适配在 `@butui/plugins/solid`；loader 在 `@butui/plugins/loader`） |
 | 命令 / Keymap | `@butui/keymap` | **稳定**（`CommandRegistry` / `Keymap`；Solid 适配在 `@butui/keymap/solid`） |
 | 流式文本 | `@butui/stream` | **稳定**（`StreamSource` / `DiffStream` / `<stream>`） |
@@ -757,10 +757,25 @@ const tip = createTooltipController({ delayMs: 400 });
 - `undefined` 渲染为空。
 - `createDynamic()` 可让库在不创建包装组件的情况下动态渲染。
 
+### 4.30 MultiSelect：`createMultiSelect` / `<MultiSelect>`
+
+```tsx
+<MultiSelect
+  options={options}
+  values={values()}
+  onChange={next => setValues(next)}
+/>
+```
+
+- 受控 values；toggle / setSelected / selectAll / clear / invert 都由模型处理。
+- Space / Enter / 点击切换；Ctrl+A 全选；Ctrl+Shift+A 清空。
+- heading / disabled 不参与选择或导航。
+- 内部复用 `<List>` / `createSelection()` 的滚动和键盘语义。
+
 ## 5. 已知缺口（不要依赖，也不建议自己绕）
 
 - **列表只有单列 + 固定行高**：`itemHeight` 是常数，变高行（折行文本、展开的
-  卡片）不支持；`MultiSelect` 还没做。
+  卡片）不支持。
 - **编辑器模型没有内部选区 / 剪贴板历史 / 撤销栈**：只有光标与历史。全局鼠标
   选区是 runtime 能力，不修改编辑器模型。
 - **文本选择是视口坐标且不会自动滚动**：拖到屏幕边缘不会继续滚，滚动 /

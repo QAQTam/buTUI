@@ -1227,6 +1227,25 @@ const [mount, setMount] = createSignal<Node>();
 
 ---
 
+### 5.32 MultiSelect（v0.1 实现）
+
+```tsx
+const [values, setValues] = createSignal<readonly string[]>([]);
+
+<MultiSelect
+  options={options}
+  values={values()}
+  onChange={next => setValues(next)}
+/>
+```
+
+- `createMultiSelect()` 提供 toggle / setSelected / selectAll / clear / invert。
+- Space / Enter / 点击切换当前项；Ctrl+A 全选；Ctrl+Shift+A 清空。
+- heading / disabled 只展示，不参与选择与键盘导航。
+- 复用 `<List>` / `createSelection()`，不复制滚动与选择逻辑。
+
+---
+
 ### 5.17 应用上下文（v0.1 实现）
 
 组件要能问「现在多宽 / 什么色深 / 我想订一个全局键」，但既不该认识 runtime，
@@ -1738,6 +1757,7 @@ P1：
   延迟、四向定位与根 layer（见 §5.29）
 - `Portal`：`<Portal mount>` 显式挂载 children，默认 app root（见 §5.30）
 - `Dynamic`：`createDynamic` / `<Dynamic>` 函数组件与 intrinsic tag 切换（见 §5.31）
+- `MultiSelect`：`createMultiSelect` / `<MultiSelect>` 受控多选与全选 / 反选（见 §5.32）
 - `Select` / `Tabs`：`<Select>`（↑↓ + Enter）与 `<Tabs>`（←→ 立即切换）
 - `Table`：列宽显式给或按内容算，支持左 / 中 / 右对齐
 - `Tree`：受控展开（`expanded` + `onToggle`），←→ 展开收起、→ 进子节点
