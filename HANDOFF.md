@@ -2,10 +2,10 @@
 
 > 交接时间：2026-09-24  
 > 仓库：`/home/qaqtamsy/项目/buTUI`  
-> 功能基线提交：`623e221 feat(runtime): coalesce high-throughput rendering`
+> 功能基线提交：`b7844cf feat(stream): add smooth reveal`
 > 工作区状态：功能提交后干净，本文件为对应交接刷新
-> 本轮能力：高频 chunk frame 合帧 + 2000 chunk/s 压测
-> 当前回归：`597 pass / 0 fail`，62 个测试文件，`tsc --noEmit` 通过
+> 本轮能力：smooth reveal + 2000 chunk/s 逐列流动 demo
+> 当前回归：`604 pass / 0 fail`，63 个测试文件，`tsc --noEmit` 通过
 
 ## 1. 项目定位
 
@@ -15,6 +15,7 @@ buTUI 是基于 Bun + TypeScript 的通用 TUI Runtime。参考 OpenTUI 的接�
 - 稳定的 `createTuiApp` 应用入口；
 - SolidJS 2 RC 的细粒度响应式 host renderer；
 - 流式文本 / Markdown / Diff 的 O(1) 或 O(视口) 增量路径；
+- smooth reveal：高频 chunk 下逐列推进可见 cursor，并自适应追赶；
 - 鼠标、OSC 22 指针、拖动惯性、tween / spring / timeline / Shimmer、滚动、
   Slider、SplitPane、插件 / Slot、多键 Keymap、Command Palette 等通用交互能力；
 - agent 事件协议、Session、undo、artifact、图片等可组合上层。
@@ -68,6 +69,7 @@ bun --conditions=browser run scripts/scroll-demo.tsx
 bun --conditions=browser run scripts/list-demo.tsx
 bun --conditions=browser run scripts/stream-bench.tsx
 bun --conditions=browser run scripts/render-bench.tsx
+bun --conditions=browser run scripts/smooth-stream-demo.tsx
 ```
 
 真实 PTY 冒烟可参考之前的模式：
@@ -107,7 +109,7 @@ bun --conditions=browser run scripts/render-bench.tsx
 | `@butui/web` | 实验性 DOM 渲染，不是当前优先级 |
 | `@butui/test` | headless mount、快照、事件注入 |
 
-源码约 18,700 行，测试约 11,350 行，62 个测试文件。
+源码约 19,100 行，测试约 11,500 行，63 个测试文件。
 
 ## 5. 已完成能力
 
@@ -128,6 +130,7 @@ bun --conditions=browser run scripts/render-bench.tsx
 - `MarkdownStream`：增量 markdown。
 - `<stream>`：整段流只对应一个宿主节点。
 - 视口只复制可视行。
+- `StreamSource.onChange`：可选 target 变更订阅。
 - 回归测试 `tests/stream-o1.test.tsx` 和 `tests/stream-source.test.tsx`。
 
 ### 5.3 组件标准库
@@ -374,8 +377,21 @@ const bar = createScrollBar({
   帧预算内只标脏，deadline 读取最新树并绘制尾帧。
 - `paint()` 仍立即绘制，不受帧预算限制。
 - `scripts/render-bench.tsx` 用 1ms tick × 2 chunk 模拟 2000 chunk/s：
-  microtask 写入 1000 次 / 89640 字节，frame@60 写入 68 次 / 7439 字节。
+  microtask 写入 1000 次 / 89640 字节，frame@60 写入 68 次 / 7529 字节。
 - 回归：`tests/render-scheduler.test.ts`、`tests/runtime.test.tsx`。
+
+### 5.16 Smooth Reveal
+
+- `createSmoothStream(source, options)`：target 瞬时增长，reveal cursor 按
+  `speed`（列/秒）逐帧推进；`catchUpMs` 控制积压追平时间。
+- `maxColumnsPerFrame` 防止超大 backlog 一帧喷完；`lag()` / `finish()` /
+  `dispose()` 提供手动控制。
+- `<StreamText smooth>` / `<StreamMarkdown smooth>` 是组件入口；已有历史立即
+  显示，只 reveal 挂载后新增内容。
+- `Bun.sliceAnsi` 保证 CJK / emoji / SGR 不被劈开；共享 60fps 时钟，无积压
+  自动退订；reduced-motion 下直接显示。
+- `StreamSource.onChange()` 是 smooth 的 target 订阅点。
+- 已有 `scripts/smooth-stream-demo.tsx`、`tests/smooth-stream.test.tsx`。
 
 ## 6. 稳定接口入口
 
@@ -383,6 +399,7 @@ const bar = createScrollBar({
 |---|---|
 | `createTuiApp` / `TuiApp` / 文本选择 | `packages/runtime/src/index.ts` |
 | 高频渲染合帧调度 | `packages/runtime/src/render-scheduler.ts` |
+| Smooth reveal / StreamSource onChange | `packages/stream/src/{smooth,source}.ts` |
 | `AgentEvent` / `tool.diff` 线协议 | `packages/agent/src/protocol.ts` |
 | Session / `diffFor()` | `packages/agent/src/session.ts` |
 | `DiffStream` / `DiffPatch` | `packages/stream/src/diff.ts` |
@@ -458,21 +475,24 @@ bridge、真实 tool event 对接或 bugent 快捷键迁移。
     执行走 registry.execute()，when / 错误隔离不能绕过。
 26. `render.mode="frame"` 只压终端绘制，不压输入处理；需要每 token 立即绘制时
     用 `paint()`，不要把 fps 设成 240 当“无合帧”。默认 microtask 语义必须保留。
+27. Smooth reveal 的 cursor 单位是终端列，不是 JS code unit；必须走
+    `Bun.sliceAnsi`，否则 CJK / emoji / SGR 会被劈开。已有历史在创建时立即
+    显示，不能把历史也重新“流”一遍。
 
 ### 包边界
 
-27. `@butui/agent` 不能静态依赖 `@butui/image`，browser 打包会碰 Bun builtin。
-28. `bun test` 的 preload 要写在 `[test].preload`，顶层 `preload` 只影响
+28. `@butui/agent` 不能静态依赖 `@butui/image`，browser 打包会碰 Bun builtin。
+29. `bun test` 的 preload 要写在 `[test].preload`，顶层 `preload` 只影响
     `bun run`。
-29. `@butui/web` 是实验层；当前 WebUI 尚未消费 `tool.diff`。
+30. `@butui/web` 是实验层；当前 WebUI 尚未消费 `tool.diff`。
 
 ## 9. 测试与验收
 
 当前：
 
 ```text
-597 pass / 0 fail
-62 test files
+604 pass / 0 fail
+63 test files
 tsc --noEmit pass
 ```
 
@@ -573,6 +593,7 @@ git -c user.name=AnyBuddy -c user.email=anybuddy@local commit
 [ ] bun --conditions=browser x tsc --noEmit 通过
 [ ] 需要真终端时跑 agent-demo / diff-demo / scrollbar-demo
 [ ] 修改流式路径时看 stream-o1
+[ ] 修改 smooth reveal 时看 smooth-stream + render-bench
 [ ] 修改 runtime 合帧时看 render-scheduler + runtime
 [ ] 修改鼠标时看 selection + scrollbar 回归
 [ ] 修改 agent 协议时看 agent-protocol + agent-replay
