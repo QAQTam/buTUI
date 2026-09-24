@@ -1173,6 +1173,29 @@ toasts.push({
 
 ---
 
+### 5.29 Tooltip（v0.1 实现）
+
+```tsx
+const tip = createTooltipController({ delayMs: 400 });
+
+<box
+  onMouseEnter={event => tip.show({ x: event.x, y: event.y })}
+  onMouseMove={event => tip.show({ x: event.x, y: event.y })}
+  onMouseLeave={() => tip.hide()}
+>
+  <text>hover target</text>
+</box>
+
+<Tooltip controller={tip} content="完整说明" placement="bottom" />
+```
+
+- controller 负责延迟 show / hide、锚点更新和 dispose。
+- `tooltipPosition()` 支持四向 placement，并按终端尺寸夹取。
+- `<Tooltip>` 只负责根 `<layer>` 合成；目标节点自行绑定鼠标事件。
+- 鼠标可移入 tooltip 本身以保持显示，移出后进入 hide delay。
+
+---
+
 ### 5.17 应用上下文（v0.1 实现）
 
 组件要能问「现在多宽 / 什么色深 / 我想订一个全局键」，但既不该认识 runtime，
@@ -1680,6 +1703,8 @@ P1：
 - `CommandPalette`：`filterCommands` + `CommandRegistry` + `<Input>` / `<List>` / `<Modal>`
 - `Toast`：`createToastQueue` / `<ToastViewport>`，TTL / dedupe / overflow /
   action / pause-resume（见 §5.28）
+- `Tooltip`：`createTooltipController` / `tooltipPosition` / `<Tooltip>`，
+  延迟、四向定位与根 layer（见 §5.29）
 - `Select` / `Tabs`：`<Select>`（↑↓ + Enter）与 `<Tabs>`（←→ 立即切换）
 - `Table`：列宽显式给或按内容算，支持左 / 中 / 右对齐
 - `Tree`：受控展开（`expanded` + `onToggle`），←→ 展开收起、→ 进子节点

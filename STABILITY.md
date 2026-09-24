@@ -36,7 +36,7 @@ const app = createTuiApp({
 | 布局 | `@butui/layout` | **稳定**（`Cell` / `Line` / `Frame` / `layout`） |
 | 渲染 | `@butui/renderer` | **稳定**（`Renderer` / `plainText` / `paintLine`） |
 | 终端 | `@butui/terminal` | **稳定**（`TerminalSession` / 输入解码 / 能力探测 / `osc22` / `osc52`） |
-| 基础组件 | `@butui/components` | **稳定**（编辑器 / 选择 / 列表 / 滚动 / ScrollBar / Slider / SplitPane / CommandPalette / Toast / Diff / 弹窗 / 展示组件） |
+| 基础组件 | `@butui/components` | **稳定**（编辑器 / 选择 / 列表 / 滚动 / ScrollBar / Slider / SplitPane / CommandPalette / Toast / Tooltip / Diff / 弹窗 / 展示组件） |
 | 插件 / Slot | `@butui/plugins` | **稳定**（`Plugin` / `SlotRegistry`；Solid 适配在 `@butui/plugins/solid`；loader 在 `@butui/plugins/loader`） |
 | 命令 / Keymap | `@butui/keymap` | **稳定**（`CommandRegistry` / `Keymap`；Solid 适配在 `@butui/keymap/solid`） |
 | 流式文本 | `@butui/stream` | **稳定**（`StreamSource` / `DiffStream` / `<stream>`） |
@@ -712,6 +712,26 @@ const toasts = createToastQueue({ defaultDurationMs: 5_000 });
 - hover 暂停 TTL，移出后继续剩余时间；Esc / `×` 手动关闭。
 - Enter 执行首个 action；`dismissOnAction` 默认 true。
 - `<ToastViewport>` 使用根 `<layer>`，必须挂在与 `<Modal>` 相同的视图根部。
+
+### 4.27 Tooltip：`createTooltipController` / `<Tooltip>`
+
+```tsx
+const tip = createTooltipController({ delayMs: 400 });
+
+<box
+  onMouseEnter={event => tip.show({ x: event.x, y: event.y })}
+  onMouseLeave={() => tip.hide()}
+>
+  <text>target</text>
+</box>
+
+<Tooltip controller={tip} content="说明" placement="bottom" />
+```
+
+- controller 与 layer 分离，目标节点负责鼠标 enter / move / leave。
+- `tooltipPosition()` 支持 top / bottom / left / right，并按视口尺寸夹取。
+- show / hide 延迟可独立配置；tooltip 自身 hover 会保持显示。
+- `<Tooltip>` 使用根 `<layer>`，应挂在与 `<Modal>` 相同的视图根部。
 
 ## 5. 已知缺口（不要依赖，也不建议自己绕）
 

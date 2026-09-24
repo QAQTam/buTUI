@@ -9,8 +9,8 @@
 树 + 鼠标选区 / OSC 52 + 流式 Diff / 共享动画时钟 / 精确 ScrollBar +
 通用插件 / Slot / Keymap / 鼠标交互 / OSC 22 指针 / 拖动惯性 / tween /
 spring / timeline / Shimmer / Keymap chord / Command Palette / Slider /
-SplitPane / Toast / 高频 chunk 合帧 / smooth reveal 已跑通**，`bun test`
-760 个用例全绿。
+SplitPane / Toast / Tooltip / 高频 chunk 合帧 / smooth reveal 已跑通**，`bun test`
+763 个用例全绿。
 
 ```
 应用（你的 agent / 工具 / TUI）
@@ -608,6 +608,27 @@ toasts.push({
 - `<ToastViewport>` 使用根 `<layer>`，和 `<Modal>` 一样应挂在视图根部。
 - `createToastQueue()` 可独立于组件测试 / 接入自定义 renderer。
 
+## Tooltip
+
+```tsx
+const tip = createTooltipController({ delayMs: 400 });
+
+<box
+  onMouseEnter={event => tip.show({ x: event.x, y: event.y })}
+  onMouseMove={event => tip.show({ x: event.x, y: event.y })}
+  onMouseLeave={() => tip.hide()}
+>
+  <text>hover target</text>
+</box>
+
+<Tooltip controller={tip} content="完整说明" placement="bottom" />
+```
+
+- controller 与 viewport 分离，目标节点自行绑定 enter / move / leave。
+- 支持 top / bottom / left / right，并按终端尺寸夹取。
+- show / hide 延迟独立；鼠标可移入 tooltip 本身保持显示。
+- `<Tooltip>` 应和 `<Modal>` 一样挂在视图根部。
+
 ## 流式渲染 O(1)
 
 **保证**：每条 delta 的处理成本是 `O(|delta| + W)`（W = 折行宽度），与已累积
@@ -1070,7 +1091,7 @@ Demo 的工作区是**内存实现**，但走的是完全一样的 journal / dif
 | `@butui/core` | 节点树、`rev` 失效传播、`childrenRevSum`、focus、事件冒泡、theme、ANSI 解析 |
 | `@butui/solid` | `@solidjs/universal` host ops、JSX 类型、Bun 编译插件、共享动画时钟 / tween / spring / timeline / 拖动惯性、`useMouseCapture` |
 | `@butui/runtime` | `createTuiApp`：终端、合帧重绘、事件分发、鼠标选区 / OSC 52 / OSC 22 指针 —— 应用作者的唯一入口 |
-| `@butui/components` | `createTextEditor` / `<Input>` / `<Textarea>` / `<Markdown>` / `<Code>` / `<Diff>` / `<ScrollBar>` / `<Slider>` / `<SplitPane>` / `<Shimmer>` / `<CommandPalette>` / `createToastQueue` / `<ToastViewport>`、`createSelection` / `<List>` / `<VirtualList>`、`createScrollView`、`<Select>` / `<Tabs>` / `<Table>` / `<Tree>`、`<Button>` / `<Dialog>` / `<Modal>`、`ProgressBar` / `Spinner` / `Badge` / `Divider` / `KeyHint` |
+| `@butui/components` | `createTextEditor` / `<Input>` / `<Textarea>` / `<Markdown>` / `<Code>` / `<Diff>` / `<ScrollBar>` / `<Slider>` / `<SplitPane>` / `<Shimmer>` / `<CommandPalette>` / `createToastQueue` / `<ToastViewport>` / `createTooltipController` / `<Tooltip>`、`createSelection` / `<List>` / `<VirtualList>`、`createScrollView`、`<Select>` / `<Tabs>` / `<Table>` / `<Tree>`、`<Button>` / `<Dialog>` / `<Modal>`、`ProgressBar` / `Spinner` / `Badge` / `Divider` / `KeyHint` |
 | `@butui/plugins` | 通用 `SlotRegistry` / `Plugin` / 错误隔离；`@butui/plugins/solid` 提供 `createSlot` / `<Slot>`；`@butui/plugins/loader` 提供 manifest / 配置 / 动态加载 / 自动发现 / capability 门控 |
 | `@butui/keymap` | `CommandRegistry` / `createKeymap`：scope、priority、when、多键 chord / 前缀超时、冲突检测、help；Solid 适配 `useKeymap` |
 | `@butui/agent` | 事件协议（NDJSON）、Session reducer、流式 diff 事件、SPEC §10.2 组件、Artifact Canvas |
