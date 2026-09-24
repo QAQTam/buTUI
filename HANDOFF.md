@@ -2,8 +2,8 @@
 
 > 交接时间：2026-09-24  
 > 仓库：`/home/qaqtamsy/项目/buTUI`  
-> 功能基线提交：`5dbec0e feat(plugins): 通用 Slot 注册表与 Solid 插件适配`
-> 工作区状态：插件能力提交处干净
+> 功能基线提交：`ad9f929 feat(plugins): 支持 manifest 配置与动态加载`
+> 工作区状态：插件加载能力提交处干净
 > 本轮能力：通用插件 / Slot + manifest / 配置 / 动态加载
 > 当前回归：`523 pass / 0 fail`，`tsc --noEmit` 通过
 
