@@ -153,6 +153,7 @@ describe("Worker RPC", () => {
           method: "readFile",
           capability: "fs:read",
           args: ["b.txt"],
+          reason: "missing-capability",
         },
       ]);
     } finally {

@@ -3,9 +3,9 @@
 > 交接时间：2026-09-24
 > 仓库：`/home/qaqtamsy/项目/buTUI-v0.2-frontier`
 > 功能基线提交：`61d889b feat(components): add capability approval dialog`
-> 工作区状态：本文件与 RPC handshake 一并提交
-> 本轮能力：process transport + protocol handshake
-> 当前回归：`731 pass / 0 fail`，82 个测试文件，`tsc --noEmit` 通过
+> 工作区状态：本文件与 capability policies 一并提交
+> 本轮能力：per-call authorization + path / rate policy
+> 当前回归：`734 pass / 0 fail`，83 个测试文件，`tsc --noEmit` 通过
 
 ## 1. 项目定位
 
@@ -459,6 +459,8 @@ const bar = createScrollBar({
   stdio，复用 RPC、capability proxy 和 supervisor；单帧默认上限 8 MiB。
 - RPC handshake：`withRpcHandshake` 双向校验 protocol / version / capabilities，
   支持 `requiredCapabilities`、握手前排队和 timeout fail-fast。
+- Capability policies：binding 支持 async `authorize`；内置词法 path-prefix 和
+  plugin + method rate-limit，拒绝时记录 reason / detail 且不执行 handler。
   Worker / process 只做崩溃和堆隔离，不是 capability 或 OS sandbox。
 
 关键实测：
@@ -586,8 +588,8 @@ bridge、真实 tool event 对接或 bugent 快捷键迁移。
 当前：
 
 ```text
-731 pass / 0 fail
-82 test files
+734 pass / 0 fail
+83 test files
 tsc --noEmit pass
 ```
 
@@ -609,6 +611,7 @@ tsc --noEmit pass
 - `tests/worker-supervisor.test.ts`
 - `tests/process-rpc.test.ts`
 - `tests/rpc-handshake.test.ts`
+- `tests/capability-policy.test.ts`
 - `tests/keymap.test.ts`
 - `tests/keymap-runtime.test.tsx`
 - `tests/command-palette.test.tsx`
@@ -638,8 +641,8 @@ git diff --check
 
 - 插件已有 manifest / 配置 / 直接依赖发现 / capability 白名单、运行时审批、
   approval queue / dialog、lease / TTL / revoke、Worker RPC、crash fail-fast、
-  capability proxy、restart supervision、NDJSON process transport 与 protocol
-  handshake；仍无进程权限沙箱、heap / CPU 资源上限和 capability 细粒度协商。
+  capability proxy、restart supervision、NDJSON process transport、protocol
+  handshake，以及 path / rate 调用级策略；仍无进程权限沙箱和 heap / CPU 硬上限。
 - 鼠标已有 hover / 双击 / 右键 / pointer capture / local 坐标 / drag 生命周期 /
   OSC 22 指针 / 拖动惯性；无 pointerId、多指针。惯性只接 ScrollBar / Slider。
 - Keymap 已有多键 chord / 前缀超时，Command Palette 已有基础 UI；无用户自定义
@@ -676,8 +679,8 @@ git diff --check
    bugent 决定默认策略、目录清理和恢复语义。
 4. **插件 worker / 跨进程隔离**：审批队列、dialog、lease / TTL / revoke、
    Worker RPC、crash fail-fast、capability proxy、restart supervision、NDJSON
-   process transport 与 protocol handshake 已完成；下一步做 capability 细粒度
-   协商、进程资源上限和 OS sandbox 边界。
+   process transport、protocol handshake 与 path / rate 策略已完成；下一步做
+   heap / CPU 硬上限、进程权限 sandbox 和策略审计持久化。
 5. **Portal / Dynamic / Toast / Tooltip**：补齐 OpenTUI 已有的通用组件接口。
 6. **动画编排增强**：更复杂的 stagger、滚动回弹和动画调试工具。
 7. **WebUI diff / 水平 ScrollBar**：等真实需求出现后再做。

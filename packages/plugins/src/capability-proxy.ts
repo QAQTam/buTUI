@@ -10,9 +10,31 @@ export type WorkerCapabilityHandler = (
   ...args: any[]
 ) => unknown | Promise<unknown>;
 
+export interface WorkerCapabilityRequest {
+  pluginId: string;
+  method: string;
+  capability: PluginCapability;
+  args: readonly unknown[];
+}
+
+export type WorkerCapabilityAuthorization =
+  | boolean
+  | {
+      allowed: boolean;
+      reason?: string;
+    };
+
+export type WorkerCapabilityAuthorizer = (
+  request: WorkerCapabilityRequest
+) =>
+  | WorkerCapabilityAuthorization
+  | Promise<WorkerCapabilityAuthorization>;
+
 export interface WorkerCapabilityBinding {
   capability: PluginCapability;
   handler: WorkerCapabilityHandler;
+  /** 名称级 capability 通过后的调用级约束；false / throw 都 fail closed。 */
+  authorize?: WorkerCapabilityAuthorizer;
 }
 
 export type WorkerCapabilityBindings = Record<
@@ -20,11 +42,14 @@ export type WorkerCapabilityBindings = Record<
   WorkerCapabilityBinding
 >;
 
-export interface WorkerCapabilityDeniedEvent {
-  pluginId: string;
-  method: string;
-  capability: PluginCapability;
-  args: readonly unknown[];
+export type WorkerCapabilityDeniedReason =
+  | "missing-capability"
+  | "policy"
+  | "policy-error";
+
+export interface WorkerCapabilityDeniedEvent extends WorkerCapabilityRequest {
+  reason: WorkerCapabilityDeniedReason;
+  detail?: string;
 }
 
 export interface WorkerCapabilityProxyOptions {
@@ -53,20 +78,66 @@ export function serveWorkerCapabilities(
       );
     }
     handlers[method] = async (...args: unknown[]) => {
+      const request: WorkerCapabilityRequest = {
+        pluginId: options.pluginId,
+        method,
+        capability: binding.capability,
+        args,
+      };
       if (!options.broker.has(options.pluginId, binding.capability)) {
-        options.onDenied?.({
-          pluginId: options.pluginId,
-          method,
-          capability: binding.capability,
-          args,
-        });
-        throw new Error(
-          `[butui] worker capability denied: ${options.pluginId}/${method} (${binding.capability})`
-        );
+        deny(request, options, "missing-capability");
+      }
+      if (binding.authorize) {
+        let authorization: WorkerCapabilityAuthorization;
+        try {
+          authorization = await binding.authorize(request);
+        } catch (error) {
+          deny(request, options, "policy-error", asError(error).message);
+        }
+        if (!isAuthorized(authorization)) {
+          deny(
+            request,
+            options,
+            "policy",
+            typeof authorization === "object"
+              ? authorization.reason
+              : undefined
+          );
+        }
       }
       return binding.handler(...args);
     };
   }
 
   return serveWorkerRpc(handlers, target);
+}
+
+function deny(
+  request: WorkerCapabilityRequest,
+  options: WorkerCapabilityProxyOptions,
+  reason: WorkerCapabilityDeniedReason,
+  detail?: string
+): never {
+  options.onDenied?.({
+    ...request,
+    reason,
+    ...(detail ? { detail } : {}),
+  });
+  throw new Error(
+    `[butui] worker capability denied: ${request.pluginId}/${request.method} (${request.capability})` +
+      (detail ? `: ${detail}` : "")
+  );
+}
+
+function isAuthorized(value: WorkerCapabilityAuthorization): boolean {
+  return (
+    value === true ||
+    (typeof value === "object" &&
+      value !== null &&
+      value.allowed === true)
+  );
+}
+
+function asError(value: unknown): Error {
+  return value instanceof Error ? value : new Error(String(value));
 }
