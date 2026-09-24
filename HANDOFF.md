@@ -4,8 +4,8 @@
 > 仓库：`/home/qaqtamsy/项目/buTUI`  
 > 功能基线提交：`5dbec0e feat(plugins): 通用 Slot 注册表与 Solid 插件适配`
 > 工作区状态：插件能力提交处干净
-> 本轮能力：通用插件 / Slot 包（`@butui/plugins`）
-> 当前回归：`517 pass / 0 fail`，`tsc --noEmit` 通过
+> 本轮能力：通用插件 / Slot + manifest / 配置 / 动态加载
+> 当前回归：`523 pass / 0 fail`，`tsc --noEmit` 通过
 
 ## 1. 项目定位
 
@@ -256,13 +256,17 @@ const bar = createScrollBar({
 
 - `@butui/plugins`：`Plugin` / `SlotRegistry` / `createSlotRegistry`。
 - `@butui/plugins/solid`：`createSolidSlotRegistry` / `createSlot` / `<Slot>`。
+- `@butui/plugins/loader`：manifest / JSON+TS 配置 / 动态 import / 工厂插件。
 - 排序：`order` → 注册顺序 → `id`。
 - 模式：`append` / `replace` / `single_winner`。
 - 生命周期：`setup`（可返回 cleanup）→ `dispose`。
-- 错误隔离：setup / render / dispose 失败进错误缓存，单插件失败不影响其它插件。
+- 错误隔离：load / setup / render / dispose 失败进错误缓存，单插件失败不影响其它插件。
 - `createSlotRegistry(host, key, context)` 同一 key 必须复用同一个 context 对象。
-- 已有 `scripts/plugin-demo.tsx` 和 `tests/plugins.test.ts` /
-  `tests/plugin-slot.test.tsx`。
+- manifest 支持 `butui.plugin.json` 或 `package.json#butui`；模块支持 default /
+  named `plugin` / 工厂函数。
+- 已有 `scripts/plugin-demo.tsx`、`scripts/plugins/butui.config.json` 和
+  `tests/plugins.test.ts` / `tests/plugin-slot.test.tsx` /
+  `tests/plugin-loader.test.ts`。
 
 ## 6. 稳定接口入口
 
@@ -276,6 +280,7 @@ const bar = createScrollBar({
 | ScrollBar 几何模型 | `packages/components/src/scrollbar.ts` |
 | `<ScrollBar>` | `packages/components/src/scrollbar.tsx` |
 | Plugin / SlotRegistry | `packages/plugins/src/{types,registry}.ts` |
+| Plugin loader / manifest / config | `packages/plugins/src/{loader,manifest,config}.ts` |
 | Solid `<Slot>` | `packages/plugins/src/solid.tsx` |
 | 动画调度 | `packages/solid/src/animation.ts` |
 | 布局 / Frame / selectionText | `packages/layout/src/index.ts` |
@@ -333,8 +338,8 @@ bridge、真实 tool event 对接或 bugent 快捷键迁移。
 当前：
 
 ```text
-517 pass / 0 fail
-50 test files
+523 pass / 0 fail
+51 test files
 tsc --noEmit pass
 ```
 
@@ -349,6 +354,7 @@ tsc --noEmit pass
 - `tests/animation.test.tsx`
 - `tests/plugins.test.ts`
 - `tests/plugin-slot.test.tsx`
+- `tests/plugin-loader.test.ts`
 - `tests/solid-cleanup-contract.test.tsx`
 
 提交前至少跑：
@@ -363,7 +369,8 @@ git diff --check
 
 ## 10. 已知缺口
 
-- 插件只有运行时注册表；无包发现 / manifest / 配置加载 / 权限 / 跨进程隔离。
+- 插件已有 manifest / 配置 / 动态加载；无 node_modules 自动扫描 / 权限 /
+  跨进程隔离。
 - Diff 没有 word-level diff、任意位置删除、hunk 折叠、“滚开后有新行”提示。
 - ScrollBar 只有垂直轴；无自动隐藏、hover 展开、水平轴、惯性。
 - 动画只有共享时钟和 Diff 游标；无 tween / spring / timeline / shimmer。
@@ -378,7 +385,7 @@ git diff --check
 
 按通用 TUI 收益排序：
 
-1. **插件发现 / manifest / 配置加载**：把显式 `register()` 提升为可配置插件包。
+1. **插件自动发现 / 权限**：从显式配置扩展到 node_modules 扫描与能力约束。
 2. **Keymap / Command Registry**：通用快捷键、冲突检测、scope、帮助页。
 3. **Portal / Dynamic / Toast / Tooltip**：补齐 OpenTUI 已有的通用组件接口。
 4. **Timeline / tween / spring**：建立在现有 `AnimationScheduler` 上。
@@ -417,7 +424,7 @@ git -c user.name=AnyBuddy -c user.email=anybuddy@local commit
 [ ] 修改流式路径时看 stream-o1
 [ ] 修改鼠标时看 selection + scrollbar 回归
 [ ] 修改 agent 协议时看 agent-protocol + agent-replay
-[ ] 修改插件 / Slot 时看 plugins + plugin-slot
+[ ] 修改插件 / Slot 时看 plugins + plugin-slot + plugin-loader
 [ ] 完成后更新 README / SPEC / STABILITY
 ```
 

@@ -12,6 +12,10 @@
     "./solid": {
       "types": "./src/solid.tsx",
       "default": "./src/solid.tsx"
+    },
+    "./loader": {
+      "types": "./src/loader.ts",
+      "default": "./src/loader.ts"
     }
   },
   "dependencies": {

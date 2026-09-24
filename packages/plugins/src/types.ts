@@ -12,7 +12,12 @@ export type PluginContext = object;
 /** 多个插件贡献同一个 Slot 时的合成方式。 */
 export type SlotMode = "append" | "replace" | "single_winner";
 
-export type PluginErrorPhase = "setup" | "render" | "dispose" | "error_placeholder";
+export type PluginErrorPhase =
+  | "load"
+  | "setup"
+  | "render"
+  | "dispose"
+  | "error_placeholder";
 
 /** `"registry"` / `"core"` 是内置来源；第三方适配器可以传自己的字符串。 */
 export type PluginErrorSource = "registry" | "core" | (string & {});

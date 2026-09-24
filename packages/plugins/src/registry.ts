@@ -146,6 +146,11 @@ export class SlotRegistry<
     return this.unregisterEntry(entry);
   }
 
+  /** 当前是否已成功注册该 id。 */
+  has(id: string): boolean {
+    return this.plugins.some(entry => entry.plugin.id === id);
+  }
+
   updateOrder(id: string, order: number): boolean {
     const entry = this.plugins.find(item => item.plugin.id === id);
     if (!entry) return false;

@@ -819,9 +819,36 @@ render / dispose 失败会进入错误缓存并通知监听器，但不会阻止
 `createSlotRegistry(host, key, context)` 以 host + key 复用实例；同一个 key
 传不同 context 对象会抛错，避免两份注册表看似相同却互不通知。
 
+插件包通过 manifest 声明入口：
+
+```json
+{
+  "entry": "./src/index.ts",
+  "id": "my-plugin",
+  "order": 10
+}
+```
+
+manifest 可放在 `butui.plugin.json`，也可写在 `package.json` 的 `"butui"`
+字段。应用配置支持 JSON / TS：
+
+```ts
+export default {
+  plugins: [
+    "some-package",
+    { module: "./local-plugin.tsx", id: "local:one", options: { mode: "safe" } },
+  ],
+};
+```
+
+`@butui/plugins/loader` 负责：解析相对路径 / 包名、读取最近 manifest、动态
+`import()`、识别 default / named `plugin` / 工厂导出、应用配置覆盖、注册到
+SlotRegistry，并返回只卸载本次加载项的 `dispose()`。任何单条模块的解析、
+import、工厂或注册错误都记为 `phase:"load"`，后续插件继续加载。
+
 **与 OpenTUI 的边界：** 不实现 `createRuntimePlugin` 那类 native module
-rewrite —— buTUI 默认零 native core，不需要替换 Zig ABI 模块。插件发现 /
-manifest / 配置加载也暂不在核心内。
+rewrite —— buTUI 默认零 native core，不需要替换 Zig ABI 模块。当前也不做
+node_modules 自动扫描、权限或跨进程隔离；应用必须提供配置或条目列表。
 
 ---
 
@@ -1715,9 +1742,12 @@ type UiCommand =
 
 - 核心协议：`@butui/plugins`
 - Solid 适配：`@butui/plugins/solid`
+- manifest / 配置 / 动态加载：`@butui/plugins/loader`
 - 应用壳声明 Slot；插件以 `{ id, order, setup, dispose, slots }` 注册。
 - 三种合成模式：`append` / `replace` / `single_winner`。
 - 注册表支持 batch、响应式订阅、错误缓存和错误监听。
+- loader 支持 JSON / TS 配置、包 manifest、相对路径 / 包名、工厂插件和
+  统一 dispose。
 - 插件之间必须有错误隔离；单个插件抛错不能让整屏失效。
 - 插件 API 不硬编码任何工具名；工具卡片、状态栏、帮助面板都只是 Slot 的
   普通消费者。
@@ -1725,7 +1755,7 @@ type UiCommand =
 当前不做的：
 
 - native runtime module rewrite；
-- 插件包发现、manifest、权限或动态安装；
+- node_modules 自动扫描、权限或动态安装；
 - 跨进程插件隔离。
 
 不能把：

@@ -470,7 +470,14 @@ registry.register({
   错误边界，单个插件失败不会影响兄弟插件。
 - `createSlotRegistry(host, key, context)` 要求同一 key 使用同一个 context
   对象；违反时直接抛错。
-- 当前没有插件包发现 / manifest / 动态安装协议，应用需要显式注册。
+- `@butui/plugins/loader` 提供 `readPluginManifest` / `findPluginManifest` /
+  `readPluginConfig` / `normalizePluginEntries` / `loadPlugins`。
+- manifest 支持 `butui.plugin.json` 或 `package.json#butui`；配置支持 JSON / TS。
+- `loadPlugins()` 的模块导出支持默认导出、命名 `plugin` 和工厂函数；工厂收到
+  `{ id, module, path, cwd, options, context, manifest? }`。
+- loader 单条失败记 `phase:"load"` 并继续；返回的 `dispose()` 只卸载本次成功
+  加载的插件。
+- 当前没有 node_modules 自动扫描、权限或跨进程隔离，应用必须提供配置 / 条目。
 
 ## 5. 已知缺口（不要依赖，也不建议自己绕）
 
@@ -496,8 +503,8 @@ registry.register({
 - **没有布局调试工具**（类似 flexbox inspector）。
 - **焦点不会自动清理**：被移除的节点如果还是焦点，`focusedId()` 会保留它的
   id（下一次 tab 会自动跳到活着的节点）。组件里用 `isFocused` 不受影响。
-- **插件只有运行时注册表**：没有包发现、manifest、配置加载、权限或跨进程隔离；
-  应用必须显式 `register()` / `unregister()`。
+- **插件只有配置加载，没有自动发现**：没有 node_modules 扫描、权限或跨进程
+  隔离；应用必须提供配置 / 条目，插件在应用进程内执行。
 - **`@butui/web` 是实验层**：接口可能变。
 
 ## 6. 版本
