@@ -1,9 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import {
   createFileAuditLog,
+  createHttpAuditSink,
   createMemoryAuditLog,
   readAuditLog,
+  withAuditSinks,
 } from "@butui/plugins";
+import type { AuditRotationSummary } from "@butui/plugins";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -64,6 +67,84 @@ describe("audit log", () => {
       await audit.dispose();
       await fs.rm(dir, { recursive: true, force: true });
     }
+  });
+
+  test("file log 超过大小后 rotation，并保留 summary", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "butui-audit-"));
+    const file = path.join(dir, "audit.ndjson");
+    const summaries: AuditRotationSummary[] = [];
+    const audit = createFileAuditLog({
+      path: file,
+      maxFileBytes: 90,
+      retainedFiles: 2,
+      now: () => 100,
+      onRotate(summary) {
+        summaries.push(summary);
+      },
+    });
+    try {
+      audit.record({ type: "event.one", payload: "x".repeat(20) });
+      await audit.flush();
+      audit.record({ type: "event.two", payload: "x".repeat(20) });
+      await audit.flush();
+
+      const rotated = (await fs.readdir(dir)).filter(entry =>
+        entry.startsWith("audit.ndjson.")
+      );
+      expect(rotated).toHaveLength(1);
+      expect(summaries).toHaveLength(1);
+      expect(summaries[0]).toMatchObject({
+        path: file,
+        events: 1,
+      });
+
+      const oldEvents = await readAuditLog(path.join(dir, rotated[0]!));
+      expect(oldEvents.map(event => event.type)).toEqual(["event.one"]);
+      const current = await readAuditLog(file);
+      expect(current.map(event => event.type)).toEqual([
+        "event.two",
+        "audit.rotated",
+      ]);
+    } finally {
+      await audit.dispose();
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("AuditSink fan-out 批量发送 NDJSON，失败后保留队列重试", async () => {
+    const requests: Array<{ url: string; body: string }> = [];
+    let failures = 1;
+    const sink = createHttpAuditSink({
+      url: "https://audit.example/ingest",
+      async fetch(url, init) {
+        requests.push({
+          url: String(url),
+          body: String(init?.body ?? ""),
+        });
+        if (failures-- > 0) {
+          return new Response("retry", { status: 503 });
+        }
+        return new Response(null, { status: 204 });
+      },
+    });
+    const audit = withAuditSinks(
+      createMemoryAuditLog({ now: () => 1 }),
+      [sink]
+    );
+    audit.record({ type: "capability.granted", pluginId: "p" });
+    audit.record({ type: "capability.denied", pluginId: "p" });
+
+    await expect(audit.flush()).rejects.toThrow("audit flush failed");
+    await audit.flush();
+    expect(requests).toHaveLength(2);
+    expect(requests[1]!.url).toBe("https://audit.example/ingest");
+    expect(
+      requests[1]!.body
+        .trim()
+        .split("\n")
+        .map(line => JSON.parse(line).type)
+    ).toEqual(["capability.granted", "capability.denied"]);
+    await audit.dispose();
   });
 
   test("memory 上限只保留最新事件，但 seq 不倒退", () => {
