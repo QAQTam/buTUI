@@ -69,6 +69,17 @@ describe("渲染器（SPEC §6 / §17）", () => {
     expect(resized.full).toBe(true);
   });
 
+  test("writer 返回 false 时标记 backpressure", () => {
+    let blocked = true;
+    const renderer = new Renderer(() => !blocked);
+    const first = renderer.draw({ lines: [line("aa")], width: 2, height: 1 } as never);
+    expect(first.blocked).toBe(true);
+
+    blocked = false;
+    const second = renderer.draw({ lines: [line("bb")], width: 2, height: 1 } as never);
+    expect(second.blocked).toBe(false);
+  });
+
   test("diffFrames 报告变化行号", () => {
     expect(diffFrames([line("a"), line("b")], [line("a"), line("c"), line("d")])).toEqual([1, 2]);
   });

@@ -76,7 +76,10 @@ export interface TuiTerminal {
   readonly colorDepth: ColorDepth;
   start(): void;
   stop(): void;
-  write(chunk: string): void;
+  /** 返回 false 表示写缓冲已满；运行时会在 drain 前停止自动绘制。 */
+  write(chunk: string): boolean | void;
+  /** 可选：stdout 写缓冲排空。 */
+  onDrain?(listener: () => void): () => void;
   /** 可选：终端层自行去重 / stop 时恢复 default */
   setMousePointer?(style: MousePointerStyle): void;
   onEvent(listener: (event: ButuiEvent) => void): () => void;
@@ -152,7 +155,7 @@ export interface TuiAppOptions {
    * 渲染合帧策略。
    *
    * 默认 `mode: "microtask"`。高频流式 chunk（例如 2000 tok/s）建议用
-   * `{ mode: "frame", fps: 60 }`：同一帧内所有 delta 只布局 / 差分一次，
+   * `{ mode: "frame", fps: 120 }`：同一帧内所有 delta 只布局 / 差分一次，
    * 最后一块仍会在尾帧绘制。
    */
   render?: RenderOptions;
@@ -388,8 +391,11 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
   };
 
   let renderScheduler: RenderScheduler | undefined;
+  let renderBlocked = false;
+  const canDrain = typeof terminal.onDrain === "function";
   const paint = (): RenderStats => {
     const stats = renderer.draw(computeFrame());
+    renderBlocked = canDrain && stats.blocked;
     renderScheduler?.markPainted();
     return stats;
   };
@@ -402,7 +408,7 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
     if (disposed) return;
     // Solid 2 的写入延迟到 flush：先提交，再决定要不要画
     flush();
-    if (!dirty) return;
+    if (!dirty || renderBlocked) return;
     dirty = false;
     paint();
     // 帧内又脏了（比如 effect 级联）→ 再排一帧
@@ -412,6 +418,8 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
   renderScheduler = new RenderScheduler(runFrame, options.render);
   const requestPaint = (): void => {
     if (disposed) return;
+    dirty = true;
+    if (renderBlocked) return;
     renderScheduler?.request();
   };
 
@@ -915,6 +923,15 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
         requestPaint();
       })
     );
+    if (canDrain && terminal.onDrain) {
+      disposers.push(
+        terminal.onDrain(() => {
+          if (!renderBlocked) return;
+          renderBlocked = false;
+          requestPaint();
+        })
+      );
+    }
 
     terminal.start();
     setMousePointer("default");
@@ -927,6 +944,7 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
     if (!started) return;
     started = false;
     renderScheduler?.cancel();
+    renderBlocked = false;
     pressedMouse = undefined;
     hoveredMouseNode = undefined;
     capturedMouseNode = undefined;

@@ -9,7 +9,7 @@
 树 + 鼠标选区 / OSC 52 + 流式 Diff / 共享动画时钟 / 精确 ScrollBar +
 通用插件 / Slot / Keymap / 鼠标交互 / OSC 22 指针 / 拖动惯性 / tween /
 spring / timeline / Shimmer / Keymap chord / Command Palette / Slider /
-SplitPane / 高频 chunk 合帧 / smooth reveal 已跑通**，`bun test` 607 个用例全绿。
+SplitPane / 高频 chunk 合帧 / smooth reveal 已跑通**，`bun test` 610 个用例全绿。
 
 ```
 应用（你的 agent / 工具 / TUI）
@@ -61,7 +61,8 @@ useKeyboard(event => {                   // 返回 true 即消费
 ```
 
 接口契约（哪些稳定、怎么演进、已知缺口）见 **[STABILITY.md](./STABILITY.md)**；
-接手开发、环境坑和下一步优先级见 **[HANDOFF.md](./HANDOFF.md)**。
+接手开发、环境坑和下一步优先级见 **[HANDOFF.md](./HANDOFF.md)**；
+bugent 第一版接入清单见 **[BUGENT_V1.md](./BUGENT_V1.md)**。
 
 ## 列表 / 虚拟列表
 
@@ -599,7 +600,7 @@ markdown 流：N=50 → 0.062 ms/delta，N=6000 → 0.041 ms/delta。
 const app = createTuiApp({
   render: {
     mode: "frame",
-    fps: 60,
+    fps: 120,
   },
   view: () => <StreamMarkdown source={source} />,
 });
@@ -618,8 +619,12 @@ frame 模式的语义：
 | 模式 | 终端写入 | 写入字节 | 说明 |
 |---|---:|---:|---|
 | `microtask` | 1000 | 89640 | 每个 tick 都绘制 |
-| `frame` 60fps | 68 | 7439 | 合并终端差分 |
-| `smooth` reveal 120fps | 176 | 17921 | 合并 + 连续推进可见 cursor |
+| `frame` 120fps | 143 | 14430 | 合并终端差分 |
+| `smooth` reveal 120fps | 176 | 17653 | 合并 + 连续推进可见 cursor |
+
+runtime 会读取 `stdout.write()` 的 backpressure 信号：写缓冲满时暂停自动绘制，
+只更新内存状态；stdout `drain` 后合并画最新一帧，不会用旧帧排队，也不会让写缓冲
+持续增长。
 
 ### 平滑显现：smooth reveal
 

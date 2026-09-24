@@ -80,10 +80,10 @@ interface TuiApp {
 ```ts
 interface RenderOptions {
   mode?: "microtask" | "frame"; // 默认 microtask
-  fps?: number;                 // frame 模式默认 60，范围 1~240
+  fps?: number;                 // frame 模式默认 120，范围 1~240
 }
 
-createTuiApp({ render: { mode: "frame", fps: 60 }, ... });
+createTuiApp({ render: { mode: "frame", fps: 120 }, ... });
 ```
 
 `frame` 模式只限制**终端绘制频率**，不丢内容：帧内多个 chunk 共享一次
@@ -96,20 +96,23 @@ createTuiApp({ render: { mode: "frame", fps: 60 }, ... });
    内多次变更只画一次。异步变更不需要任何手动通知。
 2. **`frame` 模式有帧预算。** 在事件循环能按时执行 timer 的前提下，终端绘制
    不会超过配置的 `fps`；最后一块内容仍会在尾帧绘制。
-3. **事件顺序固定**：`onKey`（应用级，返回 `true` 即消费）→ `keymap` →
+3. **stdout backpressure 不丢最新状态。** `TuiTerminal.write()` 返回 `false`
+   时 runtime 暂停自动绘制；`onDrain()` 触发后只画最新树。`RenderStats.blocked`
+   报告本次是否触发背压。自定义 terminal 不实现 `onDrain` 时忽略该信号。
+4. **事件顺序固定**：`onKey`（应用级，返回 `true` 即消费）→ `keymap` →
    `useKeyboard` → 内建（ctrl+c、tab/shift+tab）→ 焦点节点（向上冒泡）。
    鼠标：hit test 命中节点 → 冒泡；**没有节点处理**才走 `onMouse`。
-4. **resize 一定会整屏重画**（不是差分），`size()` 在重排前更新。
-5. **`dispose()` 之后不再写终端**，所有订阅解除。
-6. **默认 `scroll: "bottom"`**：内容超出视口时贴底（聊天式）。固定布局传
+5. **resize 一定会整屏重画**（不是差分），`size()` 在重排前更新。
+6. **`dispose()` 之后不再写终端**，所有订阅解除。
+7. **默认 `scroll: "bottom"`**：内容超出视口时贴底（聊天式）。固定布局传
    `scroll: () => "top"`。
-7. **`afterDraw`** 的返回值会拼在同一批写入里（原生图片协议挂这里）。
-8. **`send()` 结束前会 `flush()`**：事件引发的 signal 写入立刻落到节点树上，
+8. **`afterDraw`** 的返回值会拼在同一批写入里（原生图片协议挂这里）。
+9. **`send()` 结束前会 `flush()`**：事件引发的 signal 写入立刻落到节点树上，
    所以「send 之后读 `frame()`」永远是一致的。真正的**绘制**仍按 `render.mode`
    合并。
-9. **`frame()` 是现算的当前布局**（布局层按 rev 缓存，很便宜），不是「上一次
-   画出来的帧」—— 测试和 hit test 拿到的都是最新状态。
-10. **文本选择默认开启且不进入布局缓存。** 左键拖拽只给最终帧的 cell 打
+10. **`frame()` 是现算的当前布局**（布局层按 rev 缓存，很便宜），不是「上一次
+    画出来的帧」—— 测试和 hit test 拿到的都是最新状态。
+11. **文本选择默认开启且不进入布局缓存。** 左键拖拽只给最终帧的 cell 打
     `selected` 标记，不 `touch()` 节点；松开时默认写 OSC 52。`selection: false`
     可完全关闭。OSC 52 是 best-effort，不保证终端接受。
 

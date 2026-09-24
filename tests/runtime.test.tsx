@@ -120,6 +120,35 @@ describe("@butui/runtime —— 应用作者的唯一入口（SPEC §6 / §17）
     app.dispose();
   });
 
+  test("stdout backpressure：drain 前暂停自动绘制，drain 后只画最新帧", async () => {
+    const terminal = new FakeTerminal();
+    const [value, setValue] = createSignal(0);
+
+    const app = createTuiApp({
+      terminal,
+      view: () => <text>{`value=${value()}`}</text>,
+      onQuit: () => {},
+    });
+
+    terminal.output = "";
+    terminal.writes = 0;
+    terminal.blockWrites = true;
+    setValue(1);
+    await tick();
+    expect(terminal.writes).toBe(1);
+
+    setValue(2);
+    setValue(3);
+    await tick();
+    expect(terminal.writes).toBe(1);
+
+    terminal.drain();
+    await tick();
+    expect(terminal.writes).toBe(2);
+    expect(terminal.output).toContain("value=3");
+    app.dispose();
+  });
+
   test("键位顺序：应用级 onKey 先，返回 true 就不再派发给焦点节点", () => {
     const terminal = new FakeTerminal();
     const seen: string[] = [];

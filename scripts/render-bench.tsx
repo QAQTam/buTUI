@@ -53,7 +53,7 @@ async function run(mode: "microtask" | "frame" | "smooth") {
       ) : (
         <StreamText source={source} />
       ),
-    ...(mode === "frame" ? { render: { mode: "frame" as const, fps: 60 } } : {}),
+    ...(mode === "frame" ? { render: { mode: "frame" as const, fps: 120 } } : {}),
     onQuit: () => {},
   });
 

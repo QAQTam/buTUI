@@ -163,6 +163,7 @@ export class TerminalSession {
   private readonly decoder = new InputDecoder();
   private listeners = new Set<(event: ButuiEvent) => void>();
   private resizeListeners = new Set<(size: TerminalSize) => void>();
+  private drainListeners = new Set<() => void>();
   private escapeTimer: ReturnType<typeof setTimeout> | undefined;
   private started = false;
   private disposers: Array<() => void> = [];
@@ -221,6 +222,14 @@ export class TerminalSession {
     this.stdin.on("data", onData);
     this.disposers.push(() => this.stdin.off("data", onData));
 
+    const onDrain = () => {
+      for (const listener of [...this.drainListeners]) listener();
+    };
+    if (typeof this.stdout.on === "function") {
+      this.stdout.on("drain", onDrain);
+      this.disposers.push(() => this.stdout.off("drain", onDrain));
+    }
+
     const onResize = () => {
       const size = this.size;
       for (const listener of this.resizeListeners) listener(size);
@@ -250,9 +259,9 @@ export class TerminalSession {
     this.setRawMode(false);
   }
 
-  /** 直接写原始字节（渲染器用） */
-  write(chunk: string): void {
-    this.stdout.write(chunk);
+  /** 直接写原始字节（渲染器用）；false 表示需要等待 drain。 */
+  write(chunk: string): boolean | void {
+    return this.stdout.write(chunk);
   }
 
   /** 设置 OSC 22 指针形状；相同形状不重复写，stop 时恢复 default。 */
@@ -302,6 +311,12 @@ export class TerminalSession {
   onResize(listener: (size: TerminalSize) => void): () => void {
     this.resizeListeners.add(listener);
     return () => this.resizeListeners.delete(listener);
+  }
+
+  /** stdout 写缓冲排空后通知；不支持的 stdout 永远不通知。 */
+  onDrain(listener: () => void): () => void {
+    this.drainListeners.add(listener);
+    return () => this.drainListeners.delete(listener);
   }
 
   private emit(event: ButuiEvent): void {

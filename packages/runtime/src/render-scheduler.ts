@@ -20,7 +20,7 @@ export interface RenderOptions {
    * `frame` 适合高频流式 chunk，按 fps 限制终端写入频率。
    */
   mode?: RenderMode;
-  /** frame 模式的目标帧率，默认 60；限制在 1~240。 */
+  /** frame 模式的目标帧率，默认 120；限制在 1~240。 */
   fps?: number;
 }
 
@@ -65,7 +65,7 @@ export class RenderScheduler {
     dependencies: RenderSchedulerDependencies = {}
   ) {
     this.mode = options.mode ?? "microtask";
-    const fps = clamp(options.fps ?? 60, MIN_FPS, MAX_FPS);
+    const fps = clamp(options.fps ?? 120, MIN_FPS, MAX_FPS);
     this.intervalMs = 1000 / fps;
     this.now = dependencies.now ?? (() => performance.now());
     this.microtask = dependencies.queueMicrotask ?? queueMicrotask;

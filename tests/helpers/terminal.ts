@@ -10,12 +10,14 @@ import type { TuiSize, TuiTerminal } from "@butui/runtime";
 export class FakeTerminal implements TuiTerminal {
   output = "";
   writes = 0;
+  blockWrites = false;
   started = false;
   stopped = false;
   size: TuiSize = { columns: 40, rows: 6 };
   colorDepth = "truecolor" as const;
   private events: Array<(event: ButuiEvent) => void> = [];
   private resizes: Array<(size: TuiSize) => void> = [];
+  private drains: Array<() => void> = [];
 
   start(): void {
     this.started = true;
@@ -23,9 +25,10 @@ export class FakeTerminal implements TuiTerminal {
   stop(): void {
     this.stopped = true;
   }
-  write(chunk: string): void {
+  write(chunk: string): boolean {
     this.writes++;
     this.output += chunk;
+    return !this.blockWrites;
   }
   onEvent(listener: (event: ButuiEvent) => void): () => void {
     this.events.push(listener);
@@ -39,12 +42,22 @@ export class FakeTerminal implements TuiTerminal {
       this.resizes = this.resizes.filter(l => l !== listener);
     };
   }
+  onDrain(listener: () => void): () => void {
+    this.drains.push(listener);
+    return () => {
+      this.drains = this.drains.filter(l => l !== listener);
+    };
+  }
   emit(event: ButuiEvent): void {
     for (const listener of [...this.events]) listener(event);
   }
   resize(size: TuiSize): void {
     this.size = size;
     for (const listener of [...this.resizes]) listener(size);
+  }
+  drain(): void {
+    this.blockWrites = false;
+    for (const listener of [...this.drains]) listener();
   }
 }
 

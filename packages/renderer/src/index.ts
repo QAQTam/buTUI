@@ -10,7 +10,8 @@
 import type { Cell, Frame, Line } from "@butui/layout";
 
 export interface FrameWriter {
-  (chunk: string): void;
+  /** 返回 false 表示底层写缓冲已满，调用方应暂停下一帧。 */
+  (chunk: string): boolean | void;
 }
 
 export interface RenderStats {
@@ -22,6 +23,8 @@ export interface RenderStats {
   bytes: number;
   /** 是否整屏重绘（尺寸变化 / 首次绘制） */
   full: boolean;
+  /** 本次写入触发底层 backpressure */
+  blocked: boolean;
 }
 
 /**
@@ -142,6 +145,7 @@ export class Renderer {
       changed,
       bytes: out.length,
       full,
+      blocked: false,
     };
 
     if (this.hooks?.afterDraw) {
@@ -150,7 +154,7 @@ export class Renderer {
       if (extra) out += extra;
     }
 
-    if (out) this.write(out);
+    if (out) stats.blocked = this.write(out) === false;
     this.previous = frame.lines;
     this.width = frame.width;
     this.height = frame.height;
