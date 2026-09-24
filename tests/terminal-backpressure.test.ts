@@ -15,6 +15,25 @@ function streams(writeResult: boolean) {
 }
 
 describe("TerminalSession backpressure", () => {
+  test("start 获取 frame lease，stop 释放", () => {
+    const { stdin, stdout } = streams(true);
+    const session = new TerminalSession({
+      stdin,
+      stdout,
+      altScreen: false,
+      mouse: false,
+      bracketedPaste: false,
+      focusEvents: false,
+    });
+
+    session.start();
+    expect(session.frameLease?.state).toBe("active");
+    expect(session.outputArbiter.current()).toBe(session.frameLease);
+    session.stop();
+    expect(session.frameLease).toBeUndefined();
+    expect(session.outputArbiter.current()).toBeUndefined();
+  });
+
   test("write 透传 false，drain 事件转发给订阅者", () => {
     const { stdin, stdout } = streams(false);
     const session = new TerminalSession({

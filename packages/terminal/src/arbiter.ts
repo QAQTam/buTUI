@@ -109,6 +109,16 @@ export class TerminalArbiter {
     });
   }
 
+  /**
+   * 同步获取 lease；只有当前无 owner 且无等待队列时成功。
+   * 给必须保持同步签名的 TerminalSession.start() 使用。
+   */
+  tryAcquire(request: LeaseRequest): TerminalLease | undefined {
+    if (request.signal?.aborted) return undefined;
+    if (this.active || this.pending.length > 0) return undefined;
+    return this.grant(request);
+  }
+
   acquire(request: LeaseRequest): Promise<TerminalLease> {
     if (request.signal?.aborted) {
       return Promise.reject(new Error("[butui] terminal lease request aborted"));

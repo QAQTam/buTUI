@@ -51,6 +51,32 @@ function harness(writeResult = true) {
 }
 
 describe("TerminalArbiter", () => {
+  test("tryAcquire 只在空闲时同步成功", async () => {
+    const h = harness();
+    const first = h.arbiter.tryAcquire({
+      owner: "runtime",
+      kind: "frame",
+      reason: "sync-start",
+    });
+    expect(first?.state).toBe("active");
+    expect(
+      h.arbiter.tryAcquire({
+        owner: "other",
+        kind: "append",
+        reason: "busy",
+      })
+    ).toBeUndefined();
+
+    await h.arbiter.release(first!);
+    const next = h.arbiter.tryAcquire({
+      owner: "other",
+      kind: "append",
+      reason: "after-release",
+    });
+    expect(next?.kind).toBe("append");
+    h.arbiter.dispose();
+  });
+
   test("同一时刻只有一个 active lease，release 后按优先级授予", async () => {
     const h = harness();
     const first = await h.arbiter.acquire({

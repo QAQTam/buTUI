@@ -15,6 +15,10 @@ import type {
   PasteEvent,
 } from "@butui/core";
 import { InputDecoder } from "./input.ts";
+import {
+  TerminalArbiter,
+  type TerminalLease,
+} from "./arbiter.ts";
 
 export * from "./input.ts";
 export * from "./arbiter.ts";
@@ -155,12 +159,24 @@ export interface TerminalSessionOptions {
   mousePointer?: boolean;
   /** 单独的 ESC 按键等待多久算「真的按了 ESC」 */
   escapeTimeout?: number;
+  /** 注入共享 TerminalArbiter；不传时 TerminalSession 自建一个。 */
+  arbiter?: TerminalArbiter;
+  /** frame lease owner，默认 terminal-session。 */
+  leaseOwner?: string;
 }
 
 export class TerminalSession {
   private readonly stdin: NodeJS.ReadStream;
   private readonly stdout: NodeJS.WriteStream;
-  private readonly options: Required<Omit<TerminalSessionOptions, "stdin" | "stdout">>;
+  private readonly options: Required<
+    Omit<
+      TerminalSessionOptions,
+      "stdin" | "stdout" | "arbiter" | "leaseOwner"
+    >
+  >;
+  private readonly arbiter: TerminalArbiter;
+  private readonly leaseOwner: string;
+  private lease: TerminalLease | undefined;
   private readonly decoder = new InputDecoder();
   private listeners = new Set<(event: ButuiEvent) => void>();
   private resizeListeners = new Set<(size: TerminalSize) => void>();
@@ -173,6 +189,20 @@ export class TerminalSession {
   constructor(options: TerminalSessionOptions = {}) {
     this.stdin = options.stdin ?? process.stdin;
     this.stdout = options.stdout ?? process.stdout;
+    this.leaseOwner = options.leaseOwner ?? "terminal-session";
+    this.arbiter =
+      options.arbiter ??
+      new TerminalArbiter({
+        write: bytes =>
+          typeof bytes === "string"
+            ? this.stdout.write(bytes)
+            : this.stdout.write(Buffer.from(bytes)),
+        onDrain: listener => {
+          if (typeof this.stdout.on !== "function") return () => {};
+          this.stdout.on("drain", listener);
+          return () => this.stdout.off("drain", listener);
+        },
+      });
     this.options = {
       altScreen: options.altScreen ?? true,
       mouse: options.mouse ?? true,
@@ -196,22 +226,36 @@ export class TerminalSession {
     return detectColorDepth();
   }
 
+  get outputArbiter(): TerminalArbiter {
+    return this.arbiter;
+  }
+
+  get frameLease(): TerminalLease | undefined {
+    return this.lease;
+  }
+
   start(): void {
     if (this.started) return;
     this.started = true;
+    this.lease = this.arbiter.tryAcquire({
+      owner: this.leaseOwner,
+      kind: "frame",
+      reason: "terminal-session",
+    });
 
-    if (this.options.altScreen) this.write(CONTROL.altScreenOn);
-    this.write(CONTROL.cursorHide);
+    if (this.options.altScreen) this.write(CONTROL.altScreenOn, "control");
+    this.write(CONTROL.cursorHide, "control");
     if (this.options.mouse) {
       this.write(
         this.options.mouseMotion === "hover"
           ? CONTROL.mouseHoverOn
-          : CONTROL.mouseOn
+          : CONTROL.mouseOn,
+        "control"
       );
     }
-    if (this.options.bracketedPaste) this.write(CONTROL.pasteOn);
-    if (this.options.focusEvents) this.write(CONTROL.focusOn);
-    if (this.options.kittyKeyboard) this.write(CONTROL.kittyKeysOn);
+    if (this.options.bracketedPaste) this.write(CONTROL.pasteOn, "control");
+    if (this.options.focusEvents) this.write(CONTROL.focusOn, "control");
+    if (this.options.kittyKeyboard) this.write(CONTROL.kittyKeysOn, "control");
 
     this.setRawMode(true);
 
@@ -250,19 +294,32 @@ export class TerminalSession {
     for (const dispose of this.disposers.splice(0)) dispose();
     if (this.escapeTimer) clearTimeout(this.escapeTimer);
 
-    if (this.options.kittyKeyboard) this.write(CONTROL.kittyKeysOff);
-    if (this.options.focusEvents) this.write(CONTROL.focusOff);
-    if (this.options.bracketedPaste) this.write(CONTROL.pasteOff);
-    if (this.options.mouse) this.write(CONTROL.mouseOff);
+    if (this.options.kittyKeyboard) this.write(CONTROL.kittyKeysOff, "control");
+    if (this.options.focusEvents) this.write(CONTROL.focusOff, "control");
+    if (this.options.bracketedPaste) this.write(CONTROL.pasteOff, "control");
+    if (this.options.mouse) this.write(CONTROL.mouseOff, "control");
     if (this.mousePointerStyle !== undefined) this.setMousePointer("default");
-    this.write(CONTROL.cursorShow);
-    if (this.options.altScreen) this.write(CONTROL.altScreenOff);
+    this.write(CONTROL.cursorShow, "control");
+    if (this.options.altScreen) this.write(CONTROL.altScreenOff, "control");
+    const lease = this.lease;
+    this.lease = undefined;
+    if (lease) void this.arbiter.release(lease);
     this.setRawMode(false);
   }
 
-  /** 直接写原始字节（渲染器用）；false 表示需要等待 drain。 */
-  write(chunk: string): boolean | void {
-    return this.stdout.write(chunk);
+  /**
+   * 写终端输出。
+   *
+   * 默认按 frame 输出；控制序列显式传 `"control"`，日志 / 外部追加传
+   * `"append"`。lease 不可用时回退到原有 stdout.write，保持 v0.1 兼容。
+   */
+  write(
+    chunk: string,
+    kind: "frame" | "append" | "control" = "frame"
+  ): boolean | void {
+    if (!this.lease) return this.stdout.write(chunk);
+    const receipt = this.arbiter.write(this.lease, { kind, bytes: chunk });
+    return receipt.accepted && !receipt.blocked;
   }
 
   /** 设置 OSC 22 指针形状；相同形状不重复写，stop 时恢复 default。 */
@@ -271,7 +328,7 @@ export class TerminalSession {
     const normalized = style === "auto" ? "default" : style;
     if (this.mousePointerStyle === normalized) return;
     this.mousePointerStyle = normalized;
-    this.write(osc22(normalized, { multiplexer: "auto" }));
+    this.write(osc22(normalized, { multiplexer: "auto" }), "control");
   }
 
   /**
@@ -282,7 +339,7 @@ export class TerminalSession {
    */
   copy(text: string, options: Osc52Options = {}): boolean {
     if (text.length === 0) return false;
-    this.write(osc52(text, options));
+    this.write(osc52(text, options), "control");
     return true;
   }
 
