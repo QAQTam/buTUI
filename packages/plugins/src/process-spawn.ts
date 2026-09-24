@@ -1,3 +1,5 @@
+import type { AuditLog } from "./audit.ts";
+import { safeRecordAudit } from "./audit.ts";
 import type { CgroupLease } from "./cgroup.ts";
 import { attachProcessRpc } from "./process-rpc.ts";
 import type {
@@ -29,6 +31,7 @@ export interface SpawnProcessRpcOptions {
   env?: Record<string, string | undefined>;
   resources?: ProcessRpcResourcePolicy;
   onStderr?: (chunk: string) => void;
+  audit?: AuditLog;
 }
 
 export interface SpawnedProcessRpcProcess extends ProcessRpcSubprocess {
@@ -87,6 +90,11 @@ export function spawnProcessRpc(
       ...(cgroupTarget !== undefined ? { cgroup: cgroupTarget } : {}),
     });
   } catch (error) {
+    safeRecordAudit(options.audit, {
+      type: "process.spawn_failed",
+      cmd: [...options.cmd],
+      error: asError(error).message,
+    });
     if (cgroupLease) void cgroupLease.release().catch(() => {});
     throw error;
   }
@@ -94,6 +102,35 @@ export function spawnProcessRpc(
     if (cgroupLease) void cgroupLease.release().catch(() => {});
     throw new Error("[butui] spawnProcessRpc requires pipe stdio");
   }
+
+  safeRecordAudit(options.audit, {
+    type: "process.started",
+    pid: child.pid,
+    cmd: [...options.cmd],
+    ...(cgroupTarget !== undefined ? { cgroup: String(cgroupTarget) } : {}),
+  });
+  void child.exited
+    .then(code => {
+      safeRecordAudit(options.audit, {
+        type: "process.exited",
+        pid: child.pid,
+        code,
+      });
+      if (code !== 0) {
+        safeRecordAudit(options.audit, {
+          type: "process.killed",
+          pid: child.pid,
+          code,
+        });
+      }
+    })
+    .catch(error => {
+      safeRecordAudit(options.audit, {
+        type: "process.exit_error",
+        pid: child.pid,
+        error: asError(error).message,
+      });
+    });
 
   if (cgroupLease) {
     void child.exited
@@ -117,6 +154,14 @@ export function spawnProcessRpc(
           ),
         }
       : {}),
+  });
+  endpoint.addEventListener("error", event => {
+    const error = (event as ErrorEvent).error;
+    safeRecordAudit(options.audit, {
+      type: "process.error",
+      pid: child.pid,
+      error: error?.message ?? (event as ErrorEvent).message ?? "process error",
+    });
   });
 
   if (child.stderr) {
@@ -166,4 +211,8 @@ function isCgroupLease(value: unknown): value is CgroupLease {
     typeof (value as { path?: unknown }).path === "string" &&
     typeof (value as { release?: unknown }).release === "function"
   );
+}
+
+function asError(value: unknown): Error {
+  return value instanceof Error ? value : new Error(String(value));
 }

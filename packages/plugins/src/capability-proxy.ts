@@ -1,3 +1,5 @@
+import type { AuditLog } from "./audit.ts";
+import { safeRecordAudit } from "./audit.ts";
 import type { CapabilityBroker } from "./capability.ts";
 import type { PluginCapability } from "./types.ts";
 import { serveWorkerRpc } from "./worker-rpc.ts";
@@ -57,6 +59,7 @@ export interface WorkerCapabilityProxyOptions {
   broker: Pick<CapabilityBroker, "has">;
   bindings: WorkerCapabilityBindings;
   onDenied?: (event: WorkerCapabilityDeniedEvent) => void;
+  audit?: AuditLog;
 }
 
 /**
@@ -120,6 +123,14 @@ function deny(
 ): never {
   options.onDenied?.({
     ...request,
+    reason,
+    ...(detail ? { detail } : {}),
+  });
+  safeRecordAudit(options.audit, {
+    type: "capability.denied",
+    pluginId: request.pluginId,
+    method: request.method,
+    capability: request.capability,
     reason,
     ...(detail ? { detail } : {}),
   });

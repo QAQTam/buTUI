@@ -1,6 +1,8 @@
 import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import type { AuditLog } from "./audit.ts";
+import { safeRecordAudit } from "./audit.ts";
 
 export interface CgroupCpuLimit {
   quotaUs: number;
@@ -53,6 +55,7 @@ export interface CgroupManagerOptions {
   /** 删除重试间隔；默认 10ms。 */
   retryDelayMs?: number;
   sleep?: (delayMs: number) => Promise<void>;
+  audit?: AuditLog;
 }
 
 export interface CgroupManager {
@@ -97,6 +100,7 @@ export function createCgroupManager(
     options.sleep ??
     ((delayMs: number) =>
       new Promise<void>(resolve => setTimeout(resolve, delayMs)));
+  const audit = options.audit;
   const leases = new Map<string, MutableCgroupLease>();
 
   const detect = async (): Promise<CgroupSupport> => {
@@ -157,9 +161,20 @@ export function createCgroupManager(
         );
         released = true;
         leases.delete(target);
+        safeRecordAudit(audit, {
+          type: "cgroup.released",
+          name: normalizedName,
+          path: target,
+        });
       },
     };
     leases.set(target, lease);
+    safeRecordAudit(audit, {
+      type: "cgroup.created",
+      name: normalizedName,
+      path: target,
+      limits: normalizedLimits,
+    });
     return lease;
   };
 
@@ -189,8 +204,17 @@ export function createCgroupManager(
           sleep
         );
         recovered.push(target);
+        safeRecordAudit(audit, {
+          type: "cgroup.recovered",
+          path: target,
+        });
       } catch (error) {
         failed.push({ path: target, error: asError(error) });
+        safeRecordAudit(audit, {
+          type: "cgroup.recover_failed",
+          path: target,
+          error: asError(error).message,
+        });
       }
     }
     return { recovered, failed };

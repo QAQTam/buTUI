@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  createMemoryAuditLog,
   createNdjsonRpcEndpoint,
   spawnProcessRpc,
 } from "@butui/plugins";
@@ -80,6 +81,7 @@ describe("process resource limits", () => {
   });
 
   test("spawnProcessRpc 的 rate limit 会 kill 失控子进程", async () => {
+    const audit = createMemoryAuditLog({ now: () => 1 });
     const spawned = spawnProcessRpc({
       cmd: [
         process.execPath,
@@ -90,6 +92,7 @@ describe("process resource limits", () => {
         maxBytesPerSecond: 1_024,
         killSignal: "SIGKILL",
       },
+      audit,
     });
     const errors: Error[] = [];
     spawned.endpoint.addEventListener("error", event => {
@@ -100,9 +103,14 @@ describe("process resource limits", () => {
     try {
       const code = await exitsWithin(spawned.process);
       expect(code).not.toBe(0);
-      expect(errors.some(error => error.message.includes("output rate exceeds"))).toBe(
-        true
-      );
+      expect(
+        errors.some(error => error.message.includes("output rate exceeds"))
+      ).toBe(true);
+      const types = audit.query().map(event => event.type);
+      expect(types).toContain("process.started");
+      expect(types).toContain("process.error");
+      expect(types).toContain("process.exited");
+      expect(types).toContain("process.killed");
     } finally {
       await spawned.endpoint.dispose();
     }

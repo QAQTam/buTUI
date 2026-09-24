@@ -1,3 +1,5 @@
+import type { AuditEventInput, AuditLog } from "./audit.ts";
+import { safeRecordAudit } from "./audit.ts";
 import { createWorkerRpc } from "./worker-rpc.ts";
 import type {
   WorkerRpcEndpoint,
@@ -48,6 +50,7 @@ export interface WorkerSupervisorOptions<
   /** 自动重启前等待；默认 0。 */
   restartDelayMs?: number;
   onEvent?: (event: WorkerSupervisorEvent) => void;
+  audit?: AuditLog;
 }
 
 export interface WorkerSupervisor<
@@ -96,6 +99,7 @@ export function createWorkerSupervisor<
   let lastError: Error | undefined;
 
   const emit = (event: WorkerSupervisorEvent): void => {
+    safeRecordAudit(options.audit, supervisorAuditEvent(event));
     for (const listener of [...listeners]) {
       try {
         listener(event);
@@ -352,4 +356,36 @@ function normalizeCount(value: number | undefined, fallback: number): number {
 
 function asError(value: unknown): Error {
   return value instanceof Error ? value : new Error(String(value));
+}
+
+function supervisorAuditEvent(
+  event: WorkerSupervisorEvent
+): AuditEventInput {
+  switch (event.type) {
+    case "started":
+      return { type: "worker.started", generation: event.generation };
+    case "restarting":
+      return {
+        type: "worker.restarting",
+        generation: event.generation,
+        reason: event.reason,
+        attempt: event.attempt,
+        ...(event.error ? { error: event.error.message } : {}),
+      };
+    case "restarted":
+      return {
+        type: "worker.restarted",
+        generation: event.generation,
+        reason: event.reason,
+      };
+    case "failed":
+      return {
+        type: "worker.failed",
+        generation: event.generation,
+        restarts: event.restarts,
+        error: event.error.message,
+      };
+    case "stopped":
+      return { type: "worker.stopped", generation: event.generation };
+  }
 }

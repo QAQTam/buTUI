@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createCgroupManager } from "@butui/plugins";
+import { createCgroupManager, createMemoryAuditLog } from "@butui/plugins";
 import type { CgroupFs } from "@butui/plugins";
 
 const ROOT = "/sys/fs/cgroup";
@@ -84,7 +84,8 @@ describe("cgroup manager", () => {
 
   test("create 写入 memory / cpu / pids，release 先 kill 再删除", async () => {
     const io = new MemoryCgroupFs();
-    const manager = createCgroupManager({ root: ROOT, fs: io });
+    const audit = createMemoryAuditLog({ now: () => 1 });
+    const manager = createCgroupManager({ root: ROOT, fs: io, audit });
     const lease = await manager.create("plugin", {
       memoryMaxBytes: 64 * 1024 * 1024,
       cpuMax: { quotaUs: 50_000, periodUs: 100_000 },
@@ -105,6 +106,10 @@ describe("cgroup manager", () => {
     });
     expect(io.dirs.has(target)).toBe(false);
     expect(lease.released).toBe(true);
+    expect(audit.query().map(event => event.type)).toEqual([
+      "cgroup.created",
+      "cgroup.released",
+    ]);
   });
 
   test("release 对 EBUSY 重试后删除", async () => {
@@ -127,13 +132,15 @@ describe("cgroup manager", () => {
     io.dirs.add(`${ROOT}/butui-old`);
     io.dirs.add(`${ROOT}/butui-old/child`);
     io.dirs.add(`${ROOT}/other`);
-    const manager = createCgroupManager({ root: ROOT, fs: io });
+    const audit = createMemoryAuditLog({ now: () => 2 });
+    const manager = createCgroupManager({ root: ROOT, fs: io, audit });
 
     const report = await manager.recover();
     expect(report.recovered).toEqual([`${ROOT}/butui-old`]);
     expect(report.failed).toEqual([]);
     expect(io.dirs.has(`${ROOT}/butui-old`)).toBe(false);
     expect(io.dirs.has(`${ROOT}/other`)).toBe(true);
+    expect(audit.query({ type: "cgroup.recovered" })).toHaveLength(1);
   });
 
   test("拒绝路径穿越和非法 limit", async () => {

@@ -6,6 +6,7 @@
  * manifest / 配置 / 动态加载见 `@butui/plugins/loader`。
  */
 export * from "./types.ts";
+export * from "./audit.ts";
 export * from "./capability.ts";
 export * from "./capability-policy.ts";
 export * from "./cgroup.ts";

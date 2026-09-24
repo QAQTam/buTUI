@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   CapabilityBroker,
+  createMemoryAuditLog,
   createPathPrefixAuthorizer,
   createRateLimitAuthorizer,
   serveWorkerCapabilities,
@@ -58,11 +59,13 @@ describe("capability policies", () => {
     const endpoint = new TestEndpoint();
     const broker = new CapabilityBroker();
     broker.grant("plugin", "fs:read");
+    const audit = createMemoryAuditLog({ now: () => 1 });
     const denied: WorkerCapabilityDeniedEvent[] = [];
     let reads = 0;
     const cleanup = serveWorkerCapabilities(endpoint, {
       pluginId: "plugin",
       broker,
+      audit,
       bindings: {
         readFile: {
           capability: "fs:read",
@@ -115,6 +118,18 @@ describe("capability policies", () => {
         args: ["allowed-evil/a.txt"],
         reason: "policy",
         detail: "path outside allowed roots: /repo/allowed-evil/a.txt",
+      },
+    ]);
+    expect(audit.query({ type: "capability.denied" })).toEqual([
+      {
+        type: "capability.denied",
+        pluginId: "plugin",
+        method: "readFile",
+        capability: "fs:read",
+        reason: "policy",
+        detail: "path outside allowed roots: /repo/allowed-evil/a.txt",
+        seq: 1,
+        at: 1,
       },
     ]);
 

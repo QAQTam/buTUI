@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { CapabilityBroker } from "@butui/plugins";
+import { CapabilityBroker, createMemoryAuditLog } from "@butui/plugins";
 
 describe("CapabilityBroker", () => {
   test("grant / has / revoke 与事件", () => {
-    const broker = new CapabilityBroker({ now: () => 100 });
+    const audit = createMemoryAuditLog({ now: () => 100 });
+    const broker = new CapabilityBroker({ now: () => 100, audit });
     const events: string[] = [];
     broker.onEvent(event => events.push(event.type));
 
@@ -21,6 +22,10 @@ describe("CapabilityBroker", () => {
     expect(broker.revoke(lease, "again")).toBe(false);
     expect(broker.has("plugin", "fs:read")).toBe(false);
     expect(events).toEqual(["granted", "revoked"]);
+    expect(audit.query().map(event => event.type)).toEqual([
+      "capability.granted",
+      "capability.revoked",
+    ]);
     broker.dispose();
   });
 

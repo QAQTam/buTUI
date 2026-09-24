@@ -1,3 +1,5 @@
+import type { AuditLog } from "./audit.ts";
+import { safeRecordAudit } from "./audit.ts";
 import type { PluginCapability } from "./types.ts";
 
 export type CapabilityLeaseState = "active" | "revoked" | "expired";
@@ -25,6 +27,7 @@ export interface CapabilityBrokerOptions {
   now?: () => number;
   setTimeout?: (callback: () => void, delay: number) => ReturnType<typeof setTimeout>;
   clearTimeout?: (handle: ReturnType<typeof setTimeout>) => void;
+  audit?: AuditLog;
 }
 
 interface MutableLease {
@@ -46,6 +49,7 @@ export class CapabilityBroker {
   private readonly now: () => number;
   private readonly setTimer: NonNullable<CapabilityBrokerOptions["setTimeout"]>;
   private readonly clearTimer: NonNullable<CapabilityBrokerOptions["clearTimeout"]>;
+  private readonly audit: AuditLog | undefined;
   private readonly leases = new Map<number, MutableLease>();
   private readonly timers = new Map<number, ReturnType<typeof setTimeout>>();
   private readonly listeners = new Set<(event: CapabilityBrokerEvent) => void>();
@@ -56,6 +60,7 @@ export class CapabilityBroker {
     this.now = options.now ?? (() => performance.now());
     this.setTimer = options.setTimeout ?? setTimeout;
     this.clearTimer = options.clearTimeout ?? clearTimeout;
+    this.audit = options.audit;
   }
 
   grant(
@@ -79,6 +84,15 @@ export class CapabilityBroker {
     };
     this.leases.set(lease.id, lease);
     this.emit({ type: "granted", lease });
+    safeRecordAudit(this.audit, {
+      type: "capability.granted",
+      pluginId,
+      capability,
+      leaseId: lease.id,
+      ...(lease.expiresAt !== undefined
+        ? { expiresAt: lease.expiresAt }
+        : {}),
+    });
     if (ttlMs !== undefined) {
       const handle = this.setTimer(() => this.expire(lease), ttlMs);
       this.timers.set(lease.id, handle);
@@ -113,6 +127,13 @@ export class CapabilityBroker {
     current.state = "revoked";
     this.clearLeaseTimer(current.id);
     this.emit({ type: "revoked", lease: current, reason });
+    safeRecordAudit(this.audit, {
+      type: "capability.revoked",
+      pluginId: current.pluginId,
+      capability: current.capability,
+      leaseId: current.id,
+      reason,
+    });
     return true;
   }
 
@@ -137,6 +158,13 @@ export class CapabilityBroker {
       if (lease.state === "active") {
         lease.state = "revoked";
         this.emit({ type: "revoked", lease, reason: "broker-disposed" });
+        safeRecordAudit(this.audit, {
+          type: "capability.revoked",
+          pluginId: lease.pluginId,
+          capability: lease.capability,
+          leaseId: lease.id,
+          reason: "broker-disposed",
+        });
       }
     }
     for (const timer of this.timers.values()) this.clearTimer(timer);
@@ -150,6 +178,12 @@ export class CapabilityBroker {
     lease.state = "expired";
     this.clearLeaseTimer(lease.id);
     this.emit({ type: "expired", lease });
+    safeRecordAudit(this.audit, {
+      type: "capability.expired",
+      pluginId: lease.pluginId,
+      capability: lease.capability,
+      leaseId: lease.id,
+    });
   }
 
   private clearLeaseTimer(id: number): void {
