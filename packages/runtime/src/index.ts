@@ -300,6 +300,9 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
   let selectionFocus: TextSelectionPoint | undefined;
   let selecting = false;
   let selectionHasText = false;
+  let selectionFrame: Frame | undefined;
+  let selectionFrameId: number | undefined;
+  let selectedTextCache: string | undefined;
   let capturedMouseNode: Node | undefined;
   let capturedMouseBounds: MouseBounds | undefined;
   let hoveredMouseNode: Node | undefined;
@@ -395,6 +398,9 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
     selectionFocus = undefined;
     selecting = false;
     selectionHasText = false;
+    selectionFrame = undefined;
+    selectionFrameId = undefined;
+    selectedTextCache = undefined;
     if (notify && had) notifySelection(null);
     requestPaint();
   };
@@ -412,7 +418,7 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
       return;
     }
     const range = { anchor: selectionAnchor, focus: selectionFocus };
-    selectionHasText = selectionText(computeFrame(), range) !== "";
+    selectionHasText = selectionText(selectionFrame ?? computeFrame(), range) !== "";
   };
 
   const renderer = new Renderer(chunk => terminal.write(chunk), {
@@ -429,7 +435,13 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
   /** 当前布局（布局层按 rev 缓存，现算很便宜；不要缓存成「上一帧」） */
   const computeFrame = (): Frame => {
     const { columns, rows } = size();
-    const selection = currentSelectionRange();
+    const range = currentSelectionRange();
+    const selection =
+      range &&
+      (selectionFrameId === undefined ||
+        selectionFrameId === presentedFrames.current()?.frameId)
+        ? range
+        : undefined;
     return layout(root, columns, rows, {
       depth: depth(),
       scrollTop: scrollTop(),
@@ -524,7 +536,9 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
   const selectionSnapshot = (): TextSelectionSnapshot | null => {
     const range = currentSelectionRange();
     if (!range) return null;
-    const text = selectionText(computeFrame(), range);
+    const text =
+      selectedTextCache ??
+      selectionText(selectionFrame ?? computeFrame(), range);
     return text === "" ? null : cloneSnapshot(range, text);
   };
 
@@ -851,6 +865,14 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
         return false;
       }
       const replacing = selectionHasText;
+      selectedTextCache = undefined;
+      selectionFrame = undefined;
+      selectionFrameId = undefined;
+      if (options.inputRouting === "presented") {
+        const presented = presentedFrames.current();
+        selectionFrame = presented?.layout ?? computeFrame();
+        selectionFrameId = presented?.frameId;
+      }
       selectionAnchor = { x: event.x, y: event.y };
       selectionFocus = { ...selectionAnchor };
       selecting = true;
@@ -874,15 +896,22 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
       selecting = false;
       refreshSelectionHighlight();
       const range = currentSelectionRange();
-      const text = range ? selectionText(computeFrame(), range) : "";
+      const text = range
+        ? selectionText(selectionFrame ?? computeFrame(), range)
+        : "";
       if (!range || text === "") {
         const had = selectionHasText;
         selectionHasText = false;
+        selectionFrame = undefined;
+        selectionFrameId = undefined;
+        selectedTextCache = undefined;
         if (had) notifySelection(null);
         requestPaint();
         return true;
       }
       selectionHasText = true;
+      selectedTextCache = text;
+      selectionFrame = undefined;
       if (selectionOptions.copyOnSelect ?? true) writeSelectionClipboard(text);
       notifySelection(cloneSnapshot(range, text));
       requestPaint();

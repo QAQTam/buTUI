@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { type MouseEvent, createModifiers } from "@butui/core";
 import { createTuiApp } from "@butui/runtime";
 import { osc52 } from "@butui/terminal";
-import { FakeTerminal } from "./helpers/terminal.ts";
+import { createSignal } from "solid-js";
+import { FakeTerminal, tick } from "./helpers/terminal.ts";
 
 const mouse = (
   action: MouseEvent["action"],
@@ -126,6 +127,27 @@ describe("鼠标文本选择（SPEC §9.4）", () => {
 
     expect(app.selection()).toBeNull();
     expect(terminal.output).not.toContain("\x1b]52;");
+    app.dispose();
+  });
+
+  test("presented routing 固定选择开始时的 frame 文本", async () => {
+    const terminal = new FakeTerminal();
+    const [value, setValue] = createSignal("hello");
+    const app = createTuiApp({
+      terminal,
+      inputRouting: "presented",
+      selection: { copyOnSelect: false },
+      view: () => <text>{value()}</text>,
+      onQuit: () => {},
+    });
+
+    app.send(mouse("press", 0, 0));
+    app.send(mouse("move", 4, 0));
+    setValue("world!!");
+    await tick();
+    app.send(mouse("release", 4, 0));
+
+    expect(app.selectedText()).toBe("hello");
     app.dispose();
   });
 
