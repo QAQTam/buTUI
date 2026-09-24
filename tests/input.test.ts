@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { InputDecoder } from "@butui/terminal";
+import { CONTROL, InputDecoder } from "@butui/terminal";
 
 const feed = (decoder: InputDecoder, text: string) => decoder.push(new TextEncoder().encode(text));
 
@@ -70,6 +70,12 @@ describe("终端输入解码（SPEC §9.3 / §9.4）", () => {
     const event = events[0];
     expect(event.type === "key" && event.name).toBe("x");
     expect(event.type === "key" && event.modifiers.alt).toBe(true);
+  });
+
+  test("hover 模式额外开启 1003 移动上报", () => {
+    expect(CONTROL.mouseOn).not.toContain("?1003h");
+    expect(CONTROL.mouseHoverOn).toContain("?1003h");
+    expect(CONTROL.mouseOff).toContain("?1003l");
   });
 
   test("SGR 鼠标点击（1-based 坐标转 0-based）", () => {

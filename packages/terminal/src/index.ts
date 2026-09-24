@@ -55,7 +55,9 @@ export const CONTROL = {
   cursorHide: `${ESC}?25l`,
   cursorShow: `${ESC}?25h`,
   mouseOn: `${ESC}?1000h${ESC}?1002h${ESC}?1006h`,
-  mouseOff: `${ESC}?1000l${ESC}?1002l${ESC}?1006l`,
+  /** 1003 会持续上报无按键移动，hover 需要但事件量更高 */
+  mouseHoverOn: `${ESC}?1000h${ESC}?1002h${ESC}?1003h${ESC}?1006h`,
+  mouseOff: `${ESC}?1000l${ESC}?1002l${ESC}?1003l${ESC}?1006l`,
   pasteOn: `${ESC}?2004h`,
   pasteOff: `${ESC}?2004l`,
   focusOn: `${ESC}?1004h`,
@@ -108,6 +110,11 @@ export interface TerminalSessionOptions {
   stdout?: NodeJS.WriteStream;
   altScreen?: boolean;
   mouse?: boolean;
+  /**
+   * `"drag"` 只开 1002（按键拖动上报），`"hover"` 额外开 1003
+   * （无按键移动也上报）。hover 更灵敏但事件量明显更高。
+   */
+  mouseMotion?: "drag" | "hover";
   bracketedPaste?: boolean;
   focusEvents?: boolean;
   kittyKeyboard?: boolean;
@@ -132,6 +139,7 @@ export class TerminalSession {
     this.options = {
       altScreen: options.altScreen ?? true,
       mouse: options.mouse ?? true,
+      mouseMotion: options.mouseMotion ?? "drag",
       bracketedPaste: options.bracketedPaste ?? true,
       focusEvents: options.focusEvents ?? true,
       kittyKeyboard: options.kittyKeyboard ?? false,
@@ -156,7 +164,13 @@ export class TerminalSession {
 
     if (this.options.altScreen) this.write(CONTROL.altScreenOn);
     this.write(CONTROL.cursorHide);
-    if (this.options.mouse) this.write(CONTROL.mouseOn);
+    if (this.options.mouse) {
+      this.write(
+        this.options.mouseMotion === "hover"
+          ? CONTROL.mouseHoverOn
+          : CONTROL.mouseOn
+      );
+    }
     if (this.options.bracketedPaste) this.write(CONTROL.pasteOn);
     if (this.options.focusEvents) this.write(CONTROL.focusOn);
     if (this.options.kittyKeyboard) this.write(CONTROL.kittyKeysOn);

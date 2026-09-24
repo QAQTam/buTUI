@@ -7,7 +7,7 @@
 分支式 Undo + WebUI remote attach + 图片子系统（Kitty / iTerm2 / Sixel /
 半块 / 占位符）+ Artifact Canvas + 列表 / 虚拟列表 / 滚动视口 / 弹窗 / 表格 /
 树 + 鼠标选区 / OSC 52 + 流式 Diff / 共享动画时钟 / 精确 ScrollBar +
-通用插件 / Slot / Keymap 已跑通**，`bun test` 539 个用例全绿。
+通用插件 / Slot / Keymap / 鼠标交互已跑通**，`bun test` 543 个用例全绿。
 
 ```
 应用（你的 agent / 工具 / TUI）
@@ -113,6 +113,37 @@ createTuiApp({
 `<layer>` 做不到，因为它相对父节点定位，父节点自己会被滚走。
 
 `bun --conditions=browser run scripts/scroll-demo.tsx` 可以直接看这个行为。
+
+## 鼠标事件
+
+鼠标链路已经完整支持 SGR 解码、语义 hit test、冒泡和控件手势：
+
+```tsx
+<box
+  onMouseDown={event => start(event)}
+  onMouseMove={event => update(event)}
+  onMouseUp={event => finish(event)}
+  onClick={event => select(event)}
+  onDoubleClick={event => open(event)}
+  onContextMenu={event => menu(event)}
+  onMouseEnter={() => hover(true)}
+  onMouseLeave={() => hover(false)}
+  onWheel={event => scroll(event.wheel)}
+/>
+```
+
+- `press / release / move / wheel` 来自终端真实事件。
+- `clickCount` 由 runtime 按时间 + 坐标合成；第二击派发 `onDoubleClick`。
+- 右键 press 优先派发 `onContextMenu`，没有 handler 时回退 `onMouseDown`。
+- `onMouseEnter / onMouseLeave` 是合成事件，只在命中节点变化时触发且不冒泡。
+- `mouseMotion: "hover"` 会开启终端 1003，允许无按键移动触发 hover；
+  默认 `"drag"` 只上报按键拖动，事件量更低。
+- `app.captureMouse(node)` 让拖拽在指针移出目标后继续收到 `move`，
+  release 时自动解除；组件里用 `useMouseCapture()`。
+- 文本选择默认开启；控件声明 `selectable={false}` 可退出选择竞争。
+
+`bun --conditions=browser run scripts/mouse-demo.tsx` 可直接试 hover、双击、
+右键和跨区域拖动。
 
 ## 鼠标选区与 OSC 52 复制
 
@@ -714,6 +745,9 @@ bun --conditions=browser run scripts/plugin-demo.tsx
 # 命令 / Keymap / scope
 bun --conditions=browser run scripts/keymap-demo.tsx
 
+# 鼠标 hover / 双击 / 右键 / capture
+bun --conditions=browser run scripts/mouse-demo.tsx
+
 # 图片子系统自检（不需要真终端）
 bun --conditions=browser run scripts/image-demo.tsx
 
@@ -741,7 +775,7 @@ Demo 的工作区是**内存实现**，但走的是完全一样的 journal / dif
 | 包 | 职责 |
 |---|---|
 | `@butui/core` | 节点树、`rev` 失效传播、`childrenRevSum`、focus、事件冒泡、theme、ANSI 解析 |
-| `@butui/solid` | `@solidjs/universal` host ops、JSX 类型、Bun 编译插件、共享动画帧时钟 |
+| `@butui/solid` | `@solidjs/universal` host ops、JSX 类型、Bun 编译插件、共享动画帧时钟、`useMouseCapture` |
 | `@butui/runtime` | `createTuiApp`：终端、合帧重绘、事件分发、鼠标选区 / OSC 52 —— 应用作者的唯一入口 |
 | `@butui/components` | `createTextEditor` / `<Input>` / `<Textarea>` / `<Markdown>` / `<Code>` / `<Diff>` / `<ScrollBar>`、`createSelection` / `<List>` / `<VirtualList>`、`createScrollView`、`<Select>` / `<Tabs>` / `<Table>` / `<Tree>`、`<Button>` / `<Dialog>` / `<Modal>`、`ProgressBar` / `Spinner` / `Badge` / `Divider` / `KeyHint` |
 | `@butui/plugins` | 通用 `SlotRegistry` / `Plugin` / 错误隔离；`@butui/plugins/solid` 提供 `createSlot` / `<Slot>`；`@butui/plugins/loader` 提供 manifest / 配置 / 动态加载 / 自动发现 / capability 门控 |

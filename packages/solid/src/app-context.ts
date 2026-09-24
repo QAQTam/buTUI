@@ -16,12 +16,18 @@
  * `createTuiApp({ keymap })` → 组件的 `useKeyboard` → 内建（ctrl+c / tab）→
  * 焦点节点冒泡。应用永远是第一优先级，组件只能在「应用没要」的前提下抢键。
  */
-import type { ColorDepth, KeyEvent } from "@butui/core";
+import type { ColorDepth, KeyEvent, Node } from "@butui/core";
 import { createContext, onCleanup, useContext } from "solid-js";
 
 export interface AppSize {
   columns: number;
   rows: number;
+}
+
+export interface MouseCaptureScope {
+  capture(node: Node): void;
+  release(): void;
+  captured(): Node | undefined;
 }
 
 export interface AppScope {
@@ -33,6 +39,10 @@ export interface AppScope {
   requestPaint(): void;
   /** 订阅全局按键；返回退订函数。返回 `true` 表示消费掉这个键 */
   onKey(listener: (event: KeyEvent) => boolean | void): () => void;
+  /** runtime 提供的鼠标捕获能力；headless mount 可能没有。 */
+  captureMouse?(node: Node): void;
+  releaseMouse?(): void;
+  capturedMouse?(): Node | undefined;
 }
 
 const AppContext = createContext<AppScope | null>(null);
@@ -67,6 +77,23 @@ export function useColorDepth(): () => ColorDepth {
   const scope = useContext(AppContext);
   if (!scope) return () => "truecolor";
   return () => scope.colorDepth();
+}
+
+/**
+ * 鼠标捕获。返回 null 表示当前宿主（例如纯 headless mount）没有实现捕获。
+ *
+ * 典型用法：`onMouseDown` 里 `capture(node)`，组件卸载时 `release()`。
+ */
+export function useMouseCapture(): MouseCaptureScope | null {
+  const scope = useContext(AppContext);
+  if (!scope?.captureMouse || !scope.releaseMouse || !scope.capturedMouse) {
+    return null;
+  }
+  return {
+    capture: node => scope.captureMouse!(node),
+    release: () => scope.releaseMouse!(),
+    captured: () => scope.capturedMouse!(),
+  };
 }
 
 export interface UseKeyboardOptions {

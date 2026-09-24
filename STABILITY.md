@@ -508,6 +508,32 @@ keymap.bindCommand(
 - `@butui/keymap/solid` 的 `useKeymap()` 把 keymap 接到组件级全局按键。
 - 当前只支持单键；多键 chord 会抛错，不会静默误解。
 
+### 4.21 鼠标交互
+
+```tsx
+<box
+  onMouseEnter={() => setHover(true)}
+  onMouseLeave={() => setHover(false)}
+  onMouseDown={event => app.captureMouse(node())}
+  onMouseMove={event => update(event)}
+  onMouseUp={() => app.releaseMouse()}
+  onDoubleClick={() => open()}
+  onContextMenu={() => menu()}
+/>
+```
+
+- `MouseEvent.action` 支持 `press / release / move / wheel / enter / leave`。
+- `clickCount` 由 runtime 合成；默认双击间隔 400ms，可用 `mouse.doubleClickMs`
+  和 `mouse.now` 覆盖 / 注入。
+- 右键 press 优先 `onContextMenu`；双击优先 `onDoubleClick`，没有对应 handler
+  时回退 `onClick`。
+- `onMouseEnter / onMouseLeave` 不冒泡；默认 `mouseMotion: "drag"` 下不会产生
+  无按键 hover，需要传 `"hover"` 开启终端 1003。
+- `captureMouse(node)` 后鼠标事件发给捕获节点，release 自动解除；组件使用
+  `useMouseCapture()`。
+- 文本选择默认接管左键拖拽；控件用 `selectable={false}` 退出竞争。
+- 当前没有 pointerId / 多指针 / dragstart / localX/localY / 指针形状。
+
 ## 5. 已知缺口（不要依赖，也不建议自己绕）
 
 - **列表只有单列 + 固定行高**：`itemHeight` 是常数，变高行（折行文本、展开的
@@ -532,6 +558,8 @@ keymap.bindCommand(
 - **没有布局调试工具**（类似 flexbox inspector）。
 - **焦点不会自动清理**：被移除的节点如果还是焦点，`focusedId()` 会保留它的
   id（下一次 tab 会自动跳到活着的节点）。组件里用 `isFocused` 不受影响。
+- **鼠标没有 pointerId / 本地坐标 / drag 事件**：hover 默认关闭（1003 事件量高）；
+  没有 OSC 22 指针形状、多指针或惯性滚动。
 - **Keymap 只有单键**：多键 chord、超时前缀状态机和 Command Palette UI 还没做；
   当前 keymap 也不持久化用户自定义绑定。
 - **插件 capability 不是沙箱**：它只在动态 import 前做同意门控，没有运行时

@@ -4,8 +4,8 @@
 > 仓库：`/home/qaqtamsy/项目/buTUI`  
 > 功能基线提交：`e625f5e feat(keymap): 命令注册与作用域快捷键`
 > 工作区状态：Keymap / Command Registry 提交处干净
-> 本轮能力：Keymap / Command Registry + runtime 按键优先级接入
-> 当前回归：`539 pass / 0 fail`，`tsc --noEmit` 通过
+> 本轮能力：鼠标 hover / 双击 / 右键 / pointer capture
+> 当前回归：`543 pass / 0 fail`，`tsc --noEmit` 通过
 
 ## 1. 项目定位
 
@@ -58,6 +58,8 @@ bun --conditions=browser run examples/agent-demo/src/main.tsx
 bun --conditions=browser run scripts/diff-demo.tsx
 bun --conditions=browser run scripts/scrollbar-demo.tsx
 bun --conditions=browser run scripts/plugin-demo.tsx
+bun --conditions=browser run scripts/keymap-demo.tsx
+bun --conditions=browser run scripts/mouse-demo.tsx
 bun --conditions=browser run scripts/scroll-demo.tsx
 bun --conditions=browser run scripts/list-demo.tsx
 bun --conditions=browser run scripts/stream-bench.tsx
@@ -288,6 +290,18 @@ const bar = createScrollBar({
 - 已有 `scripts/keymap-demo.tsx`、`tests/keymap.test.ts` /
   `tests/keymap-runtime.test.tsx`。
 
+### 5.10 鼠标交互增强
+
+- 原生事件：press / release / move / wheel（SGR 1006）。
+- runtime hit test → 节点冒泡；`onMouseDown/Up/Move/Click/Wheel`。
+- 新增合成 `onMouseEnter` / `onMouseLeave`，只在命中节点变化时触发且不冒泡。
+- 新增 `clickCount`、`onDoubleClick`、`onContextMenu`（右键）。
+- `mouseMotion: "hover"` 开启 1003；默认 `"drag"`。
+- `app.captureMouse(node)` / `releaseMouse()` / `capturedMouse()`；Solid 提供
+  `useMouseCapture()`。release 自动解除捕获。
+- 文本选择仍默认接管左键拖拽；控件用 `selectable={false}`。
+- 已有 `scripts/mouse-demo.tsx`、`tests/mouse-interaction.test.tsx`。
+
 ## 6. 稳定接口入口
 
 | 入口 | 文件 |
@@ -304,6 +318,8 @@ const bar = createScrollBar({
 | Solid `<Slot>` | `packages/plugins/src/solid.tsx` |
 | CommandRegistry / Keymap | `packages/keymap/src/{commands,keymap,keys}.ts` |
 | Solid `useKeymap` | `packages/keymap/src/solid.ts` |
+| 鼠标捕获 / 双击 / hover | `packages/runtime/src/index.ts`、`packages/core/src/{events,dispatch}.ts` |
+| Solid `useMouseCapture` | `packages/solid/src/app-context.ts` |
 | 动画调度 | `packages/solid/src/animation.ts` |
 | 布局 / Frame / selectionText | `packages/layout/src/index.ts` |
 | 渲染器 | `packages/renderer/src/index.ts` |
@@ -360,8 +376,8 @@ bridge、真实 tool event 对接或 bugent 快捷键迁移。
 当前：
 
 ```text
-539 pass / 0 fail
-53 test files
+543 pass / 0 fail
+54 test files
 tsc --noEmit pass
 ```
 
@@ -379,6 +395,7 @@ tsc --noEmit pass
 - `tests/plugin-loader.test.ts`
 - `tests/keymap.test.ts`
 - `tests/keymap-runtime.test.tsx`
+- `tests/mouse-interaction.test.tsx`
 - `tests/solid-cleanup-contract.test.tsx`
 
 提交前至少跑：
@@ -395,6 +412,8 @@ git diff --check
 
 - 插件已有 manifest / 配置 / 直接依赖发现 / capability 门控；无运行时沙箱 /
   权限审批 / 跨进程隔离。
+- 鼠标已有 hover / 双击 / 右键 / pointer capture；无 pointerId、多指针、
+  dragstart/dragend、localX/localY、OSC 22 指针形状。
 - Keymap 只有单键；无多键 chord、前缀超时、用户自定义绑定持久化。
 - Diff 没有 word-level diff、任意位置删除、hunk 折叠、“滚开后有新行”提示。
 - ScrollBar 只有垂直轴；无自动隐藏、hover 展开、水平轴、惯性。
@@ -410,15 +429,17 @@ git diff --check
 
 按通用 TUI 收益排序：
 
-1. **Keymap 扩展**：多键 chord、前缀超时、用户自定义绑定持久化、Command Palette。
-2. **插件运行时约束 / 审批**：capability 目前只是 import 前门控，下一步做权限
+1. **鼠标坐标 / 手势扩展**：`localX/localY`、dragstart/dragend、pointerId、
+   OSC 22 指针形状，以及 ScrollBar / slider 的跨区域拖动。
+2. **Keymap 扩展**：多键 chord、前缀超时、用户自定义绑定持久化、Command Palette。
+3. **插件运行时约束 / 审批**：capability 目前只是 import 前门控，下一步做权限
    审批 UI 或 worker 隔离。
-3. **Portal / Dynamic / Toast / Tooltip**：补齐 OpenTUI 已有的通用组件接口。
-4. **Timeline / tween / spring**：建立在现有 `AnimationScheduler` 上。
-5. **ScrollBar 扩展**：水平轴、自动隐藏或 hover，只有在真实 UI 需要时做。
-6. **自定义 renderable / component catalogue**：保持 Bun/TS 的 tag→节点映射，
+4. **Portal / Dynamic / Toast / Tooltip**：补齐 OpenTUI 已有的通用组件接口。
+5. **Timeline / tween / spring**：建立在现有 `AnimationScheduler` 上。
+6. **ScrollBar 扩展**：水平轴、自动隐藏或 hover，只有在真实 UI 需要时做。
+7. **自定义 renderable / component catalogue**：保持 Bun/TS 的 tag→节点映射，
    不照搬 OpenTUI 的 Zig Renderable 类层次。
-7. **WebUI diff**：等 WebUI 重新成为优先级再做。
+8. **WebUI diff**：等 WebUI 重新成为优先级再做。
 
 ## 12. 协作约定
 
@@ -452,6 +473,7 @@ git -c user.name=AnyBuddy -c user.email=anybuddy@local commit
 [ ] 修改 agent 协议时看 agent-protocol + agent-replay
 [ ] 修改插件 / Slot 时看 plugins + plugin-slot + plugin-loader
 [ ] 修改命令 / Keymap 时看 keymap + keymap-runtime + input
+[ ] 修改鼠标时看 mouse-interaction + text-selection + scrollbar
 [ ] 完成后更新 README / SPEC / STABILITY
 ```
 

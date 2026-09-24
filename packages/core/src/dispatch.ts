@@ -16,11 +16,17 @@ export function handlerName(event: ButuiEvent): string {
         case "wheel":
           return "onWheel";
         case "press":
+          if (event.button === "right") return "onContextMenu";
+          if ((event.clickCount ?? 1) >= 2) return "onDoubleClick";
           return "onMouseDown";
         case "release":
           return "onMouseUp";
         case "move":
           return "onMouseMove";
+        case "enter":
+          return "onMouseEnter";
+        case "leave":
+          return "onMouseLeave";
       }
     case "paste":
       return "onPaste";
@@ -35,15 +41,23 @@ export function handlerName(event: ButuiEvent): string {
 
 function handlerNames(event: ButuiEvent): readonly string[] {
   const primary = handlerName(event);
-  // 兼容原来的 onClick 语义：没有 onMouseDown 时，按下仍触发 onClick。
+  // 兼容原来的 onClick 语义：没有更具体的 handler 时，按下仍触发 onClick。
   // release / move 不再回退到 onClick，否则拖拽会被当成连续点击。
-  if (event.type === "mouse" && event.action === "press") return [primary, "onClick"];
+  if (event.type === "mouse" && event.action === "press") {
+    if (event.button === "right") return [primary, "onMouseDown", "onClick"];
+    if ((event.clickCount ?? 1) >= 2) {
+      return [primary, "onClick", "onMouseDown"];
+    }
+    return [primary, "onClick"];
+  }
   return [primary];
 }
 
 export interface DispatchOptions {
   /** 只冒泡到该节点为止（focus trap 用） */
   until?: Node;
+  /** false 时只调用目标节点自己的 handler，不向父节点冒泡（enter / leave 用） */
+  bubble?: boolean;
 }
 
 /**
@@ -80,6 +94,7 @@ export function dispatchEvent(
       }
       if (isPropagationStopped(event)) break;
     }
+    if (options.bubble === false) break;
     if (options.until && cur === options.until) break;
     cur = cur.parent;
   }

@@ -34,8 +34,15 @@ export type WheelDirection = "up" | "down" | "left" | "right";
 
 export interface MouseEvent {
   type: "mouse";
-  action: "press" | "release" | "move" | "wheel";
+  action: "press" | "release" | "move" | "wheel" | "enter" | "leave";
   button: "left" | "middle" | "right" | "none";
+  /**
+   * 同一位置的连续点击次数。
+   *
+   * 原生终端只给 press/release，runtime 根据时间与坐标合成为 1 / 2。
+   * `action === "enter" | "leave"` 的合成事件没有这个字段。
+   */
+  clickCount?: number;
   /**
    * 滚轮方向。
    *

@@ -30,6 +30,7 @@ import {
   type PasteEvent,
   createElement,
   dispatchEvent,
+  eventTarget,
   focusNext,
   focusNode,
   focusPrev,
@@ -86,6 +87,13 @@ export interface TextSelectionOptions {
   onSelection?: (selection: TextSelectionSnapshot | null) => void;
 }
 
+export interface MouseOptions {
+  /** 双击最大间隔（毫秒），默认 400。 */
+  doubleClickMs?: number;
+  /** 注入时钟；测试用。 */
+  now?: () => number;
+}
+
 export interface TuiAppOptions {
   /**
    * 视图。任何节点变更都会自动重绘，不需要自己调 paint。
@@ -135,6 +143,15 @@ export interface TuiAppOptions {
    * 焦点节点。用结构类型而不是直接依赖 `@butui/keymap`，runtime 保持可独立使用。
    */
   keymap?: { handle(event: KeyEvent): boolean };
+  /**
+   * 鼠标行为参数：双击间隔、测试时钟。
+   */
+  mouse?: MouseOptions;
+  /**
+   * 终端鼠标移动模式。默认 `"drag"`；设为 `"hover"` 会开启 1003，
+   * 无按键移动也能触发 `onMouseEnter/Leave`。
+   */
+  mouseMotion?: "drag" | "hover";
   /** 应用级鼠标：**焦点节点没处理时**才会走到这里（比如语义动作分发） */
   onMouse?: (event: MouseEvent) => boolean | void;
   /**
@@ -184,6 +201,16 @@ export interface TuiApp {
   isFocused(node: Node | undefined): boolean;
   /** 主动聚焦（等价于 core 的 focusNode(root, node)） */
   focus(node: Node | undefined): void;
+  /**
+   * 捕获后续鼠标 press/move/release/wheel 到指定节点。
+   *
+   * 用于拖拽：指针移出目标矩形后仍然收到 move；release 后自动释放。
+   */
+  captureMouse(node: Node): void;
+  /** 手动释放鼠标捕获。 */
+  releaseMouse(): void;
+  /** 当前捕获节点；没有捕获时返回 undefined。 */
+  capturedMouse(): Node | undefined;
   /** 最近一帧（hit test 与断言用） */
   frame(): Frame;
   /** 当前文本选择；没有有效选择时为 null */
@@ -198,7 +225,9 @@ export interface TuiApp {
 }
 
 export function createTuiApp(options: TuiAppOptions): TuiApp {
-  const terminal: TuiTerminal = options.terminal ?? new TerminalSession();
+  const terminal: TuiTerminal =
+    options.terminal ??
+    new TerminalSession({ mouseMotion: options.mouseMotion ?? "drag" });
   const root = createElement("root");
 
   const [size, setSize] = createSignal<TuiSize>(options.size ?? terminal.size);
@@ -218,6 +247,13 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
   let selectionFocus: TextSelectionPoint | undefined;
   let selecting = false;
   let selectionHasText = false;
+  let capturedMouseNode: Node | undefined;
+  let hoveredMouseNode: Node | undefined;
+  let lastMousePress:
+    | { nodeId?: number; button: MouseEvent["button"]; x: number; y: number; time: number }
+    | undefined;
+  const mouseNow = options.mouse?.now ?? Date.now;
+  const doubleClickMs = options.mouse?.doubleClickMs ?? 400;
 
   const selectionAllowed = (): boolean =>
     selectionOptions !== undefined && (selectionOptions.enabled?.() ?? true);
@@ -371,6 +407,74 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
     return true;
   };
 
+  const captureMouse = (node: Node): void => {
+    capturedMouseNode = node;
+  };
+
+  const releaseMouse = (): void => {
+    capturedMouseNode = undefined;
+  };
+
+  const capturedMouse = (): Node | undefined => capturedMouseNode;
+
+  const clickCountFor = (
+    event: MouseEvent,
+    target: Node | undefined
+  ): number => {
+    const time = mouseNow();
+    const previous = lastMousePress;
+    const closeInTime =
+      previous !== undefined && time - previous.time <= doubleClickMs;
+    const closeInSpace =
+      previous !== undefined &&
+      Math.abs(previous.x - event.x) <= 1 &&
+      Math.abs(previous.y - event.y) <= 1;
+    const sameTarget = previous?.nodeId === target?.id;
+    const sameButton = previous?.button === event.button;
+    const clickCount = closeInTime && closeInSpace && sameTarget && sameButton ? 2 : 1;
+
+    lastMousePress =
+      clickCount === 2
+        ? undefined
+        : {
+            nodeId: target?.id,
+            button: event.button,
+            x: event.x,
+            y: event.y,
+            time,
+          };
+    return clickCount;
+  };
+
+  const dispatchHover = (
+    action: "enter" | "leave",
+    target: Node | undefined,
+    source: MouseEvent
+  ): number => {
+    if (!target) return 0;
+    const event = eventTarget({
+      type: "mouse" as const,
+      action,
+      button: "none" as const,
+      x: source.x,
+      y: source.y,
+      modifiers: source.modifiers,
+    }) as MouseEvent;
+    return dispatchEvent(target, event, { bubble: false });
+  };
+
+  const updateMouseHover = (
+    event: MouseEvent,
+    target: Node | undefined
+  ): void => {
+    if (target === hoveredMouseNode) return;
+    const previous = hoveredMouseNode;
+    hoveredMouseNode = target;
+    dispatchHover("leave", previous, event);
+    dispatchHover("enter", target, event);
+    requestPaint();
+  };
+
   /**
    * 返回是否消费了这次鼠标事件。
    *
@@ -460,13 +564,25 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
     }
 
     if (event.type === "mouse") {
-      const target = nodeById(root, computeFrame().nodeAt(event.x, event.y));
+      const hitTarget = nodeById(root, computeFrame().nodeAt(event.x, event.y));
+      const target = capturedMouseNode ?? hitTarget;
+      if (event.action === "press") {
+        event.clickCount = clickCountFor(event, target);
+      }
+      if (
+        !capturedMouseNode &&
+        (event.action === "move" || event.action === "press") &&
+        !selecting
+      ) {
+        updateMouseHover(event, hitTarget);
+      }
       const selectionHandled = handleSelectionMouse(event, target);
       // move 由选择器消费；press / release 仍按普通 hit test 派发，
       // 保证点击组件和拖拽选择可以共存。
       if (event.action === "move" && selectionHandled) return 1;
       const delivered = dispatchEvent(target, event);
       if (delivered === 0) options.onMouse?.(event);
+      if (event.action === "release" && capturedMouseNode) releaseMouse();
       return delivered || (selectionHandled ? 1 : 0);
     }
 
@@ -505,6 +621,9 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
               keyListeners.add(listener);
               return () => keyListeners.delete(listener);
             },
+            captureMouse,
+            releaseMouse,
+            capturedMouse,
           },
           () =>
             provideFocusScope(
@@ -565,6 +684,9 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
     focusedId,
     isFocused: node => node !== undefined && node.id === focusedId(),
     focus: node => focusNode(root, node),
+    captureMouse,
+    releaseMouse,
+    capturedMouse,
     frame: computeFrame,
     selection: selectionSnapshot,
     selectedText: () => selectionSnapshot()?.text ?? "",
