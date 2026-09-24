@@ -9,7 +9,7 @@
  *   bun --conditions=browser run scripts/stream-retention-bench.ts --lines=1000000 --cold-read=1000
  *   bun --conditions=browser run scripts/stream-retention-bench.ts --lines=1000000 --window=1000
  */
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MemoryLedger } from "@butui/core";
@@ -28,16 +28,30 @@ function option(name: string, fallback: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
 }
 
+function directoryBytes(path: string | undefined): number {
+  if (!path) return 0;
+  return readdirSync(path).reduce(
+    (sum, name) => sum + statSync(join(path, name)).size,
+    0
+  );
+}
+
 const totalLines = option("lines", 100_000);
 const batchLines = Math.min(totalLines, option("batch", 100));
 const memoryBudget = option("memory", 64 * 1024);
 const retainedBytes = Math.min(memoryBudget, option("retain", 32 * 1024));
 const coldReadCount = option("cold-read", 0);
 const stableWindowCount = option("window", 0);
+const indexCacheChunks = option("index-cache", 0);
 const dir = mkdtempSync(join(tmpdir(), "butui-retention-"));
 const path = join(dir, "cold.ndjson");
+const indexPath = indexCacheChunks > 0 ? join(dir, "index") : undefined;
+const storeOptions = {
+  ...(indexPath ? { indexPath } : {}),
+  ...(indexCacheChunks > 0 ? { indexCacheChunks } : {}),
+};
 const memory = new MemoryLedger({ totalBytes: memoryBudget });
-const store = new FileSpillStore(path);
+const store = new FileSpillStore(path, storeOptions);
 const streams = new StreamLedger({
   memory,
   memoryOwner: "retention-bench",
@@ -87,7 +101,7 @@ function reopenStore() {
   (Bun as typeof Bun & { gc?: (force?: boolean) => void }).gc?.(true);
   const before = process.memoryUsage();
   const started = performance.now();
-  const reopened = new FileSpillStore(path);
+  const reopened = new FileSpillStore(path, storeOptions);
   const elapsedMs = performance.now() - started;
   const spilledLines = streams.stats().spilledLines;
   const lastLineId = `line-${spilledLines}`;
@@ -214,6 +228,8 @@ try {
         batchLines,
         memoryBudget,
         retainedBytes,
+        indexCacheChunks,
+        indexBytes: directoryBytes(indexPath),
         elapsedMs,
         final,
         ...(coldRead ? { coldRead } : {}),

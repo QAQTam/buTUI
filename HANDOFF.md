@@ -447,6 +447,7 @@ const bar = createScrollBar({
 | 场景 | 结果 |
 |---|---:|
 | 1M spill + write | 10.5s / heap 17.5MB / cold 145.6MB |
+| 1M spill + index sidecar | 10.1s / heap 8.34MB / index 8.97MB |
 | 1M reopen | 1.84s / 流式扫描 |
 | 1M full hydrate | 3.04s / heap 142MB |
 | 1M 随机 1,000 cold lines | 5.0ms / heap 0 |
@@ -629,8 +630,8 @@ git diff --check
 - 文本选择是视口坐标，滚动后不保持内容锚点，也不会拖到边缘自动滚。
 - WebUI 是实验层，尚未渲染 `tool.diff`。
 - Kitty keyboard protocol 发送侧未实现。
-- v0.2 cold metadata 仍保留约 9 bytes/line 的直接寻址索引；极不规则多 stream
-  交错仍可能回退显式 `lineIds`。
+- v0.2 cold numeric index 默认约 9 bytes/line；配置 `indexPath` 后 chunk 可磁盘
+  换出，1M 行 heap 降至 8.34MB。极不规则多 stream 交错仍可能回退显式 `lineIds`。
 - applied digest 默认仍保留完整内存历史（5M 约 26MB）；配置
   `appliedStorePath` 后可磁盘换出，10M 实测 heap 增量约 0.19MB。
 - `<StreamWindow>` 已有 runtime 集成测试，但尚未接入真实 agent transcript 页面；
@@ -644,8 +645,8 @@ git diff --check
    采集真实 PTY 下输入到 presented frame 的 p95、cold-read 和 cache hit。
 2. **applied sidecar 生命周期**：10M 磁盘换出原型已完成；下一步由 bugent
    决定默认策略、文件清理和崩溃恢复语义。
-3. **cold metadata 进一步压缩**：评估 sparse checkpoint + file scan，
-   替换约 9 bytes/line 的直接寻址索引。
+3. **numeric index sidecar 生命周期**：1M 磁盘换出原型已完成；下一步由
+   bugent 决定默认策略、目录清理和恢复语义。
 4. **插件运行时约束 / 审批**：capability 目前只是 import 前门控，下一步做权限
    审批 UI 或 worker 隔离。
 5. **Portal / Dynamic / Toast / Tooltip**：补齐 OpenTUI 已有的通用组件接口。

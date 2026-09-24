@@ -21,7 +21,7 @@ import {
   statSync,
   writeSync,
 } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import type { LineId, StreamId } from "./ledger.ts";
 import type { SpillRecord, SpillStore } from "./spill.ts";
@@ -36,10 +36,19 @@ interface NumericChunk {
   offsets: Uint32Array;
   lengths: Uint32Array;
   present: Uint8Array;
+  dirty: boolean;
 }
 
 interface NumericIndex {
+  id: string;
   chunks: Map<number, NumericChunk>;
+  filePath?: string;
+}
+
+interface NumericLruEntry {
+  index: NumericIndex;
+  chunkIndex: number;
+  chunk: NumericChunk;
 }
 
 type NumericLineId = { prefix: string; number: number };
@@ -47,6 +56,8 @@ type NumericLineId = { prefix: string; number: number };
 const NUMERIC_CHUNK_BITS = 10;
 const NUMERIC_CHUNK_SIZE = 1 << NUMERIC_CHUNK_BITS;
 const NUMERIC_CHUNK_MASK = NUMERIC_CHUNK_SIZE - 1;
+const NUMERIC_CHUNK_BYTES =
+  NUMERIC_CHUNK_SIZE * Uint32Array.BYTES_PER_ELEMENT * 2 + NUMERIC_CHUNK_SIZE;
 const MAX_UINT32 = 0xffff_ffff;
 const READ_CHUNK_BYTES = 64 * 1024;
 
@@ -57,6 +68,10 @@ type SpillFileLine =
 export interface FileSpillStoreOptions {
   /** 可选：delete tombstone 超过此数量时 compact 文件。 */
   compactAfterDeletes?: number;
+  /** 可选：numeric chunk index 的磁盘目录。 */
+  indexPath?: string;
+  /** 内存保留的 numeric chunk 数；配置 indexPath 后默认 64。 */
+  indexCacheChunks?: number;
 }
 
 export class FileSpillStore implements SpillStore {
@@ -65,6 +80,9 @@ export class FileSpillStore implements SpillStore {
     Map<string, NumericIndex>
   >();
   private readonly fallbackIndex = new Map<string, SpillIndexEntry>();
+  private readonly numericChunkLru = new Map<string, NumericLruEntry>();
+  private readonly indexPath?: string;
+  private readonly indexCacheChunks: number;
   private liveCount = 0;
   private liveBytes = 0;
   private deletes = 0;
@@ -74,7 +92,12 @@ export class FileSpillStore implements SpillStore {
     readonly path: string,
     private readonly options: FileSpillStoreOptions = {}
   ) {
+    this.indexPath = options.indexPath;
+    this.indexCacheChunks = this.indexPath
+      ? Math.max(1, Math.floor(options.indexCacheChunks ?? 64))
+      : Number.POSITIVE_INFINITY;
     mkdirSync(dirname(path), { recursive: true });
+    if (this.indexPath) mkdirSync(this.indexPath, { recursive: true });
     if (existsSync(path)) this.rebuildIndex();
   }
 
@@ -228,6 +251,11 @@ export class FileSpillStore implements SpillStore {
   private resetIndex(): void {
     this.numericIndexes.clear();
     this.fallbackIndex.clear();
+    this.numericChunkLru.clear();
+    if (this.indexPath) {
+      rmSync(this.indexPath, { recursive: true, force: true });
+      mkdirSync(this.indexPath, { recursive: true });
+    }
     this.liveCount = 0;
     this.liveBytes = 0;
     this.deletes = 0;
@@ -279,27 +307,15 @@ export class FileSpillStore implements SpillStore {
     if (numeric && offset <= MAX_UINT32) {
       this.removeFallback(record.streamId, record.lineId);
       this.removeNumeric(record.streamId, record.lineId);
-      const indexes = this.numericIndexesFor(record.streamId);
-      let index = indexes.get(numeric.prefix);
-      if (!index) {
-        index = { chunks: new Map() };
-        indexes.set(numeric.prefix, index);
-      }
+      const index = this.numericIndexFor(record.streamId, numeric.prefix);
       const zeroBased = numeric.number - 1;
       const chunkIndex = Math.floor(zeroBased / NUMERIC_CHUNK_SIZE);
-      let chunk = index.chunks.get(chunkIndex);
-      if (!chunk) {
-        chunk = {
-          offsets: new Uint32Array(NUMERIC_CHUNK_SIZE),
-          lengths: new Uint32Array(NUMERIC_CHUNK_SIZE),
-          present: new Uint8Array(NUMERIC_CHUNK_SIZE),
-        };
-        index.chunks.set(chunkIndex, chunk);
-      }
+      const chunk = this.numericChunkFor(index, chunkIndex, true)!;
       const at = zeroBased & NUMERIC_CHUNK_MASK;
       chunk.offsets[at] = offset;
       chunk.lengths[at] = length;
       chunk.present[at] = 1;
+      chunk.dirty = true;
       this.liveCount++;
       this.liveBytes += record.bytes;
       return;
@@ -332,10 +348,15 @@ export class FileSpillStore implements SpillStore {
     const numeric = parseNumericLineId(lineId);
     if (!numeric) return undefined;
     const zeroBased = numeric.number - 1;
-    const chunk = this.numericIndexes
+    const index = this.numericIndexes
       .get(streamId)
-      ?.get(numeric.prefix)
-      ?.chunks.get(Math.floor(zeroBased / NUMERIC_CHUNK_SIZE));
+      ?.get(numeric.prefix);
+    if (!index) return undefined;
+    const chunk = this.numericChunkFor(
+      index,
+      Math.floor(zeroBased / NUMERIC_CHUNK_SIZE),
+      false
+    );
     const at = zeroBased & NUMERIC_CHUNK_MASK;
     if (!chunk || chunk.present[at] === 0) return undefined;
     return {
@@ -353,6 +374,154 @@ export class FileSpillStore implements SpillStore {
     return indexes;
   }
 
+  private numericIndexFor(
+    streamId: StreamId,
+    prefix: string
+  ): NumericIndex {
+    const indexes = this.numericIndexesFor(streamId);
+    let index = indexes.get(prefix);
+    if (!index) {
+      index = {
+        id: `${streamId}\u0000${prefix}`,
+        chunks: new Map(),
+        ...(this.indexPath
+          ? {
+              filePath: join(
+                this.indexPath,
+                `${encodeURIComponent(streamId)}.${encodeURIComponent(prefix)}.idx`
+              ),
+            }
+          : {}),
+      };
+      indexes.set(prefix, index);
+    }
+    return index;
+  }
+
+  private numericChunkFor(
+    index: NumericIndex,
+    chunkIndex: number,
+    create: boolean
+  ): NumericChunk | undefined {
+    const existing = index.chunks.get(chunkIndex);
+    if (existing) {
+      this.touchNumericChunk(index, chunkIndex, existing);
+      return existing;
+    }
+
+    const loaded = this.readNumericChunk(index, chunkIndex);
+    if (loaded) {
+      index.chunks.set(chunkIndex, loaded);
+      this.touchNumericChunk(index, chunkIndex, loaded);
+      this.evictNumericChunks();
+      return loaded;
+    }
+    if (!create) return undefined;
+
+    const created: NumericChunk = {
+      offsets: new Uint32Array(NUMERIC_CHUNK_SIZE),
+      lengths: new Uint32Array(NUMERIC_CHUNK_SIZE),
+      present: new Uint8Array(NUMERIC_CHUNK_SIZE),
+      dirty: false,
+    };
+    index.chunks.set(chunkIndex, created);
+    this.touchNumericChunk(index, chunkIndex, created);
+    this.evictNumericChunks();
+    return index.chunks.get(chunkIndex);
+  }
+
+  private touchNumericChunk(
+    index: NumericIndex,
+    chunkIndex: number,
+    chunk: NumericChunk
+  ): void {
+    const key = `${index.id}\u0000${chunkIndex}`;
+    this.numericChunkLru.delete(key);
+    this.numericChunkLru.set(key, { index, chunkIndex, chunk });
+  }
+
+  private evictNumericChunks(): void {
+    while (this.numericChunkLru.size > this.indexCacheChunks) {
+      const oldest = this.numericChunkLru.entries().next().value as
+        | [string, NumericLruEntry]
+        | undefined;
+      if (!oldest) return;
+      const [key, entry] = oldest;
+      if (entry.chunk.dirty) {
+        this.writeNumericChunk(entry.index, entry.chunkIndex, entry.chunk);
+      }
+      entry.index.chunks.delete(entry.chunkIndex);
+      this.numericChunkLru.delete(key);
+    }
+  }
+
+  private readNumericChunk(
+    index: NumericIndex,
+    chunkIndex: number
+  ): NumericChunk | undefined {
+    if (!index.filePath || !existsSync(index.filePath)) return undefined;
+    const fd = openSync(index.filePath, "r");
+    try {
+      const buffer = Buffer.alloc(NUMERIC_CHUNK_BYTES);
+      const bytesRead = readSync(
+        fd,
+        buffer,
+        0,
+        NUMERIC_CHUNK_BYTES,
+        chunkIndex * NUMERIC_CHUNK_BYTES
+      );
+      if (bytesRead === 0) return undefined;
+
+      const offsets = new Uint32Array(NUMERIC_CHUNK_SIZE);
+      const lengths = new Uint32Array(NUMERIC_CHUNK_SIZE);
+      const offsetsBytes = NUMERIC_CHUNK_SIZE * Uint32Array.BYTES_PER_ELEMENT;
+      for (let at = 0; at < NUMERIC_CHUNK_SIZE; at++) {
+        const offset = at * Uint32Array.BYTES_PER_ELEMENT;
+        offsets[at] = buffer.readUInt32LE(offset);
+        lengths[at] = buffer.readUInt32LE(offsetsBytes + offset);
+      }
+      const present = new Uint8Array(
+        buffer.subarray(offsetsBytes * 2, NUMERIC_CHUNK_BYTES)
+      );
+      return { offsets, lengths, present, dirty: false };
+    } finally {
+      closeSync(fd);
+    }
+  }
+
+  private writeNumericChunk(
+    index: NumericIndex,
+    chunkIndex: number,
+    chunk: NumericChunk
+  ): void {
+    if (!index.filePath) return;
+    mkdirSync(dirname(index.filePath), { recursive: true });
+    const fd = openSync(
+      index.filePath,
+      existsSync(index.filePath) ? "r+" : "w+"
+    );
+    try {
+      const buffer = Buffer.alloc(NUMERIC_CHUNK_BYTES);
+      const offsetsBytes = NUMERIC_CHUNK_SIZE * Uint32Array.BYTES_PER_ELEMENT;
+      for (let at = 0; at < NUMERIC_CHUNK_SIZE; at++) {
+        const offset = at * Uint32Array.BYTES_PER_ELEMENT;
+        buffer.writeUInt32LE(chunk.offsets[at]!, offset);
+        buffer.writeUInt32LE(chunk.lengths[at]!, offsetsBytes + offset);
+      }
+      buffer.set(chunk.present, offsetsBytes * 2);
+      writeSync(
+        fd,
+        buffer,
+        0,
+        NUMERIC_CHUNK_BYTES,
+        chunkIndex * NUMERIC_CHUNK_BYTES
+      );
+      chunk.dirty = false;
+    } finally {
+      closeSync(fd);
+    }
+  }
+
   private removeNumeric(
     streamId: StreamId,
     lineId: LineId
@@ -362,11 +531,17 @@ export class FileSpillStore implements SpillStore {
     const zeroBased = numeric.number - 1;
     const indexes = this.numericIndexes.get(streamId);
     const index = indexes?.get(numeric.prefix);
-    const chunk = index?.chunks.get(Math.floor(zeroBased / NUMERIC_CHUNK_SIZE));
+    if (!index) return undefined;
+    const chunk = this.numericChunkFor(
+      index,
+      Math.floor(zeroBased / NUMERIC_CHUNK_SIZE),
+      false
+    );
     const at = zeroBased & NUMERIC_CHUNK_MASK;
     if (!chunk || chunk.present[at] === 0) return undefined;
 
     chunk.present[at] = 0;
+    chunk.dirty = true;
     const previous = this.readAt(chunk.offsets[at]!, chunk.lengths[at]!);
     this.liveCount--;
     this.liveBytes -= previous?.bytes ?? 0;

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -144,6 +144,33 @@ describe("FileSpillStore", () => {
       const reopened = new FileSpillStore(path);
       expect(reopened.stats().records).toBe(2_501);
       expect(reopened.read("stream-1", "line-2")?.text).toBe("replacement");
+    });
+  });
+
+  test("numeric index 可磁盘换出并在 reopen 后重建", () => {
+    withTempDir(dir => {
+      const path = join(dir, "cold.ndjson");
+      const indexPath = join(dir, "index");
+      const records = Array.from({ length: 3_000 }, (_, index) =>
+        record(`line-${index + 1}`, `value-${index}`)
+      );
+      const store = new FileSpillStore(path, {
+        indexPath,
+        indexCacheChunks: 1,
+      });
+      store.writeMany(records);
+
+      expect(store.read("stream-1", "line-1")?.text).toBe("value-0");
+      expect(store.read("stream-1", "line-2500")?.text).toBe("value-2499");
+      expect(readdirSync(indexPath).length).toBeGreaterThan(0);
+
+      const reopened = new FileSpillStore(path, {
+        indexPath,
+        indexCacheChunks: 1,
+      });
+      expect(reopened.read("stream-1", "line-1")?.text).toBe("value-0");
+      expect(reopened.read("stream-1", "line-3000")?.text).toBe("value-2999");
+      expect(reopened.stats().records).toBe(3_000);
     });
   });
 
