@@ -12,6 +12,7 @@ describe("startDragInertia", () => {
       decay: 0.01,
       minVelocity: 0.01,
       maxDuration: 1000,
+      reducedMotion: false,
       scheduler,
       onStep: (x, y) => steps.push([x, y]),
       onEnd: () => ended++,
@@ -41,6 +42,7 @@ describe("startDragInertia", () => {
     let ended = 0;
     const inertia = startDragInertia({
       velocityY: 0.1,
+      reducedMotion: false,
       scheduler,
       onStep: () => {},
       onEnd: () => ended++,
