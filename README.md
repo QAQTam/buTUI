@@ -7,7 +7,8 @@
 分支式 Undo + WebUI remote attach + 图片子系统（Kitty / iTerm2 / Sixel /
 半块 / 占位符）+ Artifact Canvas + 列表 / 虚拟列表 / 滚动视口 / 弹窗 / 表格 /
 树 + 鼠标选区 / OSC 52 + 流式 Diff / 共享动画时钟 / 精确 ScrollBar +
-通用插件 / Slot / Keymap / 鼠标交互 / Slider 已跑通**，`bun test` 550 个用例全绿。
+通用插件 / Slot / Keymap / 鼠标交互 / Slider / SplitPane 已跑通**，`bun test`
+558 个用例全绿。
 
 ```
 应用（你的 agent / 工具 / TUI）
@@ -286,6 +287,36 @@ const slider = createSlider({
 - 鼠标：`localX + pointer capture + onDrag`，拖出轨道矩形后继续更新。
 - 键盘：方向键、PageUp/PageDown、Home/End。
 - 终端宽度变化不会影响模型；组件只决定画多宽。
+
+## SplitPane
+
+```tsx
+const [ratio, setRatio] = createSignal(0.5);
+const split = createSplitPane({
+  ratio,
+  onChange: setRatio,
+  minFirst: 8,
+  minSecond: 8,
+});
+
+<SplitPane
+  model={split}
+  first={<box>左侧</box>}
+  second={<box>右侧</box>}
+/>;
+```
+
+- `splitPaneGeometry()` 先扣掉分隔条，再把比例归一成精确的整数 cell；主窗格
+  最小值、最大值和端点都准确。
+- `horizontal` 是左右分栏，`vertical` 是上下分栏；分隔条本身也可获得焦点。
+- 鼠标按下分隔条后由根节点持有 pointer capture，`onDrag` 使用相对根节点的
+  `localX / localY`，因此移出窗格甚至终端边缘后仍能继续拖动。
+- 键盘支持方向键、PageUp/PageDown、Home/End；`selectable={false}` 只作用在
+  分隔条，不阻断两侧内容的文本选择。
+- `size` 默认取终端对应轴。SplitPane 嵌在有 padding / border / 兄弟节点的
+  容器里时，应传入该轴实际 cell 数；窗格布局本身仍按 flexGrow 自适应。
+
+`bun --conditions=browser run scripts/split-pane-demo.tsx` 可直接拖动分隔条。
 
 ## 通用插件与 Slot
 
@@ -775,6 +806,9 @@ bun --conditions=browser run scripts/keymap-demo.tsx
 # 鼠标 hover / 双击 / 右键 / capture
 bun --conditions=browser run scripts/mouse-demo.tsx
 
+# 可拖动 SplitPane
+bun --conditions=browser run scripts/split-pane-demo.tsx
+
 # 图片子系统自检（不需要真终端）
 bun --conditions=browser run scripts/image-demo.tsx
 
@@ -804,7 +838,7 @@ Demo 的工作区是**内存实现**，但走的是完全一样的 journal / dif
 | `@butui/core` | 节点树、`rev` 失效传播、`childrenRevSum`、focus、事件冒泡、theme、ANSI 解析 |
 | `@butui/solid` | `@solidjs/universal` host ops、JSX 类型、Bun 编译插件、共享动画帧时钟、`useMouseCapture` |
 | `@butui/runtime` | `createTuiApp`：终端、合帧重绘、事件分发、鼠标选区 / OSC 52 —— 应用作者的唯一入口 |
-| `@butui/components` | `createTextEditor` / `<Input>` / `<Textarea>` / `<Markdown>` / `<Code>` / `<Diff>` / `<ScrollBar>` / `<Slider>`、`createSelection` / `<List>` / `<VirtualList>`、`createScrollView`、`<Select>` / `<Tabs>` / `<Table>` / `<Tree>`、`<Button>` / `<Dialog>` / `<Modal>`、`ProgressBar` / `Spinner` / `Badge` / `Divider` / `KeyHint` |
+| `@butui/components` | `createTextEditor` / `<Input>` / `<Textarea>` / `<Markdown>` / `<Code>` / `<Diff>` / `<ScrollBar>` / `<Slider>` / `<SplitPane>`、`createSelection` / `<List>` / `<VirtualList>`、`createScrollView`、`<Select>` / `<Tabs>` / `<Table>` / `<Tree>`、`<Button>` / `<Dialog>` / `<Modal>`、`ProgressBar` / `Spinner` / `Badge` / `Divider` / `KeyHint` |
 | `@butui/plugins` | 通用 `SlotRegistry` / `Plugin` / 错误隔离；`@butui/plugins/solid` 提供 `createSlot` / `<Slot>`；`@butui/plugins/loader` 提供 manifest / 配置 / 动态加载 / 自动发现 / capability 门控 |
 | `@butui/keymap` | `CommandRegistry` / `createKeymap`：scope、priority、when、冲突检测、help；Solid 适配 `useKeymap` |
 | `@butui/agent` | 事件协议（NDJSON）、Session reducer、流式 diff 事件、SPEC §10.2 组件、Artifact Canvas |

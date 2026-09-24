@@ -36,7 +36,7 @@ const app = createTuiApp({
 | 布局 | `@butui/layout` | **稳定**（`Cell` / `Line` / `Frame` / `layout`） |
 | 渲染 | `@butui/renderer` | **稳定**（`Renderer` / `plainText` / `paintLine`） |
 | 终端 | `@butui/terminal` | **稳定**（`TerminalSession` / 输入解码 / 能力探测） |
-| 基础组件 | `@butui/components` | **稳定**（编辑器 / 选择 / 列表 / 滚动 / ScrollBar / Diff / 弹窗 / 展示组件） |
+| 基础组件 | `@butui/components` | **稳定**（编辑器 / 选择 / 列表 / 滚动 / ScrollBar / Slider / SplitPane / Diff / 弹窗 / 展示组件） |
 | 插件 / Slot | `@butui/plugins` | **稳定**（`Plugin` / `SlotRegistry`；Solid 适配在 `@butui/plugins/solid`；loader 在 `@butui/plugins/loader`） |
 | 命令 / Keymap | `@butui/keymap` | **稳定**（`CommandRegistry` / `Keymap`；Solid 适配在 `@butui/keymap/solid`） |
 | 流式文本 | `@butui/stream` | **稳定**（`StreamSource` / `DiffStream` / `<stream>`） |
@@ -561,6 +561,31 @@ const slider = createSlider({
 - 组件宽度只影响显示，不影响模型值域。
 - 当前是单行水平 slider；没有垂直轴、双 thumb 或刻度组件。
 
+### 4.23 SplitPane：`createSplitPane` / `<SplitPane>`
+
+```tsx
+const split = createSplitPane({
+  orientation: "horizontal",
+  ratio,
+  onChange: setRatio,
+  minFirst: 8,
+  minSecond: 8,
+});
+
+<SplitPane model={split} first={<box>左侧</box>} second={<box>右侧</box>} />;
+```
+
+- `splitPaneGeometry(size, ratio, options)` 先扣掉分隔条，再返回精确的
+  `first / second` cell 数；端点会落在 `minFirst / maxFirst`。
+- `orientation: "horizontal"` 是左右分栏，`"vertical"` 是上下分栏。
+- `beginDrag / drag / endDrag` 管理拖动；鼠标捕获根节点，`drag()` 使用相对根
+  节点的本地坐标，因此分隔条移动不会改变坐标原点。
+- 键盘支持该方向的方向键、PageUp / PageDown、Home / End；分隔条可聚焦。
+- 分隔条 `selectable={false}`，但两侧内容仍可参与全局文本选择。
+- `size` 默认取终端对应轴。组件嵌在 padding / border / 兄弟节点容器里时，应用
+  应传实际 cell 数；窗格本身用 `flexGrow` 跟随父容器。
+- 当前没有折叠、嵌套约束或双击复位。
+
 ## 5. 已知缺口（不要依赖，也不建议自己绕）
 
 - **列表只有单列 + 固定行高**：`itemHeight` 是常数，变高行（折行文本、展开的
@@ -576,6 +601,9 @@ const slider = createSlider({
 - **动画只有共享时钟与 Diff 游标**：还没有 tween / spring / timeline /
   stagger，也没有 shimmer 组件；不要假设 60fps。
 - **ScrollBar 目前只有垂直轴**：没有自动隐藏、hover 展开、水平轴或触控惯性。
+- **SplitPane 的拖动几何依赖 `size`**：根视图可省略并使用终端尺寸；嵌在
+  padding / border / 兄弟节点容器里时必须传实际轴尺寸，否则 min/max 夹取会按
+  错误总尺寸计算。窗格布局比例本身仍会跟随父容器。
 - **`flexShrink` 没有实现**：row 里只有显式 `truncate` / `wrap={false}` 的
   text 会让位给兄弟节点；普通的折行文本仍然先按自然宽度拿满。
 - **`ScrollView` 的翻页步长按整屏高度算**：有固定页眉 / 页脚时会多滚固定区

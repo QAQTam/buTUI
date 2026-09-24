@@ -18,6 +18,8 @@ export * from "./scrollbar.ts";
 export * from "./scrollbar.tsx";
 export * from "./slider.ts";
 export * from "./slider.tsx";
+export * from "./splitpane.ts";
+export * from "./splitpane.tsx";
 export * from "./display.tsx";
 export * from "./modal.tsx";
 export * from "./select.tsx";

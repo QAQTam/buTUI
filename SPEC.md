@@ -951,7 +951,7 @@ app.capturedMouse();
 
 捕获后 press / move / release / wheel 都发给捕获节点；release 自动解除。组件
 里用 `@butui/solid` 的 `useMouseCapture()`。这解决「拖出原目标矩形后收不到
-move」的问题，slider / split pane 等可以据此实现。
+move」的问题，Slider / SplitPane 已据此实现。
 
 文本选择仍默认接管左键拖拽；控件用 `selectable={false}` 退出选择竞争。
 
@@ -979,6 +979,37 @@ const slider = createSlider({
 - 键盘支持左右 / 上下 / PageUp / PageDown / Home / End；
 - 组件宽度只影响显示，不影响模型的值域；
 - 和 ScrollBar 共用「本地坐标 + capture + drag」的交互模式。
+
+---
+
+### 5.25 SplitPane（v0.1 实现）
+
+`createSplitPane()` 把总尺寸、分隔条占位和主窗格比例归一成整数几何：
+
+```ts
+const split = createSplitPane({
+  orientation: "horizontal", // 默认，左右分栏
+  ratio,
+  onChange: setRatio,
+  minFirst: 8,
+  minSecond: 8,
+});
+```
+
+```text
+available = max(0, size - separator)
+first     = clamp(round(available * ratio), minFirst, maxFirst)
+second    = available - first
+```
+
+- `splitPaneGeometry()` 是纯函数；端点、最小尺寸和分隔条占位都精确。
+- `<SplitPane>` 用两个 `flexGrow` 窗格 + 固定分隔条，嵌套时跟随父容器尺寸。
+- 鼠标按下分隔条后，根节点持有 pointer capture；`onDrag` 使用相对根节点的
+  `localX / localY`，因此分隔条自身移动不会改变坐标原点。
+- 键盘支持方向键、PageUp/PageDown、Home/End；分隔条可获得焦点。
+- `selectable={false}` 只声明在分隔条，两侧内容仍可参与全局文本选择。
+- `size` 默认取终端对应轴；组件不在终端全尺寸时，应用需传入实际 cell 数。
+- 当前没有折叠、嵌套拖动约束或双击复位。
 
 ---
 
@@ -1372,7 +1403,7 @@ P1：
 
 - Grid
 - Sticky header / footer
-- SplitPane
+- ~~SplitPane~~ ✅ 见 §5.25
 - 自动文本高度
 - VirtualList
 - ~~精确 ScrollBar~~ ✅ 见 §5.20
@@ -1495,6 +1526,8 @@ P1：
   支持稳定 id upsert、尾行替换和 `stable:false` 流式游标（见 §5.19）
 - `ScrollBar`：`createScrollBar` / `createScrollBarFor` / `<ScrollBar>`，
   精确整数映射、轨道点击和保留 grabOffset 的拖动（见 §5.20）
+- `SplitPane`：`createSplitPane` / `splitPaneGeometry` / `<SplitPane>`，
+  水平 / 垂直分栏、pointer capture、键盘微调（见 §5.25）
 
 ### 10.2 Agent 组件
 
