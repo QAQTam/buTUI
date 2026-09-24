@@ -27,10 +27,17 @@ export interface SpillManifest {
 
 export interface SpillStore {
   write(record: SpillRecord): Promise<void> | void;
+  /** 可选批量写入；实现应保证调用返回后所有记录均可读。 */
+  writeMany?(records: readonly SpillRecord[]): Promise<void> | void;
   read(
     streamId: StreamId,
     lineId: LineId
   ): Promise<SpillRecord | undefined> | SpillRecord | undefined;
+  /** 可选批量读取；返回数组与 lineIds 下标一一对应。 */
+  readMany?(
+    streamId: StreamId,
+    lineIds: readonly LineId[]
+  ): Promise<readonly (SpillRecord | undefined)[]> | readonly (SpillRecord | undefined)[];
   delete?(streamId: StreamId, lineId: LineId): Promise<void> | void;
 }
 
@@ -127,13 +134,33 @@ export class StreamRetention {
         stableAtRevision: line.stableAtRevision,
         bytes: lineBytes(line),
       };
-      await this.store.write(record);
-      const restored = await this.store.read(streamId, line.id);
-      if (!restored || restored.text !== line.text || restored.digest !== line.digest) {
-        throw new Error(`[butui] spill verification failed: ${streamId}/${line.id}`);
-      }
       records.push(record);
       bytes += record.bytes;
+    }
+
+    if (this.store.writeMany) {
+      await this.store.writeMany(records);
+    } else {
+      for (const record of records) await this.store.write(record);
+    }
+
+    if (this.store.readMany) {
+      const restored = await this.store.readMany(
+        streamId,
+        records.map(record => record.lineId)
+      );
+      if (restored.length !== records.length) {
+        throw new Error(
+          `[butui] spill verification failed: ${streamId} returned ${restored.length}/${records.length} records`
+        );
+      }
+      for (let index = 0; index < records.length; index++) {
+        verifyRecord(records[index]!, restored[index]);
+      }
+    } else {
+      for (const record of records) {
+        verifyRecord(record, await this.store.read(streamId, record.lineId));
+      }
     }
 
     return {
@@ -166,6 +193,21 @@ export class StreamRetention {
 
 function lineBytes(line: StreamLineRecord): number {
   return Buffer.byteLength(line.text);
+}
+
+function verifyRecord(
+  expected: SpillRecord,
+  restored: SpillRecord | undefined
+): void {
+  if (
+    !restored ||
+    restored.text !== expected.text ||
+    restored.digest !== expected.digest
+  ) {
+    throw new Error(
+      `[butui] spill verification failed: ${expected.streamId}/${expected.lineId}`
+    );
+  }
 }
 
 function spillKey(streamId: StreamId, lineId: LineId): string {

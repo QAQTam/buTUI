@@ -95,4 +95,68 @@ describe("FileSpillStore", () => {
       expect(new FileSpillStore(path).read("stream-1", "b")?.text).toBe("beta");
     });
   });
+
+  test("numeric index 支持跨 chunk、稀疏编号和规范前导零", () => {
+    withTempDir(dir => {
+      const path = join(dir, "cold.ndjson");
+      const store = new FileSpillStore(path);
+      store.write(record("line-1023", "a"));
+      store.write(record("line-1024", "b"));
+      store.write(record("line-1000000000", "sparse"));
+      store.write(record("line-01", "leading-zero"));
+
+      expect(store.read("stream-1", "line-1023")?.text).toBe("a");
+      expect(store.read("stream-1", "line-1024")?.text).toBe("b");
+      expect(store.read("stream-1", "line-1000000000")?.text).toBe("sparse");
+      expect(store.read("stream-1", "line-01")?.text).toBe("leading-zero");
+      expect(store.stats()).toMatchObject({ records: 4, bytes: 20 });
+
+      store.delete("stream-1", "line-01");
+      expect(store.read("stream-1", "line-01")).toBeUndefined();
+      expect(new FileSpillStore(path).read("stream-1", "line-1024")?.text).toBe(
+        "b"
+      );
+    });
+  });
+
+  test("bulk write/read 与 compact 保留最新记录顺序", () => {
+    withTempDir(dir => {
+      const path = join(dir, "cold.ndjson");
+      const store = new FileSpillStore(path);
+      const records = Array.from({ length: 2_500 }, (_, index) =>
+        record(`line-${index + 1}`, `value-${index}`)
+      );
+      store.writeMany(records);
+      expect(store.readMany("stream-1", records.map(value => value.lineId))).toEqual(
+        records
+      );
+
+      store.write(record("line-2", "replacement"));
+      store.write(record("named", "fallback"));
+      store.compact();
+
+      expect(store.stats()).toMatchObject({ records: 2_501, deletes: 0 });
+      expect(store.read("stream-1", "line-1")?.text).toBe("value-0");
+      expect(store.read("stream-1", "line-2")?.text).toBe("replacement");
+      expect(store.read("stream-1", "named")?.text).toBe("fallback");
+      expect(store.read("stream-1", "line-2500")?.text).toBe("value-2499");
+
+      const reopened = new FileSpillStore(path);
+      expect(reopened.stats().records).toBe(2_501);
+      expect(reopened.read("stream-1", "line-2")?.text).toBe("replacement");
+    });
+  });
+
+  test("reopen 流式扫描可跨 read chunk 处理 UTF-8 记录", () => {
+    withTempDir(dir => {
+      const path = join(dir, "cold.ndjson");
+      const store = new FileSpillStore(path);
+      const text = `开头${"🙂汉字".repeat(20_000)}结尾`;
+      store.write(record("line-1", text));
+
+      const reopened = new FileSpillStore(path);
+      expect(reopened.read("stream-1", "line-1")?.text).toBe(text);
+      expect(reopened.stats().records).toBe(1);
+    });
+  });
 });

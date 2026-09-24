@@ -4,6 +4,7 @@
  * 用法：
  *   bun --conditions=browser run scripts/stream-retention-bench.ts --lines=100000
  *   bun --conditions=browser run scripts/stream-retention-bench.ts --lines=1000000 --batch=500
+ *   bun --conditions=browser run scripts/stream-retention-bench.ts --lines=1000000 --reopen
  */
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -60,6 +61,7 @@ function envelope(seq: number, op: StreamOperation): StreamEnvelope {
 }
 
 function snapshot(seq: number) {
+  (Bun as typeof Bun & { gc?: (force?: boolean) => void }).gc?.(true);
   const usage = process.memoryUsage();
   const stats = streams.stats();
   return {
@@ -73,6 +75,29 @@ function snapshot(seq: number) {
     inMemoryLines: stats.inMemoryLines,
     spilledLines: stats.spilledLines,
     fileBytes: store.stats().fileBytes,
+  };
+}
+
+function reopenStore() {
+  (Bun as typeof Bun & { gc?: (force?: boolean) => void }).gc?.(true);
+  const before = process.memoryUsage();
+  const started = performance.now();
+  const reopened = new FileSpillStore(path);
+  const elapsedMs = performance.now() - started;
+  const spilledLines = streams.stats().spilledLines;
+  const lastLineId = `line-${spilledLines}`;
+  const record = reopened.read(streamId, lastLineId);
+  if (!record) {
+    throw new Error(`reopen 后无法读取 ${lastLineId}`);
+  }
+  const usage = process.memoryUsage();
+  return {
+    elapsedMs,
+    heapBefore: before.heapUsed,
+    heapAfter: usage.heapUsed,
+    rssAfter: usage.rss,
+    stats: reopened.stats(),
+    lastLine: record.text.trim(),
   };
 }
 
@@ -104,6 +129,7 @@ try {
 
   const final = snapshot(totalLines);
   const elapsedMs = performance.now() - startedAt;
+  const reopen = process.argv.includes("--reopen") ? reopenStore() : undefined;
   console.log(
     JSON.stringify(
       {
@@ -113,6 +139,7 @@ try {
         retainedBytes,
         elapsedMs,
         final,
+        ...(reopen ? { reopen } : {}),
         samples,
       },
       null,

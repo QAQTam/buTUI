@@ -98,4 +98,35 @@ describe("StreamRetention", () => {
       "spill verification failed"
     );
   });
+
+  test("SpillStore 批量能力按数组下标校验且保持顺序", async () => {
+    const records = new Map<string, SpillRecord>();
+    let writeManyCalls = 0;
+    let readManyCalls = 0;
+    const store: SpillStore = {
+      write(record) {
+        records.set(record.lineId, record);
+      },
+      writeMany(values) {
+        writeManyCalls++;
+        for (const value of values) records.set(value.lineId, value);
+      },
+      read(_streamId, lineId) {
+        return records.get(lineId);
+      },
+      readMany(_streamId, lineIds) {
+        readManyCalls++;
+        return lineIds.map(lineId => records.get(lineId));
+      },
+    };
+    const retention = new StreamRetention(store, { maxBytes: 0 });
+    const result = await retention.spill("stream-1", [
+      line("line-1", "alpha"),
+      line("line-2", "beta"),
+    ]);
+
+    expect(writeManyCalls).toBe(1);
+    expect(readManyCalls).toBe(1);
+    expect(result.records.map(value => value.text)).toEqual(["alpha", "beta"]);
+  });
 });
