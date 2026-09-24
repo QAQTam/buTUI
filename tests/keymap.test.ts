@@ -3,8 +3,10 @@ import {
   CommandRegistry,
   createKeymap,
   defineCommand,
+  formatKeySequence,
   formatKeyStroke,
   matchesKeyStroke,
+  parseKeySequence,
   parseKeyStroke,
 } from "@butui/keymap";
 import {
@@ -46,9 +48,12 @@ describe("key parsing", () => {
     expect(matchesKeyStroke(key("k"), parseKeyStroke("ctrl+k"))).toBe(false);
   });
 
-  test("多键 chord 明确报错，不静默误解", () => {
+  test("单键解析拒绝空格，序列解析支持多键 chord", () => {
     expect(() => parseKeyStroke("ctrl+k ctrl+s")).toThrow(
-      "Multi-stroke key sequence is not supported yet"
+      "parseKeyStroke() accepts exactly one stroke"
+    );
+    expect(formatKeySequence(parseKeySequence("ctrl+k ctrl+s"))).toBe(
+      "ctrl+k ctrl+s"
     );
   });
 });
@@ -129,6 +134,62 @@ describe("Keymap", () => {
     expect(calls).toEqual(["global", "dialog", "global"]);
   });
 
+  test("多键 chord 在第二键完成后执行，前缀本身被消费", () => {
+    const calls: string[] = [];
+    const keymap = createKeymap();
+    keymap.bindCommand(
+      { id: "save", run: () => { calls.push("save"); } },
+      "ctrl+k ctrl+s"
+    );
+
+    expect(keymap.handle(key("k", { ctrl: true }))).toBe(true);
+    expect(calls).toEqual([]);
+    expect(keymap.pendingSequence()).toBe("ctrl+k");
+    expect(keymap.handle(key("s", { ctrl: true }))).toBe(true);
+    expect(calls).toEqual(["save"]);
+    expect(keymap.pendingSequence()).toBeUndefined();
+  });
+
+  test("短绑定与更长 chord 共存时等待，flush 后执行短绑定", () => {
+    const calls: string[] = [];
+    const keymap = createKeymap();
+    keymap.bindCommand({ id: "short", run: () => { calls.push("short"); } }, "g");
+    keymap.bindCommand(
+      { id: "long", run: () => { calls.push("long"); } },
+      "g g"
+    );
+
+    expect(keymap.handle(key("g"))).toBe(true);
+    expect(calls).toEqual([]);
+    expect(keymap.flushPending()).toBe(true);
+    expect(calls).toEqual(["short"]);
+
+    expect(keymap.handle(key("g"))).toBe(true);
+    expect(keymap.handle(key("g"))).toBe(true);
+    expect(calls).toEqual(["short", "long"]);
+  });
+
+  test("前缀不匹配时先提交精确绑定，再重新处理当前键", () => {
+    const calls: string[] = [];
+    const keymap = createKeymap();
+    keymap.bindCommand({ id: "g", run: () => { calls.push("g"); } }, "g");
+    keymap.bindCommand({ id: "gg", run: () => { calls.push("gg"); } }, "g g");
+    keymap.bindCommand({ id: "x", run: () => { calls.push("x"); } }, "x");
+
+    expect(keymap.handle(key("g"))).toBe(true);
+    expect(keymap.handle(key("x"))).toBe(true);
+    expect(calls).toEqual(["g", "x"]);
+    expect(keymap.pendingSequence()).toBeUndefined();
+  });
+
+  test("scope 变化会丢弃未完成 chord", () => {
+    const keymap = createKeymap();
+    keymap.bindCommand({ id: "x", run: () => {} }, "g g");
+    expect(keymap.handle(key("g"))).toBe(true);
+    keymap.pushScope("dialog");
+    expect(keymap.pendingSequence()).toBeUndefined();
+  });
+
   test("when 为 false 时继续尝试下一条绑定", () => {
     const calls: string[] = [];
     const keymap = createKeymap();
@@ -199,8 +260,8 @@ describe("Keymap", () => {
   test("bindCommand 中途失败时回滚命令与已注册绑定", () => {
     const keymap = createKeymap();
     expect(() =>
-      keymap.bindCommand({ id: "bad", run: () => {} }, ["x", "ctrl+k ctrl+s"])
-    ).toThrow("Multi-stroke key sequence is not supported yet");
+      keymap.bindCommand({ id: "bad", run: () => {} }, ["x", "ctrl+k foo+bar"])
+    ).toThrow('Unknown key modifier "foo"');
     expect(keymap.commands.has("bad")).toBe(false);
     expect(keymap.help()).toEqual([]);
   });

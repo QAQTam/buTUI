@@ -518,8 +518,11 @@ keymap.bindCommand(
 - 命中后调用 `event.preventDefault()` 并返回 true。
 - `conflicts()` 只报告同一 sequence + scope 的多条无条件绑定。
 - `help()` 返回按键、scope、命令 id / title / description。
+- 多键 chord 用空格分隔；前缀会消费按键并等待 `chordTimeout`。
+- `g` / `g g` 可共存，`flushPending()` 提交精确短绑定，`pendingSequence()` 可
+  给状态栏 / 帮助 UI 显示当前前缀。
+- `parseKeySequence()` 负责多键序列；`parseKeyStroke()` 只接受单键。
 - `@butui/keymap/solid` 的 `useKeymap()` 把 keymap 接到组件级全局按键。
-- 当前只支持单键；多键 chord 会抛错，不会静默误解。
 
 ### 4.21 鼠标交互
 
@@ -658,8 +661,8 @@ const split = createSplitPane({
 - **鼠标没有 pointerId / 多指针**：hover 默认关闭（1003 事件量高）；
   OSC 22 是 best-effort，终端可忽略；跨终端窗口的 capture 不在协议范围内。
   惯性只接在 ScrollBar / Slider，不作用于 SplitPane 或文本选择。
-- **Keymap 只有单键**：多键 chord、超时前缀状态机和 Command Palette UI 还没做；
-  当前 keymap 也不持久化用户自定义绑定。
+- **Keymap 已支持多键 chord / 超时前缀**：还缺 Command Palette UI 和用户自定义
+  绑定持久化。
 - **插件 capability 不是沙箱**：它只在动态 import 前做同意门控，没有运行时
   权限拦截、审批 UI 或跨进程隔离；插件在应用进程内执行，只应加载可信代码。
 - **`@butui/web` 是实验层**：接口可能变。

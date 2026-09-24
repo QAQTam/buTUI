@@ -881,10 +881,14 @@ rewrite —— buTUI 默认零 native core，不需要替换 Zig ABI 模块。
 负责当前 scope 下哪个按键触发哪个 command。
 
 ```ts
-const keymap = createKeymap();
+const keymap = createKeymap({ chordTimeout: 1000 });
 keymap.bindCommand(
   { id: "save", title: "保存", run: () => save() },
   ["ctrl+s", "ctrl+shift+s"]
+);
+keymap.bindCommand(
+  { id: "palette", title: "命令面板", run: () => openPalette() },
+  "ctrl+k ctrl+p"
 );
 ```
 
@@ -902,10 +906,13 @@ onKey → keymap → useKeyboard → 内建 ctrl+c / tab → 焦点节点
 - 命中并成功执行命令后调用 `preventDefault()` 并返回 true；
 - 命令同步抛错或异步 rejection 进入 `onError`，不炸按键分发；
 - `conflicts()` 检测同一 sequence + scope 的多条无条件绑定；
-- `help()` 返回可直接渲染的快捷键帮助列表。
+- `help()` 返回可直接渲染的快捷键帮助列表；
+- 多键 chord 用空格分隔，前缀本身消费；`chordTimeout` 后提交精确短绑定；
+- `g` / `g g` 这类短绑定与长前缀可共存，`flushPending()` 可显式提交；
+- `pendingSequence()` 返回当前未完成前缀，供状态栏 / 帮助 UI 使用。
 
 按键解析支持 `ctrl/alt/shift/meta` 和 `esc/return/space/pgup/pgdn/del/ins`
-别名。**当前只支持单键**；多键 chord 明确抛错，不静默误解。
+别名；`parseKeySequence()` 负责多键序列，`parseKeyStroke()` 只接受单键。
 
 `@butui/keymap/solid` 提供 `useKeymap()`，用于组件或插件临时挂载 keymap。
 
@@ -1993,10 +2000,11 @@ type UiCommand =
 
 - `CommandRegistry`：命令注册、when、同步 / 异步错误隔离、订阅。
 - `Keymap`：scope 栈、priority、binding/command `when`、冲突检测、help。
+- 多键 chord：`parseKeySequence()`、前缀消费、`chordTimeout`、`flushPending()`、
+  `pendingSequence()`。
 - runtime 支持结构类型 `keymap` 选项，顺序在 `onKey` 之后、`useKeyboard`
   之前。
 - `@butui/keymap/solid` 提供 `useKeymap()`。
-- 当前只支持单键，多键 chord 是下一步。
 
 不能把：
 

@@ -83,4 +83,27 @@ describe("runtime keymap integration", () => {
 
     app.dispose();
   });
+
+  test("chord 前缀由 keymap 消费，第二键执行命令", () => {
+    const terminal = new FakeTerminal();
+    const calls: string[] = [];
+    const keymap = createKeymap();
+    keymap.bindCommand(
+      { id: "save", run: () => { calls.push("save"); } },
+      "ctrl+k ctrl+s"
+    );
+    const app = createTuiApp({
+      terminal,
+      keymap,
+      onQuit: () => {},
+      view: () => <text>keymap</text>,
+    });
+
+    expect(app.send(key("k", { ctrl: true }))).toBe(1);
+    expect(calls).toEqual([]);
+    expect(keymap.pendingSequence()).toBe("ctrl+k");
+    expect(app.send(key("s", { ctrl: true }))).toBe(1);
+    expect(calls).toEqual(["save"]);
+    app.dispose();
+  });
 });

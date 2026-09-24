@@ -2,7 +2,9 @@ import { createKeymap } from "@butui/keymap";
 import { createTuiApp } from "@butui/runtime";
 import { For, createSignal } from "solid-js";
 
-const [message, setMessage] = createSignal("按 F1 看快捷键，Ctrl+O 打开作用域");
+const [message, setMessage] = createSignal(
+  "F1 帮助 · Ctrl+O 作用域 · Ctrl+K Ctrl+P 多键 chord"
+);
 const [showHelp, setShowHelp] = createSignal(false);
 const [helpVersion, setHelpVersion] = createSignal(0);
 const keymap = createKeymap();
@@ -20,6 +22,18 @@ keymap.bindCommand(
     },
   },
   "f1"
+);
+
+keymap.bindCommand(
+  {
+    id: "chord.demo",
+    title: "多键 chord",
+    description: "Ctrl+K 之后按 Ctrl+P",
+    run: () => {
+      setMessage("多键 chord 已触发");
+    },
+  },
+  "ctrl+k ctrl+p"
 );
 
 keymap.bindCommand(

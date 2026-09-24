@@ -36,16 +36,16 @@ const NAME_ALIASES: Record<string, string> = {
 };
 
 /**
- * 解析单键绑定，如 `ctrl+k` / `shift+tab` / `escape` / `space`。
+ * 解析单个 key stroke，如 `ctrl+k` / `shift+tab` / `escape` / `space`。
  *
- * 多键 chord（空格分隔的序列）暂不支持，会明确抛错而不是静默误解。
+ * 多键 chord 由 `parseKeySequence()` 处理；这里遇到空格会明确抛错。
  */
 export function parseKeyStroke(input: string): KeyStroke {
   const raw = input.trim();
   if (!raw) throw new Error("Key binding must be non-empty");
   if (/\s/.test(raw)) {
     throw new Error(
-      `Multi-stroke key sequence is not supported yet: "${input}"`
+      `parseKeyStroke() accepts exactly one stroke; use parseKeySequence(): "${input}"`
     );
   }
 
@@ -91,6 +91,18 @@ export function formatKeyStroke(stroke: KeyStroke): string {
   if (stroke.meta) parts.push("meta");
   parts.push(stroke.name === " " ? "space" : stroke.name);
   return parts.join("+");
+}
+
+/** 解析多键 chord，如 `ctrl+k ctrl+s`；空格分隔每个 stroke。 */
+export function parseKeySequence(input: string): KeyStroke[] {
+  const raw = input.trim();
+  if (!raw) throw new Error("Key binding must be non-empty");
+  return raw.split(/\s+/).map(parseKeyStroke);
+}
+
+export function formatKeySequence(strokes: readonly KeyStroke[]): string {
+  if (strokes.length === 0) throw new Error("Key sequence must be non-empty");
+  return strokes.map(formatKeyStroke).join(" ");
 }
 
 export function keyStrokeFromEvent(event: KeyEvent): KeyStroke {

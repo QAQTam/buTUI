@@ -8,8 +8,8 @@
 半块 / 占位符）+ Artifact Canvas + 列表 / 虚拟列表 / 滚动视口 / 弹窗 / 表格 /
 树 + 鼠标选区 / OSC 52 + 流式 Diff / 共享动画时钟 / 精确 ScrollBar +
 通用插件 / Slot / Keymap / 鼠标交互 / OSC 22 指针 / 拖动惯性 / tween /
-spring / timeline / Shimmer / Slider / SplitPane 已跑通**，`bun test` 584 个
-用例全绿。
+spring / timeline / Shimmer / Keymap chord / Slider / SplitPane 已跑通**，
+`bun test` 589 个用例全绿。
 
 ```
 应用（你的 agent / 工具 / TUI）
@@ -498,7 +498,7 @@ onKey → keymap → useKeyboard → 内建 ctrl+c / tab → 焦点节点
 ```tsx
 import { createKeymap } from "@butui/keymap";
 
-const keymap = createKeymap();
+const keymap = createKeymap({ chordTimeout: 1000 });
 
 keymap.bindCommand(
   {
@@ -519,6 +519,15 @@ keymap.bindCommand(
   ["ctrl+s", "ctrl+shift+s"]
 );
 
+keymap.bindCommand(
+  {
+    id: "command.palette",
+    title: "命令面板",
+    run: () => openPalette(),
+  },
+  "ctrl+k ctrl+p"
+);
+
 createTuiApp({
   keymap,
   view: () => <App />,
@@ -532,8 +541,10 @@ createTuiApp({
 - `conflicts()` 静态检测同一 sequence + scope 的多条无条件绑定。
 - `help()` 返回按键、scope、命令标题 / 描述，可直接喂给帮助面板。
 - 命令执行错误进入 `onError`，不会炸掉按键分发。
+- 多键 chord 用空格分隔，如 `ctrl+k ctrl+p`；前缀会等待 `chordTimeout`。
+- `g` 与 `g g` 可共存：短绑定会等待更长前缀，超时或 `flushPending()` 后执行。
+- `pendingSequence()` 可给状态栏 / 帮助面板显示当前前缀。
 - `@butui/keymap/solid` 的 `useKeymap()` 可让组件 / 插件临时挂载一层 keymap。
-- 当前只支持单键，多键 chord 会明确抛错。
 
 `bun --conditions=browser run scripts/keymap-demo.tsx` 可试 F1 / Ctrl+O / Esc。
 
@@ -1084,7 +1095,8 @@ Bun.plugin(onLoad)
 
 ## 还没做
 
-- Keymap 只有单键，多键 chord / 超时状态机未做；Command Palette UI 也还没包
+- Keymap 已支持多键 chord / 超时前缀；Command Palette UI 和用户自定义绑定
+  持久化还没做
 - 插件已有 manifest / 配置 / 直接依赖自动发现 / 加载前 capability 门控；
   还缺运行时沙箱、权限审批 UI 与跨进程隔离
 - `@butui/components` 继续长：ASCIIFont / LineNumberRenderable 等按真实场景

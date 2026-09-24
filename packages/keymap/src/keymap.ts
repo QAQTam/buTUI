@@ -5,9 +5,10 @@ import {
   type CommandRegistryOptions,
 } from "./commands.ts";
 import {
+  formatKeySequence,
   formatKeyStroke,
   keyStrokeFromEvent,
-  parseKeyStroke,
+  parseKeySequence,
   type KeyStroke,
 } from "./keys.ts";
 
@@ -44,11 +45,18 @@ export interface KeyConflict {
 
 export interface KeymapOptions extends CommandRegistryOptions {
   commands?: CommandRegistry;
+  /** chord 前缀等待多久自动提交精确绑定，默认 1000ms。 */
+  chordTimeout?: number;
 }
 
 interface InternalBinding extends KeyBinding {
-  stroke: KeyStroke;
+  strokes: KeyStroke[];
   order: number;
+}
+
+interface Candidate {
+  binding: InternalBinding;
+  scopeIndex: number;
 }
 
 /**
@@ -64,22 +72,27 @@ export class Keymap {
   private listeners = new Set<() => void>();
   private order = 0;
   private readonly offCommands: () => void;
+  private readonly chordTimeout: number;
+  private pendingStrokes: KeyStroke[] = [];
+  private pendingEvent: KeyEvent | undefined;
+  private pendingTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(options: KeymapOptions = {}) {
     this.commands = options.commands ?? new CommandRegistry(options);
+    this.chordTimeout = Math.max(1, options.chordTimeout ?? 1000);
     this.offCommands = this.commands.subscribe(() => this.notify());
   }
 
   bind(sequence: string, command: string, options: BindingOptions = {}): () => void {
-    const stroke = parseKeyStroke(sequence);
+    const strokes = parseKeySequence(sequence);
     const binding: InternalBinding = {
-      sequence: formatKeyStroke(stroke),
+      sequence: formatKeySequence(strokes),
       command,
       ...(options.scope !== undefined ? { scope: options.scope } : {}),
       priority: options.priority ?? 0,
       ...(options.when ? { when: options.when } : {}),
       ...("args" in options ? { args: options.args } : {}),
-      stroke,
+      strokes,
       order: this.order++,
     };
     this.bindings.push(binding);
@@ -119,7 +132,7 @@ export class Keymap {
     sequence: string,
     options: { scope?: string; command?: string } = {}
   ): number {
-    const canonical = formatKeyStroke(parseKeyStroke(sequence));
+    const canonical = formatKeySequence(parseKeySequence(sequence));
     const before = this.bindings.length;
     this.bindings = this.bindings.filter(binding => {
       if (binding.sequence !== canonical) return true;
@@ -136,6 +149,7 @@ export class Keymap {
 
   pushScope(scope: string): () => void {
     if (!scope) throw new Error("Scope must be non-empty");
+    this.clearPending();
     this.scopeStack.push(scope);
     this.notify();
     let active = true;
@@ -152,12 +166,14 @@ export class Keymap {
     const index =
       scope === undefined ? this.scopeStack.length - 1 : this.scopeStack.lastIndexOf(scope);
     if (index < 0) return false;
+    this.clearPending();
     this.scopeStack.splice(index, 1);
     this.notify();
     return true;
   }
 
   setScopes(scopes: readonly string[]): void {
+    this.clearPending();
     this.scopeStack = [...scopes];
     this.notify();
   }
@@ -169,12 +185,73 @@ export class Keymap {
   /**
    * 处理一次按键。命中并成功执行命令时 `preventDefault()` 并返回 true。
    *
-   * 命令 `when()` 为 false、命令不存在或执行抛错时继续尝试下一条绑定。
+   * chord 前缀本身也返回 true（消费该键）；如果同一前缀还有精确绑定，会等待
+   * `chordTimeout` 或 `flushPending()`，避免 `g` / `g g` 共存时误触。
    */
   handle(event: KeyEvent): boolean {
-    const canonical = formatKeyStroke(keyStrokeFromEvent(event));
+    const stroke = keyStrokeFromEvent(event);
+
+    if (this.pendingStrokes.length > 0) {
+      const combined = [...this.pendingStrokes, stroke];
+      const matched = this.match(combined);
+      if (matched.exact.length > 0 || matched.prefixes.length > 0) {
+        this.pendingStrokes = combined;
+        this.pendingEvent = event;
+        if (matched.exact.length > 0 && matched.prefixes.length === 0) {
+          const executed = this.executeCandidates(matched.exact, event);
+          this.clearPending();
+          return executed;
+        }
+        this.schedulePendingTimeout();
+        return true;
+      }
+
+      this.flushPending();
+    }
+
+    const matched = this.match([stroke]);
+    if (matched.prefixes.length > 0) {
+      this.pendingStrokes = [stroke];
+      this.pendingEvent = event;
+      this.schedulePendingTimeout();
+      return true;
+    }
+    return matched.exact.length > 0
+      ? this.executeCandidates(matched.exact, event)
+      : false;
+  }
+
+  /** 当前未完成的 chord 前缀；没有时返回 undefined。 */
+  pendingSequence(): string | undefined {
+    return this.pendingStrokes.length > 0
+      ? formatKeySequence(this.pendingStrokes)
+      : undefined;
+  }
+
+  /** 立即提交当前前缀的精确绑定（如果有），用于测试或显式超时。 */
+  flushPending(): boolean {
+    const event = this.pendingEvent;
+    const pending = [...this.pendingStrokes];
+    if (!event || pending.length === 0) {
+      this.clearPending();
+      return false;
+    }
+    const matched = this.match(pending);
+    const executed =
+      matched.exact.length > 0
+        ? this.executeCandidates(matched.exact, event)
+        : false;
+    this.clearPending();
+    return executed;
+  }
+
+  private match(sequence: readonly KeyStroke[]): {
+    exact: Candidate[];
+    prefixes: Candidate[];
+  } {
     const candidates = this.bindings
-      .filter(binding => binding.sequence === canonical)
+      .filter(binding => this.startsWith(binding.strokes, sequence))
+      .filter(binding => !binding.when || binding.when())
       .map(binding => ({
         binding,
         scopeIndex: binding.scope ? this.scopeStack.lastIndexOf(binding.scope) : -1,
@@ -190,8 +267,19 @@ export class Keymap {
         return right.binding.order - left.binding.order;
       });
 
+    return {
+      exact: candidates.filter(candidate => candidate.binding.strokes.length === sequence.length),
+      prefixes: candidates.filter(candidate => candidate.binding.strokes.length > sequence.length),
+    };
+  }
+
+  private startsWith(full: readonly KeyStroke[], prefix: readonly KeyStroke[]): boolean {
+    if (full.length < prefix.length) return false;
+    return prefix.every((stroke, index) => sameStroke(stroke, full[index]!));
+  }
+
+  private executeCandidates(candidates: readonly Candidate[], event: KeyEvent): boolean {
     for (const { binding } of candidates) {
-      if (binding.when && !binding.when()) continue;
       if (
         this.commands.execute(binding.command, {
           event,
@@ -204,6 +292,22 @@ export class Keymap {
       }
     }
     return false;
+  }
+
+  private schedulePendingTimeout(): void {
+    if (this.pendingTimer) clearTimeout(this.pendingTimer);
+    this.pendingTimer = setTimeout(() => {
+      this.pendingTimer = undefined;
+      this.flushPending();
+    }, this.chordTimeout);
+    (this.pendingTimer as unknown as { unref?: () => void }).unref?.();
+  }
+
+  private clearPending(): void {
+    if (this.pendingTimer) clearTimeout(this.pendingTimer);
+    this.pendingTimer = undefined;
+    this.pendingStrokes = [];
+    this.pendingEvent = undefined;
   }
 
   help(): KeyHelpEntry[] {
@@ -250,6 +354,7 @@ export class Keymap {
   }
 
   clear(): void {
+    this.clearPending();
     if (this.bindings.length === 0) return;
     this.bindings = [];
     this.notify();
@@ -290,4 +395,14 @@ export class Keymap {
 
 export function createKeymap(options: KeymapOptions = {}): Keymap {
   return new Keymap(options);
+}
+
+function sameStroke(left: KeyStroke, right: KeyStroke): boolean {
+  return (
+    left.name === right.name &&
+    left.ctrl === right.ctrl &&
+    left.alt === right.alt &&
+    left.shift === right.shift &&
+    left.meta === right.meta
+  );
 }
