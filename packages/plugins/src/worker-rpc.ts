@@ -28,11 +28,14 @@ export type WorkerRpcMessage =
 export interface WorkerRpcOptions {
   /** 单次调用超时；不传表示无限等待。 */
   timeoutMs?: number;
+  /** worker error / messageerror 导致整个 RPC 通道失败时调用一次。 */
+  onFailure?: (error: Error) => void;
 }
 
 export interface WorkerRpcHost {
   call<T = unknown>(method: string, ...args: readonly unknown[]): Promise<T>;
   readonly pending: number;
+  readonly failure: Error | undefined;
   dispose(): void;
 }
 
@@ -104,6 +107,11 @@ export function createWorkerRpc(
       call.reject(error);
     }
     pending.clear();
+    try {
+      options.onFailure?.(error);
+    } catch {
+      // 生命周期回调不能改变 RPC 已经进入 failed 的事实。
+    }
   };
 
   target.addEventListener("message", onMessage);
@@ -143,6 +151,9 @@ export function createWorkerRpc(
     },
     get pending() {
       return pending.size;
+    },
+    get failure() {
+      return failure;
     },
     dispose() {
       if (disposed) return;
