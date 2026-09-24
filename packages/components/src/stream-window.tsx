@@ -30,6 +30,10 @@ export interface StreamWindowProps {
   cacheSize?: number;
   wheelStep?: number;
   pageOverlap?: number;
+  /** 新 revision 到达时保持贴底；默认 false。 */
+  follow?: boolean;
+  /** 每次 revision 变化时刷新当前窗口。 */
+  revision?: () => number;
   smooth?: boolean | SmoothStreamOptions;
   color?: string;
   semantic?: string;
@@ -52,6 +56,7 @@ export function StreamWindow(props: StreamWindowProps) {
       ? { prefetchPages: props.prefetchPages }
       : {}),
     ...(props.cacheSize !== undefined ? { cacheSize: props.cacheSize } : {}),
+    ...(props.follow !== undefined ? { follow: props.follow } : {}),
   });
   const input = createStreamWindowInput(controller, {
     ...(props.wheelStep !== undefined ? { wheelStep: props.wheelStep } : {}),
@@ -68,6 +73,21 @@ export function StreamWindow(props: StreamWindowProps) {
       } else {
         void controller.load();
       }
+    }
+  );
+
+  let lastRevision: number | undefined;
+  createEffect(
+    () => props.revision?.(),
+    revision => {
+      if (revision === undefined) return;
+      if (lastRevision === undefined) {
+        lastRevision = revision;
+        return;
+      }
+      if (revision === lastRevision) return;
+      lastRevision = revision;
+      void controller.refresh();
     }
   );
 

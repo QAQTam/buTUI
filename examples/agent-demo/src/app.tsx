@@ -11,9 +11,10 @@
 import { AgentView, ArtifactCanvas, type Session } from "@butui/agent";
 import { type ImageLayer, artifactImageRenderer } from "@butui/image";
 import { Show } from "solid-js";
-import { type TextEditor, Input } from "@butui/components";
+import { type TextEditor, Input, StreamWindow } from "@butui/components";
 import type { TuiSize } from "@butui/runtime";
 import { permission, status } from "./state.ts";
+import type { Transcript } from "./transcript.ts";
 
 /** 宽终端才开侧栏；窄终端里 artifact 面板会把对话挤没 */
 const PANEL_WIDTH = 42;
@@ -30,6 +31,8 @@ export interface AppProps {
   editor: TextEditor;
   /** 图片 artifact 走 Kitty / iTerm2 / Sixel / 半块（SPEC §12），由图层统一摆放 */
   imageLayer?: ImageLayer;
+  /** 长 transcript 的 ledger-backed 窗口；默认仍显示语义 AgentView。 */
+  transcript?: Transcript;
   /** 图片是异步加载的：加载完要主动重绘一帧 */
   onImageLoad?: () => void;
 }
@@ -40,6 +43,9 @@ export function App(props: AppProps) {
   const showPanel = () => size().columns >= PANEL_MIN_COLUMNS && session.state.artifacts.length > 0;
   const bodyWidth = () => Math.max(20, size().columns - 4);
   const transcriptWidth = () => (showPanel() ? bodyWidth() - PANEL_WIDTH - 1 : bodyWidth());
+  const transcriptMode = process.env.BUTUI_TRANSCRIPT_MODE === "window";
+  const transcriptHeight = () =>
+    Math.max(4, size().rows - FOOTER_ROWS - 5);
   const renderArtifactImage = artifactImageRenderer({
     layer: props.imageLayer,
     policy: { roots: [process.cwd()] },
@@ -62,7 +68,23 @@ export function App(props: AppProps) {
 
         <row gap={1}>
           <box width={transcriptWidth()}>
-            <AgentView session={session} />
+            <Show
+              when={transcriptMode && props.transcript}
+              fallback={<AgentView session={session} />}
+            >
+              {transcript => (
+                <StreamWindow
+                  ledger={transcript().ledger}
+                  streamId={transcript().streamId}
+                  width={transcriptWidth()}
+                  height={transcriptHeight()}
+                  follow
+                  revision={transcript().revision}
+                  scrollbar
+                  smooth
+                />
+              )}
+            </Show>
           </box>
 
           {/* SPEC §11.1：artifact 面板是**独立面板**，不塞进对话流里 */}

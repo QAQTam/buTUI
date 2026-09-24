@@ -71,6 +71,24 @@ describe("StreamLedger", () => {
     expect(projection.volatileTail.map(line => line.text)).toEqual(["world"]);
   });
 
+  test("readWindow 混合 stable lines 与 volatile tail", async () => {
+    const streams = ledger();
+    streams.apply(envelope(1, { type: "append", delta: "a\nb\nc" }));
+
+    const window = await streams.readWindow("stream-1", 0, 10);
+    expect(window).toMatchObject({ offset: 0, totalLines: 3 });
+    expect(window.lines.map(line => line.text)).toEqual(["a", "b", "c"]);
+    expect(window.lines.map(line => line.volatile === true)).toEqual([
+      false,
+      false,
+      true,
+    ]);
+
+    const tail = await streams.readWindow("stream-1", 1, 10);
+    expect(tail.lines.map(line => line.text)).toEqual(["b", "c"]);
+    expect(tail.lines.map(line => line.volatile === true)).toEqual([false, true]);
+  });
+
   test("重复 seq 幂等，同 seq 不同 op 冲突，缺口显式拒绝", () => {
     const streams = ledger();
     const first = envelope(1, { type: "append", delta: "a" });

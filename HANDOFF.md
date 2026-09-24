@@ -3,9 +3,9 @@
 > 交接时间：2026-09-24
 > 仓库：`/home/qaqtamsy/项目/buTUI-v0.2-frontier`
 > 功能基线提交：`61d889b feat(components): add capability approval dialog`
-> 工作区状态：本文件与 Frame barrier 一并提交
-> 本轮能力：accepted / drained frame synchronization
-> 当前回归：`794 pass / 0 fail`，98 个测试文件，`tsc --noEmit` 通过
+> 工作区状态：本文件与 transcript PTY 路径一并提交
+> 本轮能力：live StreamWindow + real PTY metrics
+> 当前回归：`799 pass / 0 fail`，99 个测试文件，`tsc --noEmit` 通过
 
 ## 1. 项目定位
 
@@ -29,6 +29,7 @@ buTUI 是基于 Bun + TypeScript 的通用 TUI Runtime。参考 OpenTUI 的接�
 - `V0.2_FRONTIER.md`：v0.2 会话运行时边界与原型进度。
 - `V0.2_CONTRACTS.md`：FrameClock / StreamLedger / MemoryLedger 接口。
 - `V0.2_RETENTION_REPORT.md`：cold spill、viewport、apply metadata 实测。
+- `V0.2_PTY_REPORT.md`：agent transcript 在真实 PTY 下的帧率 / 输入延迟。
 - `V0.2_ISOLATION_REPORT.md`：Worker / process 启动、RPC 分位、吞吐和 RSS 实测。
 - 本文件：接手工作必须知道的上下文与下一步。
 
@@ -546,6 +547,12 @@ const bar = createScrollBar({
   `<StreamWindow>`。
 - FrameClock 滚动合并：同一帧只提交最新 offset，预取按 viewport page 对齐，
   revision-aware LRU 避免重复 cold read。
+- Live transcript：`readWindow()` 混合 stable lines + volatile tail；
+  `<StreamWindow follow revision>` 可贴底刷新；agent-demo 已接 ledger-backed
+  transcript（`BUTUI_TRANSCRIPT_MODE=window`）。
+- Real PTY：`scripts/transcript-pty-bench.tsx` 在 100×32 PTY、2000 chunk/s
+  下实测约 102fps、input→drained p95 10.65ms、blocked frame 0；见
+  `V0.2_PTY_REPORT.md`。
 - Applied replay：`applied` digest 使用 chunked `Uint32Array + present bitmap`，
   保留精确 duplicate / conflict 历史。
 - Plugin Worker RPC：`createWorkerRpc` / `serveWorkerRpc` 提供 structured clone
@@ -796,8 +803,8 @@ git diff --check
   换出，1M 行 heap 降至 8.34MB。极不规则多 stream 交错仍可能回退显式 `lineIds`。
 - applied digest 默认仍保留完整内存历史（5M 约 26MB）；配置
   `appliedStorePath` 后可磁盘换出，10M 实测 heap 增量约 0.19MB。
-- `<StreamWindow>` 已有 runtime 集成测试，但尚未接入真实 agent transcript 页面；
-  FrameClock 滚动合并已通过 FakeTerminal，端到端真实 PTY 数据仍待采集。
+- `<StreamWindow>` 已接入 agent-demo ledger-backed transcript，并完成真实 PTY
+  合成负载；尚未接 bugent 真实工具 / 模型事件和长会话 heap profile。
 - `runPtyWithRawLease` / `TerminalSession.runPty` / `TuiApp.runPty` 已有生命周期、
   resize 与 AbortSignal 测试；具体工具调用和多 PTY owner 策略仍待接入。
 
@@ -805,8 +812,9 @@ git diff --check
 
 按 v0.2 与通用 TUI 收益排序：
 
-1. **真实 transcript 接入**：让 bugent / agent-demo 消费 `<StreamWindow>`，
-   采集真实 PTY 下输入到 presented frame 的 p95、cold-read 和 cache hit。
+1. **真实 transcript 接入**：agent-demo 的 ledger-backed `<StreamWindow>` 与真实
+   PTY 合成负载已完成；下一步接 bugent 真实事件，并补长会话 heap / cold-read /
+   cache hit profile。
 2. **applied sidecar 生命周期**：10M 磁盘换出原型已完成；下一步由 bugent
    决定默认策略、文件清理和崩溃恢复语义。
 3. **numeric index sidecar 生命周期**：1M 磁盘换出原型已完成；下一步由

@@ -16,6 +16,7 @@ import { type TuiApp, createTuiApp } from "@butui/runtime";
 import { App, FOOTER_ROWS } from "./app.tsx";
 import { createMemoryWorkspace, createMockAgent } from "./mock-agent.ts";
 import { permission, setPermission, setStatus } from "./state.ts";
+import { createTranscript } from "./transcript.ts";
 
 /** 原生图片协议（Kitty / iTerm2 / Sixel）不进 cell 网格，由 ImageLayer 叠加 */
 const imageLayer = new ImageLayer();
@@ -39,6 +40,13 @@ const session = createSession({
   onCommand: (command: UiCommand) => agent.handle(command),
 });
 
+/**
+ * 真实 transcript 消费路径：
+ * AgentEvent → StreamLedger（stable + volatile tail）→ <StreamWindow>。
+ * 默认 UI 仍是 AgentView；设置 BUTUI_TRANSCRIPT_MODE=window 可切到长窗口路径。
+ */
+const transcript = createTranscript();
+
 // Demo 的工作区：内存实现，但走的是真实的 journal / diff / patch 路径
 const workspace = createMemoryWorkspace({
   "src/auth.ts": "export function login() {\n  // TODO: extract\n  return token;\n}\n",
@@ -47,6 +55,7 @@ const workspace = createMemoryWorkspace({
 
 const agent = createMockAgent(
   (event: AgentEvent) => {
+    transcript.ingest(event);
     session.dispatch(event);
     setStatus(session.state.status);
     setPermission(session.state.permissions.length > 0);
@@ -62,6 +71,7 @@ const app: TuiApp = createTuiApp({
       size={runtime.size}
       editor={editor}
       imageLayer={imageLayer}
+      transcript={transcript}
       onImageLoad={() => runtime.requestPaint()}
     />
   ),

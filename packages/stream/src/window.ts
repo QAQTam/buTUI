@@ -3,7 +3,7 @@
  *
  * `<stream>` 节点仍然只消费一个 `StreamSource`；这个 source 不持有完整
  * transcript，而是只保留当前视口窗口。调用方负责 scroll offset，窗口内容由
- * `readStableRange()` 从 hot / spilled lines 混合读取。
+ * `readWindow()` 从 stable hot / spilled lines 与 volatile tail 混合读取。
  */
 import { createSignal } from "solid-js";
 import type {
@@ -42,6 +42,8 @@ export interface StreamWindowControllerOptions extends StreamWindowOptions {
   height?: number;
   /** 上下各预取多少页；默认 1。 */
   prefetchPages?: number;
+  /** 新 revision 到达时保持贴底；默认 false。 */
+  follow?: boolean;
   /** 注入后把连续滚动合并到帧；不传时请求立即排队执行。 */
   clock?: FrameClock;
 }
@@ -55,6 +57,8 @@ export interface StreamWindowController {
   atTop(): boolean;
   atBottom(): boolean;
   load(): Promise<StreamLineWindow>;
+  /** 刷新当前窗口；follow=true 时重新贴底。 */
+  refresh(): Promise<StreamLineWindow | undefined>;
   scrollTo(offset: number): Promise<StreamLineWindow>;
   scrollBy(delta: number): Promise<StreamLineWindow>;
   pageBy(pages: number): Promise<StreamLineWindow>;
@@ -72,7 +76,7 @@ export function createStreamWindow(
   const { ledger, streamId } = options;
   let currentLines: StreamLine[] = [];
   let currentOffset = Math.max(0, Math.floor(options.initialOffset ?? 0));
-  let currentTotal = stableLineCount(ledger.project(streamId));
+  let currentTotal = lineCount(ledger.project(streamId));
   let currentRevision = ledger.project(streamId).revision;
   let lastCount = 0;
   let generation = 0;
@@ -90,7 +94,7 @@ export function createStreamWindow(
     currentLines = window.lines.map((line, index) => ({
       id: window.offset + index + 1,
       text: line.text,
-      stable: true,
+      stable: line.volatile !== true,
     }));
     currentOffset = window.offset;
     currentTotal = window.totalLines;
@@ -149,7 +153,7 @@ export function createStreamWindow(
     const cached = findCachedWindow(offset, count, revision);
     if (cached) return cached;
 
-    const window = await ledger.readStableRange(streamId, offset, count);
+    const window = await ledger.readWindow(streamId, offset, count);
     cacheWindow(
       cacheKey(window.offset, window.lines.length, window.revision),
       window
@@ -178,7 +182,7 @@ export function createStreamWindow(
     setLoading(true);
     let committed = false;
     try {
-      const window = await ledger.readStableRange(streamId, offset, count);
+      const window = await ledger.readWindow(streamId, offset, count);
       if (request !== generation) return window;
 
       applyWindow(window);
@@ -247,6 +251,7 @@ export function createStreamWindowController(
 ): StreamWindowController {
   const source = createStreamWindow(options);
   const clock = options.clock;
+  const follow = options.follow ?? false;
   let height = Math.max(0, Math.floor(options.height ?? 20));
   const prefetchPages = Math.max(0, Math.floor(options.prefetchPages ?? 1));
   let pendingPrefetch: Promise<void> = Promise.resolve();
@@ -296,6 +301,18 @@ export function createStreamWindowController(
     return window;
   };
 
+  const refresh = async (): Promise<StreamLineWindow | undefined> => {
+    if (!follow) {
+      const window = await source.refresh();
+      if (window) schedulePrefetch(window);
+      return window;
+    }
+    const total = lineCount(options.ledger.project(options.streamId));
+    const window = await source.load(Math.max(0, total - height), height);
+    schedulePrefetch(window);
+    return window;
+  };
+
   const requestScrollTo = (offset: number): void => {
     requestedOffset = clampOffset(offset);
     if (!clock) {
@@ -331,6 +348,7 @@ export function createStreamWindowController(
     atTop: () => source.offset() === 0,
     atBottom: () => source.offset() >= maxOffset(),
     load: loadVisible,
+    refresh,
     scrollTo: async offset => {
       cancelRequestedScroll();
       return scrollTo(offset);
@@ -363,13 +381,15 @@ export function createStreamWindowController(
   };
 }
 
-function stableLineCount(projection: {
+function lineCount(projection: {
   stableLines: readonly StreamLineRecord[];
   spilledSegments: readonly { count: number }[];
+  volatileTail: readonly { id: string; text: string }[];
 }): number {
   return (
     projection.stableLines.length +
-    projection.spilledSegments.reduce((sum, segment) => sum + segment.count, 0)
+    projection.spilledSegments.reduce((sum, segment) => sum + segment.count, 0) +
+    projection.volatileTail.length
   );
 }
 

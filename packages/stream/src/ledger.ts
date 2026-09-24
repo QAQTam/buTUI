@@ -82,6 +82,8 @@ export interface StreamLineRecord {
   digest: string;
   /** 已写入 cold storage；text 为空，需 hydrate 后恢复。 */
   spilled?: boolean;
+  /** true 表示仍处于 volatile tail，尚未定稿。 */
+  volatile?: boolean;
 }
 
 export interface StreamTailLine {
@@ -708,6 +710,64 @@ export class StreamLedger {
       offset: start,
       totalLines,
       lines: lines as StreamLineRecord[],
+    };
+  }
+
+  /**
+   * 读取 stable + volatile tail 的混合窗口。
+   *
+   * `readStableRange()` 仍是历史窗口 / spill 的稳定路径；实时 transcript 使用
+   * 这个方法，才能在不把 tail 定稿的情况下显示正在生成的最后一行。
+   */
+  async readWindow(
+    streamId: StreamId,
+    offset: number,
+    count: number
+  ): Promise<StreamLineWindow> {
+    const stream = this.streams.get(streamId);
+    if (!stream) throw new Error(`[butui] unknown stream: ${streamId}`);
+
+    const spilledLines = stream.spilledSegments.reduce(
+      (sum, segment) => sum + segment.count,
+      0
+    );
+    const stableCount = spilledLines + stream.stableLines.length;
+    const totalLines = stableCount + stream.tailLines.length;
+    const start = clampIndex(offset, totalLines);
+    const requested = Number.isFinite(count)
+      ? Math.max(0, Math.floor(count))
+      : totalLines - start;
+    const end = Math.min(totalLines, start + requested);
+    const stableEnd = Math.min(end, stableCount);
+    const lines: StreamLineRecord[] = [];
+
+    if (start < stableEnd) {
+      const stable = await this.readStableRange(
+        streamId,
+        start,
+        stableEnd - start
+      );
+      lines.push(...stable.lines);
+    }
+
+    const tailStart = Math.max(start, stableCount);
+    for (let index = tailStart; index < end; index++) {
+      const line = stream.tailLines[index - stableCount]!;
+      lines.push({
+        id: line.id,
+        text: line.text,
+        stableAtRevision: stream.revision,
+        digest: "",
+        volatile: true,
+      });
+    }
+
+    return {
+      streamId,
+      revision: stream.revision,
+      offset: start,
+      totalLines,
+      lines,
     };
   }
 

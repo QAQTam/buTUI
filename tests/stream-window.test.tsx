@@ -184,6 +184,58 @@ describe("createStreamWindow", () => {
     expect(source.totalLines()).toBe(3_001);
   });
 
+  test("窗口同时显示 stable lines 与正在生成的 volatile tail", async () => {
+    const ledger = new StreamLedger();
+    ledger.open({
+      streamId: "stream-1",
+      kind: "text",
+      priority: 1,
+      createdAt: 0,
+    });
+    ledger.apply(envelope(1, "alpha\nbeta\ngamma"));
+
+    const source = createStreamWindow({ ledger, streamId: "stream-1" });
+    const loaded = await source.load(0, 10);
+
+    expect(loaded.totalLines).toBe(3);
+    expect(loaded.lines.map(line => line.text)).toEqual([
+      "alpha",
+      "beta",
+      "gamma",
+    ]);
+    expect(source.lines.map(line => line.stable)).toEqual([true, true, false]);
+  });
+
+  test("follow controller 在新 revision 后保持贴底", async () => {
+    const ledger = new StreamLedger();
+    ledger.open({
+      streamId: "stream-1",
+      kind: "text",
+      priority: 1,
+      createdAt: 0,
+    });
+    ledger.apply(envelope(1, "a\nb\n"));
+    const controller = createStreamWindowController({
+      ledger,
+      streamId: "stream-1",
+      height: 2,
+      follow: true,
+    });
+
+    await controller.load();
+    expect(controller.source.lines.map(line => line.text)).toEqual(["a", "b"]);
+
+    ledger.apply(envelope(2, "c"));
+    await controller.refresh();
+    expect(controller.offset()).toBe(1);
+    expect(controller.source.lines.map(line => line.text)).toEqual(["b", "c"]);
+
+    ledger.apply(envelope(3, "\nd"));
+    await controller.refresh();
+    expect(controller.offset()).toBe(2);
+    expect(controller.source.lines.map(line => line.text)).toEqual(["c", "d"]);
+  });
+
   test("快速滚动时旧请求不能覆盖新窗口", async () => {
     const store = new DelayedSpillStore();
     const ledger = await createSpilledLedger(1_500, store);

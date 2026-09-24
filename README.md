@@ -11,7 +11,7 @@
 spring / timeline / Shimmer / Keymap chord / Command Palette / Command Menu /
 Slider / SplitPane / Toast / Tooltip / Popover / Portal / Dynamic / MultiSelect /
 Form / Autocomplete / Checkbox / RadioGroup / 高频 chunk 合帧 / smooth reveal 已跑通**，`bun test`
-794 个用例全绿。
+799 个用例全绿。
 
 ```
 应用（你的 agent / 工具 / TUI）
@@ -877,6 +877,36 @@ chunk/s 输入下的逐列流动效果。
 `bun --conditions=browser run scripts/smooth-bench.tsx` 可查看内存 / CPU
 增量。当前实现只保存行引用和未 reveal 行的宽度缓存，不复制文本；20k 行时
 wrapper 增量约 265.5 KiB（约 13.6 B/行）。
+
+### 长 transcript 窗口
+
+`StreamLedger` 可以只把视口附近的行保留在内存，稳定历史按策略 spill：
+
+```tsx
+<StreamWindow
+  ledger={ledger}
+  streamId="agent-transcript"
+  height={20}
+  follow
+  revision={revision}
+  scrollbar
+  smooth
+/>
+```
+
+`readWindow()` 会混合 stable lines 与当前 volatile tail，因此正在生成的最后
+一行也能实时显示；`follow + revision` 用于新 revision 到达时贴底刷新。
+agent-demo 可通过 `BUTUI_TRANSCRIPT_MODE=window` 使用这条路径。
+
+真实 PTY 压测：
+
+```bash
+bun --conditions=browser run scripts/transcript-pty-bench.tsx \
+  --seconds=2 --chunks-per-second=2000
+```
+
+当前 100×32 PTY 合成负载约 102fps，input→drained p95 约 10.65ms，详见
+`V0.2_PTY_REPORT.md`。
 
 ### 用法
 
