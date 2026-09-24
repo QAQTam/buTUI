@@ -130,6 +130,40 @@ describe("FrameClock P0-A", () => {
     h.clock.dispose();
   });
 
+  test("timer 早于 deadline 触发时会重新调度，不会永久停帧", () => {
+    const h = clockHarness({ fps: 120 });
+    const frames: number[] = [];
+
+    h.now = 100;
+    h.clock.request(
+      request("critical", () => {
+        frames.push(1);
+      })
+    );
+    h.runMicrotasks();
+    expect(frames).toEqual([1]);
+
+    h.now = 102;
+    h.clock.request(
+      request(
+        "critical",
+        () => {
+          frames.push(2);
+        },
+        { coalesceKey: "next" }
+      )
+    );
+    const [handle, timer] = [...h.timers.entries()][0]!;
+    h.timers.delete(handle);
+    h.now = timer.at - 0.5;
+    timer.callback();
+
+    expect(h.timers.size).toBe(1);
+    h.runNextTimer();
+    expect(frames).toEqual([1, 2]);
+    h.clock.dispose();
+  });
+
   test("空闲后的第一次 request 走 microtask，后续请求按帧预算排队", () => {
     const h = clockHarness({ fps: 20 });
     const frames: number[] = [];

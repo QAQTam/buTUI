@@ -352,7 +352,12 @@ export class FrameClock {
       .filter(request => request.deadline <= clockTime)
       .sort(compareRequests);
 
-    if (due.length === 0) return;
+    if (due.length === 0) {
+      // Timer 可能因时钟精度早于 deadline 触发。这里必须重新挂 wake，
+      // 否则请求会永久留在 queue 中。
+      this.scheduleWake();
+      return;
+    }
 
     const frameId = this.nextFrameId++ as FrameId;
     const quality = this.quality;
