@@ -39,6 +39,8 @@ export interface SpillStore {
     lineIds: readonly LineId[]
   ): Promise<readonly (SpillRecord | undefined)[]> | readonly (SpillRecord | undefined)[];
   delete?(streamId: StreamId, lineId: LineId): Promise<void> | void;
+  /** 可选：优雅退出时刷盘；remove=true 表示显式删除 sidecar。 */
+  dispose?(options?: { remove?: boolean }): Promise<void> | void;
 }
 
 export interface RetentionPolicy {

@@ -17,6 +17,7 @@ import {
   mkdirSync,
   openSync,
   readSync,
+  rmSync,
   writeSync,
 } from "node:fs";
 import { dirname } from "node:path";
@@ -27,6 +28,7 @@ import {
   type SpillRecord,
   type SpillStore,
 } from "./spill.ts";
+import { DEFAULT_RETENTION_POLICY } from "./retention-policy.ts";
 
 export type StreamId = string;
 export type LineId = string;
@@ -175,6 +177,8 @@ export interface StreamLedgerOptions {
   appliedStorePath?: string;
   /** applied 内存缓存 chunk 数；仅在 appliedStorePath 下生效，默认 64。 */
   appliedCacheChunks?: number;
+  /** dispose 时删除 spill / applied sidecar；默认 false，保留供恢复。 */
+  cleanupSidecars?: boolean;
 }
 
 interface StreamState {
@@ -225,7 +229,12 @@ class AppliedDigestIndex {
   constructor(options: AppliedDigestIndexOptions = {}) {
     this.path = options.path;
     this.maxChunks = this.path
-      ? Math.max(1, Math.floor(options.maxChunks ?? 64))
+      ? Math.max(
+          1,
+          Math.floor(
+            options.maxChunks ?? DEFAULT_RETENTION_POLICY.appliedCacheChunks
+          )
+        )
       : Number.POSITIVE_INFINITY;
   }
 
@@ -254,10 +263,11 @@ class AppliedDigestIndex {
     return chunk.values[at]!.toString(16).padStart(8, "0");
   }
 
-  dispose(): void {
+  dispose(options: { remove?: boolean } = {}): void {
     for (const [index, chunk] of this.chunks) {
       if (chunk.dirty) this.writeChunk(index, chunk);
     }
+    if (options.remove && this.path) rmSync(this.path, { force: true });
     this.chunks.clear();
   }
 
@@ -367,15 +377,22 @@ export class StreamLedger {
   private readonly spillPolicy?: RetentionPolicy;
   private readonly appliedStorePath?: string;
   private readonly appliedCacheChunks?: number;
+  private readonly cleanupSidecars: boolean;
   private nextLineId = 1;
 
   constructor(options: StreamLedgerOptions = {}) {
     this.memory = options.memory;
     this.memoryOwner = options.memoryOwner ?? "butui-stream";
     this.spillStore = options.spill?.store;
-    this.spillPolicy = options.spill?.policy;
+    this.spillPolicy = options.spill
+      ? (options.spill.policy ?? {
+          maxBytes: DEFAULT_RETENTION_POLICY.hotBytes,
+          keepTailLines: DEFAULT_RETENTION_POLICY.keepTailLines,
+        })
+      : undefined;
     this.appliedStorePath = options.appliedStorePath;
     this.appliedCacheChunks = options.appliedCacheChunks;
+    this.cleanupSidecars = options.cleanupSidecars ?? false;
   }
 
   open(meta: OpenStreamMeta): void {
@@ -875,9 +892,12 @@ export class StreamLedger {
     for (const stream of this.streams.values()) {
       for (const reservation of stream.memoryReservations) reservation.release();
       stream.memoryReservations = [];
-      stream.applied.dispose();
+      stream.applied.dispose({ remove: this.cleanupSidecars });
     }
     this.streams.clear();
+    if (this.cleanupSidecars) {
+      void this.spillStore?.dispose?.({ remove: true });
+    }
   }
 
   lineId(): LineId {

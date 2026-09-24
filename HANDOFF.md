@@ -3,9 +3,9 @@
 > 交接时间：2026-09-24
 > 仓库：`/home/qaqtamsy/项目/buTUI-v0.2-frontier`
 > 功能基线提交：`61d889b feat(components): add capability approval dialog`
-> 工作区状态：本文件与 terminal recovery 一并提交
-> 本轮能力：mode journal + unified signal recovery
-> 当前回归：`807 pass / 0 fail`，101 个测试文件，`tsc --noEmit` 通过
+> 工作区状态：本文件与 retention defaults 一并提交
+> 本轮能力：frozen retention policy + sidecar lifecycle
+> 当前回归：`810 pass / 0 fail`，102 个测试文件，`tsc --noEmit` 通过
 
 ## 1. 项目定位
 
@@ -545,8 +545,12 @@ const bar = createScrollBar({
 - MemoryLedger：allocation admission、spill candidates、class / pinned limits。
 - FileSpillStore：append-only cold file、delete tombstone、streaming reopen、
   streaming compact、numeric chunk index、批量 write / read。
-- Retention：按 bytes / tail lines spill；连续 LineId 使用范围，多 stream
-  交错使用 `lineRuns`，不规则时回退显式 `lineIds`。
+- Retention：默认 hot 4MiB / keepTail 256 / applied+index cache 64 /
+  compactAfterDeletes 10k；按 bytes / tail lines spill，连续 LineId 使用范围，
+  多 stream 交错使用 `lineRuns`，不规则时回退显式 `lineIds`。
+- Sidecar lifecycle：默认保留供 reopen / crash recovery；
+  `cleanupSidecars=true` 时 dispose 删除 spill / numeric index / applied sidecar；
+  1M 行 heap 保持约 8.1–8.4MB 平台期。
 - Viewport：`readCold()`、`readStableRange()`、`createStreamWindow()`、
   `createStreamWindowController()`、键盘 / 滚轮 / ScrollBar adapter 和
   `<StreamWindow>`。

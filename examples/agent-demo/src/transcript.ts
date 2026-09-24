@@ -8,6 +8,7 @@
 import type { AgentEvent } from "@butui/agent";
 import { MemoryLedger } from "@butui/core";
 import {
+  DEFAULT_RETENTION_POLICY,
   MemorySpillStore,
   StreamLedger,
   type StreamId,
@@ -33,10 +34,16 @@ export interface TranscriptOptions {
 
 export function createTranscript(options: TranscriptOptions = {}): Transcript {
   const streamId = options.streamId ?? "agent-transcript";
-  const memoryBytes = Math.max(64 * 1024, options.memoryBytes ?? 2 * 1024 * 1024);
+  const memoryBytes = Math.max(
+    64 * 1024,
+    options.memoryBytes ?? DEFAULT_RETENTION_POLICY.hotBytes * 2
+  );
   const retainedBytes = Math.min(
     memoryBytes,
-    Math.max(32 * 1024, options.retainedBytes ?? memoryBytes / 2)
+    Math.max(
+      32 * 1024,
+      options.retainedBytes ?? DEFAULT_RETENTION_POLICY.hotBytes
+    )
   );
   const memory = new MemoryLedger({ totalBytes: memoryBytes });
   const ledger = new StreamLedger({
@@ -44,7 +51,10 @@ export function createTranscript(options: TranscriptOptions = {}): Transcript {
     memoryOwner: "agent-demo-transcript",
     spill: {
       store: new MemorySpillStore(),
-      policy: { maxBytes: retainedBytes },
+      policy: {
+        maxBytes: retainedBytes,
+        keepTailLines: DEFAULT_RETENTION_POLICY.keepTailLines,
+      },
     },
   });
   ledger.open({ streamId, kind: "text", priority: 1, createdAt: 0 });

@@ -25,6 +25,7 @@ import { dirname, join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import type { LineId, StreamId } from "./ledger.ts";
 import type { SpillRecord, SpillStore } from "./spill.ts";
+import { DEFAULT_RETENTION_POLICY } from "./retention-policy.ts";
 
 interface SpillIndexEntry {
   offset: number;
@@ -83,6 +84,7 @@ export class FileSpillStore implements SpillStore {
   private readonly numericChunkLru = new Map<string, NumericLruEntry>();
   private readonly indexPath?: string;
   private readonly indexCacheChunks: number;
+  private readonly compactAfterDeletes: number;
   private liveCount = 0;
   private liveBytes = 0;
   private deletes = 0;
@@ -90,12 +92,25 @@ export class FileSpillStore implements SpillStore {
 
   constructor(
     readonly path: string,
-    private readonly options: FileSpillStoreOptions = {}
+    options: FileSpillStoreOptions = {}
   ) {
     this.indexPath = options.indexPath;
     this.indexCacheChunks = this.indexPath
-      ? Math.max(1, Math.floor(options.indexCacheChunks ?? 64))
+      ? Math.max(
+          1,
+          Math.floor(
+            options.indexCacheChunks ??
+              DEFAULT_RETENTION_POLICY.indexCacheChunks
+          )
+        )
       : Number.POSITIVE_INFINITY;
+    this.compactAfterDeletes = Math.max(
+      0,
+      Math.floor(
+        options.compactAfterDeletes ??
+          DEFAULT_RETENTION_POLICY.compactAfterDeletes
+      )
+    );
     mkdirSync(dirname(path), { recursive: true });
     if (this.indexPath) mkdirSync(this.indexPath, { recursive: true });
     if (existsSync(path)) this.rebuildIndex();
@@ -169,8 +184,8 @@ export class FileSpillStore implements SpillStore {
     this.removeIndex(streamId, lineId);
     this.deletes++;
     if (
-      this.options.compactAfterDeletes !== undefined &&
-      this.deletes >= this.options.compactAfterDeletes
+      this.compactAfterDeletes > 0 &&
+      this.deletes >= this.compactAfterDeletes
     ) {
       this.compact();
     }
@@ -183,6 +198,40 @@ export class FileSpillStore implements SpillStore {
       fileBytes: this.size,
       deletes: this.deletes,
     };
+  }
+
+  /** 把内存中的 dirty numeric chunks 刷到磁盘。 */
+  flush(): void {
+    for (const indexes of this.numericIndexes.values()) {
+      for (const index of indexes.values()) {
+        for (const [chunkIndex, chunk] of index.chunks) {
+          if (chunk.dirty) this.writeNumericChunk(index, chunkIndex, chunk);
+        }
+      }
+    }
+  }
+
+  /**
+   * 释放索引内存；`remove=true` 时删除 spill file 和 numeric index sidecar。
+   * append-only 文件本身是恢复源，崩溃后由构造函数重新扫描，不依赖 dirty index。
+   */
+  dispose(options: { remove?: boolean } = {}): void {
+    this.flush();
+    if (options.remove) {
+      rmSync(this.path, { force: true });
+      for (const indexes of this.numericIndexes.values()) {
+        for (const index of indexes.values()) {
+          if (index.filePath) rmSync(index.filePath, { force: true });
+        }
+      }
+    }
+    this.numericIndexes.clear();
+    this.fallbackIndex.clear();
+    this.numericChunkLru.clear();
+    this.liveCount = 0;
+    this.liveBytes = 0;
+    this.deletes = 0;
+    this.size = 0;
   }
 
   /** 重写文件，只保留当前 live records。 */
