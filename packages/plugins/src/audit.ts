@@ -164,12 +164,27 @@ export interface AuditOrderResult {
   watermarks: Readonly<Record<string, number>>;
 }
 
-export interface AuditOrderState {
-  watermarks: Readonly<Record<string, number>>;
-  pending: readonly AuditEvent[];
+export interface AuditPendingEvent {
+  event: AuditEvent;
+  receivedAt: number;
 }
 
-export interface AuditOrderOptions {
+export interface AuditOrderState {
+  watermarks: Readonly<Record<string, number>>;
+  pending: readonly (AuditEvent | AuditPendingEvent)[];
+}
+
+export interface AuditOrderPruneOptions {
+  /** pending 最长保留时间；超时后进入 expired。 */
+  pendingTtlMs?: number;
+  /** pending 总量上限；超限后淘汰最旧项。 */
+  maxPendingEvents?: number;
+  /** 每个 source 的 pending 上限；超限后淘汰最旧项。 */
+  maxPendingPerSource?: number;
+  now?: () => number;
+}
+
+export interface AuditOrderOptions extends AuditOrderPruneOptions {
   getSourceId?: (event: AuditEvent) => string;
   getSourceSeq?: (event: AuditEvent) => number;
   initialWatermarks?: Readonly<Record<string, number>>;
@@ -177,8 +192,27 @@ export interface AuditOrderOptions {
   onState?: (state: AuditOrderState) => void | Promise<void>;
 }
 
+export interface AuditOrderResult {
+  committed: readonly AuditEvent[];
+  pending: readonly AuditEvent[];
+  duplicates: readonly AuditEvent[];
+  expired: readonly AuditEvent[];
+  evicted: readonly AuditEvent[];
+  gaps: readonly AuditGap[];
+  watermarks: Readonly<Record<string, number>>;
+}
+
+export interface AuditOrderPruneResult {
+  pending: readonly AuditEvent[];
+  expired: readonly AuditEvent[];
+  evicted: readonly AuditEvent[];
+  watermarks: Readonly<Record<string, number>>;
+}
+
 export interface AuditOrderBuffer {
   accept(events: readonly AuditEvent[]): AuditOrderResult;
+  prune(): AuditOrderPruneResult;
+  compact(sourceId: string): boolean;
   watermark(sourceId: string): number;
   snapshot(): Readonly<Record<string, number>>;
   snapshotState(): AuditOrderState;
@@ -188,6 +222,12 @@ export interface AuditOrderBuffer {
 
 export interface AuditReceiverResult extends AuditOrderResult {
   ack: AuditAck;
+}
+
+export interface AuditReceiver {
+  readonly buffer: AuditOrderBuffer;
+  receive(events: readonly AuditEvent[]): AuditReceiverResult;
+  flush(): Promise<void>;
 }
 
 export interface AuditReceiver {
@@ -705,6 +745,12 @@ export function createAuditOrderBuffer(
 ): AuditOrderBuffer {
   const getSourceId = options.getSourceId ?? defaultAuditSourceId;
   const getSourceSeq = options.getSourceSeq ?? defaultAuditSourceSeq;
+  const now = options.now ?? (() => Date.now());
+  const pendingTtlMs = normalizeOptionalCount(options.pendingTtlMs);
+  const maxPendingEvents = normalizeOptionalCount(options.maxPendingEvents);
+  const maxPendingPerSource = normalizeOptionalCount(
+    options.maxPendingPerSource
+  );
   const initial = new Map<string, number>();
   for (const [sourceId, seq] of Object.entries(
     options.initialState?.watermarks ?? options.initialWatermarks ?? {}
@@ -712,19 +758,22 @@ export function createAuditOrderBuffer(
     initial.set(sourceId, normalizeWatermark(seq));
   }
   const watermarks = new Map(initial);
-  const pending = new Map<string, Map<number, AuditEvent>>();
+  const pending = new Map<string, Map<number, AuditPendingEvent>>();
   let persistChain: Promise<void> = Promise.resolve();
 
-  for (const event of options.initialState?.pending ?? []) {
-    const sourceId = getSourceId(event);
-    const sourceSeq = normalizeSourceSeq(getSourceSeq(event));
+  for (const raw of options.initialState?.pending ?? []) {
+    const entry = isAuditPendingEvent(raw)
+      ? raw
+      : { event: raw, receivedAt: now() };
+    const sourceId = getSourceId(entry.event);
+    const sourceSeq = normalizeSourceSeq(getSourceSeq(entry.event));
     if (sourceSeq <= (watermarks.get(sourceId) ?? 0)) continue;
     let queue = pending.get(sourceId);
     if (!queue) {
       queue = new Map();
       pending.set(sourceId, queue);
     }
-    queue.set(sourceSeq, event);
+    queue.set(sourceSeq, entry);
   }
 
   const snapshotState = (): AuditOrderState => ({
@@ -734,7 +783,7 @@ export function createAuditOrderBuffer(
       .flatMap(([, queue]) =>
         [...queue.entries()]
           .sort(([left], [right]) => left - right)
-          .map(([, event]) => event)
+          .map(([, entry]) => entry)
       ),
   });
 
@@ -746,9 +795,91 @@ export function createAuditOrderBuffer(
       .then(() => options.onState!(state));
   };
 
+  const pruneInternal = (
+    persistAfter: boolean
+  ): { result: AuditOrderPruneResult; changed: boolean } => {
+    const timestamp = now();
+    const expired: AuditEvent[] = [];
+    const evicted: AuditEvent[] = [];
+    let changed = false;
+
+    if (pendingTtlMs !== undefined) {
+      for (const [sourceId, queue] of pending) {
+        for (const [seq, entry] of queue) {
+          if (timestamp - entry.receivedAt <= pendingTtlMs) continue;
+          queue.delete(seq);
+          expired.push(entry.event);
+          changed = true;
+        }
+        if (queue.size === 0) pending.delete(sourceId);
+      }
+    }
+
+    if (maxPendingPerSource !== undefined) {
+      for (const [sourceId, queue] of pending) {
+        const overflow = queue.size - maxPendingPerSource;
+        if (overflow <= 0) continue;
+        const oldest = [...queue.entries()]
+          .sort(([, left], [, right]) => left.receivedAt - right.receivedAt)
+          .slice(0, overflow);
+        for (const [seq, entry] of oldest) {
+          queue.delete(seq);
+          evicted.push(entry.event);
+        }
+        changed = true;
+        if (queue.size === 0) pending.delete(sourceId);
+      }
+    }
+
+    if (maxPendingEvents !== undefined) {
+      const all = [...pending.entries()].flatMap(([sourceId, queue]) =>
+        [...queue.entries()].map(([seq, entry]) => ({
+          sourceId,
+          seq,
+          entry,
+        }))
+      );
+      const overflow = all.length - maxPendingEvents;
+      if (overflow > 0) {
+        const oldest = all
+          .sort((left, right) => left.entry.receivedAt - right.entry.receivedAt)
+          .slice(0, overflow);
+        for (const item of oldest) {
+          pending.get(item.sourceId)?.delete(item.seq);
+          evicted.push(item.entry.event);
+        }
+        for (const [sourceId, queue] of pending) {
+          if (queue.size === 0) pending.delete(sourceId);
+        }
+        changed = true;
+      }
+    }
+
+    for (const [sourceId, watermark] of watermarks) {
+      if (watermark === 0 && !pending.has(sourceId)) {
+        watermarks.delete(sourceId);
+        changed = true;
+      }
+    }
+
+    if (changed && persistAfter) persist();
+    return {
+      result: {
+        pending: [...pending.values()].flatMap(queue =>
+          [...queue.values()].map(entry => entry.event)
+        ),
+        expired,
+        evicted,
+        watermarks: Object.fromEntries(watermarks),
+      },
+      changed,
+    };
+  };
+
   const accept = (events: readonly AuditEvent[]): AuditOrderResult => {
     const committed: AuditEvent[] = [];
     const duplicates: AuditEvent[] = [];
+    const timestamp = now();
     for (const event of events) {
       const sourceId = getSourceId(event);
       const sourceSeq = normalizeSourceSeq(getSourceSeq(event));
@@ -766,10 +897,10 @@ export function createAuditOrderBuffer(
         duplicates.push(event);
         continue;
       }
-      queue.set(sourceSeq, event);
+      queue.set(sourceSeq, { event, receivedAt: timestamp });
       let next = (watermarks.get(sourceId) ?? 0) + 1;
       while (queue.has(next)) {
-        committed.push(queue.get(next)!);
+        committed.push(queue.get(next)!.event);
         queue.delete(next);
         next++;
       }
@@ -777,6 +908,7 @@ export function createAuditOrderBuffer(
       if (queue.size === 0) pending.delete(sourceId);
     }
 
+    const cleanup = pruneInternal(false);
     const gaps: AuditGap[] = [];
     for (const [sourceId, queue] of pending) {
       const watermark = watermarks.get(sourceId) ?? 0;
@@ -786,22 +918,32 @@ export function createAuditOrderBuffer(
         cursor = seq + 1;
       }
     }
-    const pendingEvents = [...pending.values()].flatMap(queue =>
-      [...queue.values()]
-    );
-    const result: AuditOrderResult = {
+    persist();
+    return {
       committed,
-      pending: pendingEvents,
+      pending: cleanup.result.pending,
       duplicates,
+      expired: cleanup.result.expired,
+      evicted: cleanup.result.evicted,
       gaps,
       watermarks: Object.fromEntries(watermarks),
     };
-    persist();
-    return result;
   };
 
   return {
     accept,
+    prune() {
+      const cleanup = pruneInternal(true);
+      return cleanup.result;
+    },
+    compact(sourceId) {
+      const queue = pending.get(sourceId);
+      if (queue && queue.size > 0) return false;
+      if (!watermarks.has(sourceId)) return false;
+      watermarks.delete(sourceId);
+      persist();
+      return true;
+    },
     watermark(sourceId) {
       return watermarks.get(sourceId) ?? 0;
     },
@@ -1181,7 +1323,26 @@ function isAuditOrderState(value: unknown): value is AuditOrderState {
   for (const seq of Object.values(value.watermarks)) {
     if (!Number.isSafeInteger(seq) || (seq as number) < 0) return false;
   }
-  return value.pending.every(isAuditEvent);
+  return value.pending.every(
+    item => isAuditEvent(item) || isAuditPendingEvent(item)
+  );
+}
+
+function isAuditPendingEvent(value: unknown): value is AuditPendingEvent {
+  return (
+    isRecord(value) &&
+    isAuditEvent(value.event) &&
+    typeof value.receivedAt === "number" &&
+    Number.isFinite(value.receivedAt)
+  );
+}
+
+function normalizeOptionalCount(value: number | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  if (!Number.isFinite(value) || value < 0) {
+    throw new Error("[butui] audit order limit must be a non-negative number");
+  }
+  return Math.floor(value);
 }
 
 function isNotFound(value: unknown): boolean {

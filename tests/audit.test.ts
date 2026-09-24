@@ -325,6 +325,39 @@ describe("audit log", () => {
     expect(buffer.accept([sourceEvent("a", 3, 4)]).duplicates).toHaveLength(1);
   });
 
+  test("order buffer TTL 过期 pending，避免永久保留缺口", () => {
+    let now = 0;
+    const buffer = createAuditOrderBuffer({
+      pendingTtlMs: 10,
+      now: () => now,
+    });
+    expect(buffer.accept([sourceEvent("a", 2, 2)]).pending).toHaveLength(1);
+
+    now = 11;
+    const result = buffer.accept([sourceEvent("b", 1, 3)]);
+    expect(result.expired.map(event => event.sourceSeq)).toEqual([2]);
+    expect(result.pending).toEqual([]);
+    expect(result.watermarks).toEqual({ b: 1 });
+  });
+
+  test("order buffer 容量上限淘汰最旧 pending，compact 清除完成 source", () => {
+    const buffer = createAuditOrderBuffer({ maxPendingPerSource: 1 });
+    const evicted = buffer.accept([
+      sourceEvent("a", 2, 2),
+      sourceEvent("a", 3, 3),
+    ]);
+    expect(evicted.evicted.map(event => event.sourceSeq)).toEqual([2]);
+    expect(evicted.pending.map(event => event.sourceSeq)).toEqual([3]);
+
+    const completed = createAuditOrderBuffer();
+    completed.accept([sourceEvent("a", 1, 1)]);
+    expect(completed.watermark("a")).toBe(1);
+    expect(completed.compact("a")).toBe(true);
+    expect(completed.watermark("a")).toBe(0);
+    expect(completed.accept([sourceEvent("a", 1, 2)]).committed).toHaveLength(1);
+    expect(completed.compact("missing")).toBe(false);
+  });
+
   test("persistent receiver 重启后恢复 watermark 与 pending 缺口", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "butui-order-"));
     const file = path.join(dir, "order.json");
