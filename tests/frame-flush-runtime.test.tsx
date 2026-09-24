@@ -47,7 +47,7 @@ describe("runtime frame flush barrier", () => {
     setValue("after");
     await waiting;
 
-    expect(terminal.output).toContain("after");
+    expect(app.frame().text()).toContain("after");
     expect(terminal.output).not.toContain("before");
     app.dispose();
   });

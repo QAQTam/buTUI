@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { Renderer, diffFrames, moveTo, paintLine } from "@butui/renderer";
+import {
+  RESET,
+  Renderer,
+  computeDamage,
+  diffFrames,
+  moveTo,
+  paintLine,
+} from "@butui/renderer";
 import type { Cell, Line } from "@butui/layout";
 
 const cell = (ch: string, sgr = ""): Cell => ({ ch, width: 1, node: 1, sgr });
@@ -58,8 +65,8 @@ describe("渲染器（SPEC §6 / §17）", () => {
     } as never);
     expect(second.full).toBe(false);
     expect(second.changedLines).toBe(1);
-    // 只出现第 2 行的光标定位，第 1 行完全没写
-    expect(output).toBe(`${moveTo(1, 0)}bXb\x1b[K`);
+    // 只定位到第 2 行发生变化的 cell，不再重画整行
+    expect(output).toBe(`${moveTo(1, 1)}${RESET}X`);
   });
 
   test("尺寸变化触发整屏重绘", () => {
@@ -78,6 +85,41 @@ describe("渲染器（SPEC §6 / §17）", () => {
     blocked = false;
     const second = renderer.draw({ lines: [line("bb")], width: 2, height: 1 } as never);
     expect(second.blocked).toBe(false);
+  });
+
+  test("computeDamage 返回最小 cell span，并扩展宽字符边界", () => {
+    const damage = computeDamage([line("abc")], [line("aXc")]);
+    expect(damage.full).toBe(false);
+    expect(damage.lines).toEqual([{ y: 0, spans: [{ from: 1, to: 2 }] }]);
+
+    const before: Line = [
+      { ch: "中", width: 2, node: 1, sgr: "" },
+      { ch: "", width: 0, node: 1, sgr: "" },
+      { ch: "a", width: 1, node: 1, sgr: "" },
+    ];
+    const after: Line = [
+      { ch: "中", width: 2, node: 1, sgr: "" },
+      { ch: "", width: 0, node: 1, sgr: "" },
+      { ch: "b", width: 1, node: 1, sgr: "" },
+    ];
+    expect(computeDamage([before], [after]).lines[0]?.spans).toEqual([
+      { from: 2, to: 3 },
+    ]);
+  });
+
+  test("尺寸变化或 span 过碎时回退 full / 整行", () => {
+    const resized = computeDamage([line("a")], [line("b")], {
+      previousSize: { width: 1, height: 1 },
+      nextSize: { width: 2, height: 1 },
+    });
+    expect(resized.full).toBe(true);
+
+    const noisy = computeDamage(
+      [line("abcdefghij")],
+      [line("AbCdEfGhIj")],
+      { maxSpansPerLine: 2 }
+    );
+    expect(noisy.lines).toEqual([{ y: 0, spans: [{ from: 0, to: 10 }] }]);
   });
 
   test("diffFrames 报告变化行号", () => {

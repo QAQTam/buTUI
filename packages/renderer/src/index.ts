@@ -8,6 +8,13 @@
  *   流式文本变化只影响 1~2 行 → 只发 1~2 行。
  */
 import type { Cell, Frame, Line } from "@butui/layout";
+import {
+  computeDamage,
+  type DamageLine,
+  type FrameDamage,
+} from "./damage.ts";
+
+export * from "./damage.ts";
 
 export interface FrameWriter {
   /** 返回 false 表示底层写缓冲已满，调用方应暂停下一帧。 */
@@ -23,6 +30,8 @@ export interface RenderStats {
   bytes: number;
   /** 是否整屏重绘（尺寸变化 / 首次绘制） */
   full: boolean;
+  /** 本次帧的内部 damage 描述；span 只是提示，渲染仍会校验边界。 */
+  damage: FrameDamage;
   /** 本次写入触发底层 backpressure */
   blocked: boolean;
 }
@@ -54,19 +63,6 @@ export function moveTo(row: number, column = 1): string {
   return `${ESC}${row + 1};${column}H`;
 }
 
-function cellsEqual(a: Line | undefined, b: Line | undefined): boolean {
-  if (a === b) return true;
-  if (!a || !b) return false;
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) {
-    const x = a[i];
-    const y = b[i];
-    if (x.ch !== y.ch || x.sgr !== y.sgr || x.graphic !== y.graphic) return false;
-    if (x.selected !== y.selected) return false;
-  }
-  return true;
-}
-
 /** 一行 cell → ANSI 字符串（含 SGR 状态机） */
 export function paintLine(line: Line): string {
   let out = "";
@@ -90,6 +86,27 @@ export function paintLine(line: Line): string {
   }
   if (inverse) out += "\x1b[27m";
   if (currentSgr !== "") out += RESET;
+  return out;
+}
+
+function paintDamage(
+  y: number,
+  line: Line,
+  previous: Line | undefined,
+  damage: DamageLine
+): string {
+  const maxLength = Math.max(previous?.length ?? 0, line.length);
+  let out = "";
+  for (const span of damage.spans) {
+    const from = Math.max(0, Math.min(span.from, maxLength));
+    const to = Math.max(from, Math.min(span.to, maxLength));
+    if (from === 0 && to >= maxLength) {
+      out += moveTo(y, 0) + paintLine(line) + ERASE_TO_END;
+      continue;
+    }
+    out += moveTo(y, from) + RESET + paintLine(line.slice(from, to));
+    if (to >= maxLength) out += ERASE_TO_END;
+  }
   return out;
 }
 
@@ -117,7 +134,11 @@ export class Renderer {
 
   /** 输出一帧，返回本次差分统计 */
   draw(frame: Frame): RenderStats {
-    const full = this.previous.length === 0 || this.width !== frame.width || this.height !== frame.height;
+    const damage = computeDamage(this.previous, frame.lines, {
+      previousSize: { width: this.width, height: this.height },
+      nextSize: { width: frame.width, height: frame.height },
+    });
+    const full = damage.full;
     let out = "";
     const changed: number[] = [];
 
@@ -125,19 +146,19 @@ export class Renderer {
       out += CLEAR_SCREEN + CURSOR_HOME;
     }
 
-    for (let y = 0; y < frame.lines.length; y++) {
+    for (const lineDamage of damage.lines) {
+      const y = lineDamage.y;
       const line = frame.lines[y];
-      if (!full && cellsEqual(this.previous[y], line)) continue;
       changed.push(y);
-      out += moveTo(y, 0) + paintLine(line) + ERASE_TO_END;
-    }
-
-    // 帧变矮：把残留行清掉
-    if (frame.lines.length < this.previous.length) {
-      for (let y = frame.lines.length; y < this.previous.length; y++) {
+      if (!line) {
         out += moveTo(y, 0) + ERASE_TO_END;
-        changed.push(y);
+        continue;
       }
+      if (full) {
+        out += moveTo(y, 0) + paintLine(line) + ERASE_TO_END;
+        continue;
+      }
+      out += paintDamage(y, line, this.previous[y], lineDamage);
     }
 
     const stats: RenderStats = {
@@ -145,6 +166,7 @@ export class Renderer {
       changed,
       bytes: out.length,
       full,
+      damage,
       blocked: false,
     };
 
@@ -174,10 +196,5 @@ export class Renderer {
 
 /** 无副作用版本：只算差分，不写出。测试用 */
 export function diffFrames(previous: Line[], next: Line[]): number[] {
-  const changed: number[] = [];
-  const max = Math.max(previous.length, next.length);
-  for (let y = 0; y < max; y++) {
-    if (!cellsEqual(previous[y], next[y])) changed.push(y);
-  }
-  return changed;
+  return computeDamage(previous, next).lines.map(line => line.y);
 }

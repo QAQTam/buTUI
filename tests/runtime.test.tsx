@@ -63,7 +63,8 @@ describe("@butui/runtime —— 应用作者的唯一入口（SPEC §6 / §17）
     await tick();
 
     // 没有 requestPaint / paint / flush —— 全靠 core 的变更通知
-    expect(terminal.output).toContain("after");
+    expect(app.frame().text()).toContain("after");
+    expect(terminal.output).not.toBe("");
     app.dispose();
   });
 
@@ -90,8 +91,8 @@ describe("@butui/runtime —— 应用作者的唯一入口（SPEC §6 / §17）
     await tick();
 
     // 一帧 = 一次 cursor home + 一次清屏（首帧之后不再清屏）
-    expect(terminal.output).toContain("a=3");
-    expect(terminal.output).toContain("b=2");
+    expect(app.frame().text()).toContain("a=3");
+    expect(app.frame().text()).toContain("b=2");
     expect(terminal.output.split("\x1b[").length).toBeLessThan(12);
     app.dispose();
   });
@@ -115,7 +116,7 @@ describe("@butui/runtime —— 应用作者的唯一入口（SPEC §6 / §17）
     await Bun.sleep(80);
 
     expect(terminal.writes).toBe(1);
-    expect(terminal.output).toContain("value=3");
+    expect(app.frame().text()).toContain("value=3");
     expect(terminal.output).not.toContain("value=2");
     app.dispose();
   });
@@ -145,7 +146,7 @@ describe("@butui/runtime —— 应用作者的唯一入口（SPEC §6 / §17）
     terminal.drain();
     await tick();
     expect(terminal.writes).toBe(2);
-    expect(terminal.output).toContain("value=3");
+    expect(app.frame().text()).toContain("value=3");
     app.dispose();
   });
 
@@ -360,7 +361,7 @@ describe("@butui/runtime —— 应用作者的唯一入口（SPEC §6 / §17）
     await tick();
 
     expect(app.frame().text()).toContain("count=2");
-    expect(terminal.output).toContain("count=2");
+    expect(terminal.output).not.toBe("");
     app.dispose();
   });
 });

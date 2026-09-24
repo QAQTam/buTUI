@@ -11,7 +11,7 @@
 spring / timeline / Shimmer / Keymap chord / Command Palette / Command Menu /
 Slider / SplitPane / Toast / Tooltip / Popover / Portal / Dynamic / MultiSelect /
 Form / Autocomplete / Checkbox / RadioGroup / 高频 chunk 合帧 / smooth reveal 已跑通**，`bun test`
-799 个用例全绿。
+801 个用例全绿。
 
 ```
 应用（你的 agent / 工具 / TUI）
@@ -805,6 +805,11 @@ frame 模式的语义：
 - deadline 到了才 `flush + layout + draw`，最终值不会丢；
 - `app.paint()` 仍可立即绘制，`render: { mode: "microtask" }` 保持旧行为。
 
+renderer 内部现在先计算 `computeDamage()`：只变化一个 cell 时只发该 span 的
+ANSI，不再重画整行；宽字符会扩展到完整 grapheme，span 过碎或尺寸变化则回退
+整行 / full damage。`RenderStats.damage` 暴露本次描述，`afterDraw` 和图片图层
+仍使用行级 `changed`。
+
 实测（`bun --conditions=browser run scripts/render-bench.tsx`，1ms tick、
 每 tick 2 个 chunk）：
 
@@ -905,8 +910,8 @@ bun --conditions=browser run scripts/transcript-pty-bench.tsx \
   --seconds=2 --chunks-per-second=2000
 ```
 
-当前 100×32 PTY 合成负载约 102fps，input→drained p95 约 10.65ms，详见
-`V0.2_PTY_REPORT.md`。
+当前 100×32 PTY 合成负载约 102fps，input→drained p95 约 9.85ms；span damage
+把同负载输出量降到约 40%，详见 `V0.2_PTY_REPORT.md`。
 
 ### 用法
 

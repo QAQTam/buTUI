@@ -3,9 +3,9 @@
 > 交接时间：2026-09-24
 > 仓库：`/home/qaqtamsy/项目/buTUI-v0.2-frontier`
 > 功能基线提交：`61d889b feat(components): add capability approval dialog`
-> 工作区状态：本文件与 transcript PTY 路径一并提交
-> 本轮能力：live StreamWindow + real PTY metrics
-> 当前回归：`799 pass / 0 fail`，99 个测试文件，`tsc --noEmit` 通过
+> 工作区状态：本文件与 Damage 最小闭环一并提交
+> 本轮能力：internal span damage + full fallback
+> 当前回归：`801 pass / 0 fail`，99 个测试文件，`tsc --noEmit` 通过
 
 ## 1. 项目定位
 
@@ -529,6 +529,8 @@ const bar = createScrollBar({
 
 - FrameClock：critical / reveal / decorative / maintenance lane、coalesceKey、
   budget、backpressure 和 fake-clock 确定性。
+- Damage：renderer 内部 `computeDamage()` 输出 full / 逐行 span；renderer 只
+  重画变化 span，宽字符扩展边界，span 过碎或尺寸变化回退整行 / full。
 - TerminalArbiter：frame / append / raw lease、supersede、suspend / resume；
   `withRawLease` 支持原始 stdin 路由，`runPtyWithRawLease` 已接入 Bun.Terminal。
 - Frame barrier：`paint()` 返回 frameId / accepted，`waitUntilFrameFlushed()` 支持
@@ -551,8 +553,8 @@ const bar = createScrollBar({
   `<StreamWindow follow revision>` 可贴底刷新；agent-demo 已接 ledger-backed
   transcript（`BUTUI_TRANSCRIPT_MODE=window`）。
 - Real PTY：`scripts/transcript-pty-bench.tsx` 在 100×32 PTY、2000 chunk/s
-  下实测约 102fps、input→drained p95 10.65ms、blocked frame 0；见
-  `V0.2_PTY_REPORT.md`。
+  下实测约 102fps、input→drained p95 9.85ms、blocked frame 0；span damage
+  将输出量降至约 40%，见 `V0.2_PTY_REPORT.md`。
 - Applied replay：`applied` digest 使用 chunked `Uint32Array + present bitmap`，
   保留精确 duplicate / conflict 历史。
 - Plugin Worker RPC：`createWorkerRpc` / `serveWorkerRpc` 提供 structured clone
