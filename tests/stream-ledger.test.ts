@@ -254,6 +254,21 @@ describe("StreamLedger", () => {
     expect(before.spilledLines).toBeGreaterThan(1024);
     store.readManyCalls = 0;
 
+    const window = await streams.readStableRange("stream-1", 1024, 4);
+    expect(window).toMatchObject({
+      offset: 1024,
+      totalLines: 3_000,
+    });
+    expect(window.lines.map(line => line.id)).toEqual([
+      "line-1025",
+      "line-1026",
+      "line-1027",
+      "line-1028",
+    ]);
+    expect(window.lines.map(line => line.text)).toEqual(["x", "x", "x", "x"]);
+    expect(streams.stats().spilledLines).toBe(before.spilledLines);
+    store.readManyCalls = 0;
+
     expect(await streams.hydrate("stream-1")).toBe(before.spilledLines);
     expect(store.readManyCalls).toBe(Math.ceil(before.spilledLines / 1024));
 
@@ -263,6 +278,9 @@ describe("StreamLedger", () => {
     expect(projection.stableLines[0]?.id).toBe("line-1");
     expect(projection.stableLines[1024]?.id).toBe("line-1025");
     expect(projection.stableLines[2999]?.id).toBe("line-3000");
+
+    const clamped = await streams.readStableRange("stream-1", 99_999, 10);
+    expect(clamped).toMatchObject({ offset: 3_000, totalLines: 3_000, lines: [] });
   });
 
   test("hydrate 批读缺失记录时显式 cold-read-error", async () => {
@@ -356,6 +374,23 @@ describe("StreamLedger", () => {
     expect(coldB.map(line => line.text)).toEqual(["b", "b"]);
     expect(lastColdA[0]?.text).toBe("a");
     expect(lastColdB[0]?.text).toBe("b");
+
+    const windowA = await streams.readStableRange("stream-a", 0, 4);
+    const windowB = await streams.readStableRange("stream-b", 0, 4);
+    expect(windowA.lines.map(line => line.id)).toEqual([
+      "line-1",
+      "line-3",
+      "line-5",
+      "line-7",
+    ]);
+    expect(windowB.lines.map(line => line.id)).toEqual([
+      "line-2",
+      "line-4",
+      "line-6",
+      "line-8",
+    ]);
+    expect(windowA.lines.map(line => line.text)).toEqual(["a", "a", "a", "a"]);
+    expect(windowB.lines.map(line => line.text)).toEqual(["b", "b", "b", "b"]);
     expect(streams.project("stream-a").stableLines).toHaveLength(
       aBefore.stableLines.length
     );

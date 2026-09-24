@@ -7,6 +7,7 @@
  *   bun --conditions=browser run scripts/stream-retention-bench.ts --lines=1000000 --reopen
  *   bun --conditions=browser run scripts/stream-retention-bench.ts --lines=1000000 --hydrate
  *   bun --conditions=browser run scripts/stream-retention-bench.ts --lines=1000000 --cold-read=1000
+ *   bun --conditions=browser run scripts/stream-retention-bench.ts --lines=1000000 --window=1000
  */
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -32,6 +33,7 @@ const batchLines = Math.min(totalLines, option("batch", 100));
 const memoryBudget = option("memory", 64 * 1024);
 const retainedBytes = Math.min(memoryBudget, option("retain", 32 * 1024));
 const coldReadCount = option("cold-read", 0);
+const stableWindowCount = option("window", 0);
 const dir = mkdtempSync(join(tmpdir(), "butui-retention-"));
 const path = join(dir, "cold.ndjson");
 const memory = new MemoryLedger({ totalBytes: memoryBudget });
@@ -129,6 +131,28 @@ async function coldReadStore() {
   };
 }
 
+async function stableWindowStore() {
+  const stats = streams.stats();
+  const offset = Math.max(0, stats.spilledLines - Math.floor(stableWindowCount / 2));
+  (Bun as typeof Bun & { gc?: (force?: boolean) => void }).gc?.(true);
+  const before = process.memoryUsage();
+  const started = performance.now();
+  const window = await streams.readStableRange(streamId, offset, stableWindowCount);
+  const elapsedMs = performance.now() - started;
+  const usage = process.memoryUsage();
+  return {
+    requested: stableWindowCount,
+    offset: window.offset,
+    totalLines: window.totalLines,
+    returned: window.lines.length,
+    elapsedMs,
+    heapBefore: before.heapUsed,
+    heapAfter: usage.heapUsed,
+    first: window.lines[0]?.id,
+    last: window.lines[window.lines.length - 1]?.id,
+  };
+}
+
 async function hydrateStore() {
   (Bun as typeof Bun & { gc?: (force?: boolean) => void }).gc?.(true);
   const before = process.memoryUsage();
@@ -177,6 +201,8 @@ try {
   const final = snapshot(totalLines);
   const elapsedMs = performance.now() - startedAt;
   const coldRead = coldReadCount > 0 ? await coldReadStore() : undefined;
+  const stableWindow =
+    stableWindowCount > 0 ? await stableWindowStore() : undefined;
   const hydrate = process.argv.includes("--hydrate")
     ? await hydrateStore()
     : undefined;
@@ -191,6 +217,7 @@ try {
         elapsedMs,
         final,
         ...(coldRead ? { coldRead } : {}),
+        ...(stableWindow ? { stableWindow } : {}),
         ...(hydrate ? { hydrate } : {}),
         ...(reopen ? { reopen } : {}),
         samples,

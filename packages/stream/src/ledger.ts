@@ -123,6 +123,15 @@ export interface LineIdRun {
   count: number;
 }
 
+export interface StreamLineWindow {
+  streamId: StreamId;
+  revision: SessionRevision;
+  /** clamp 后的逻辑 stable-line 起始下标。 */
+  offset: number;
+  totalLines: number;
+  lines: readonly StreamLineRecord[];
+}
+
 export interface StreamLedgerStats {
   streams: number;
   openStreams: number;
@@ -423,6 +432,100 @@ export class StreamLedger {
       stableAtRevision: record.stableAtRevision,
       digest: record.digest,
     }));
+  }
+
+  /**
+   * 按逻辑 stable-line 下标读取窗口，自动混合 spilled segments 与 hot lines。
+   *
+   * 这是 renderer / replay adapter 应消费的 viewport 原语；不会 hydrate 或修改
+   * ledger。
+   */
+  async readStableRange(
+    streamId: StreamId,
+    offset: number,
+    count: number
+  ): Promise<StreamLineWindow> {
+    const stream = this.streams.get(streamId);
+    if (!stream) throw new Error(`[butui] unknown stream: ${streamId}`);
+
+    const spilledLines = stream.spilledSegments.reduce(
+      (sum, segment) => sum + segment.count,
+      0
+    );
+    const totalLines = spilledLines + stream.stableLines.length;
+    const start = clampIndex(offset, totalLines);
+    const requested = Number.isFinite(count)
+      ? Math.max(0, Math.floor(count))
+      : totalLines - start;
+    const end = Math.min(totalLines, start + requested);
+    const lines = new Array<StreamLineRecord | undefined>(end - start);
+    const coldIds: LineId[] = [];
+    const coldSlots: number[] = [];
+
+    let cursor = 0;
+    for (const segment of stream.spilledSegments) {
+      if (cursor >= end) break;
+      const segmentEnd = cursor + segment.count;
+      const overlapStart = Math.max(start, cursor);
+      const overlapEnd = Math.min(end, segmentEnd);
+      if (overlapStart < overlapEnd) {
+        const ids = segmentLineIdsSlice(
+          segment,
+          overlapStart - cursor,
+          overlapEnd - overlapStart
+        );
+        for (let index = 0; index < ids.length; index++) {
+          coldIds.push(ids[index]!);
+          coldSlots.push(overlapStart - start + index);
+        }
+      }
+      cursor = segmentEnd;
+    }
+
+    if (coldIds.length > 0) {
+      if (!this.spillStore) {
+        throw new Error("[butui] stream 未配置 spill store");
+      }
+      const records = await readSpillRecordsInBatches(
+        this.spillStore,
+        streamId,
+        coldIds
+      );
+      for (let index = 0; index < records.length; index++) {
+        const record = records[index]!;
+        lines[coldSlots[index]!] = {
+          id: record.lineId,
+          text: record.text,
+          stableAtRevision: record.stableAtRevision,
+          digest: record.digest,
+        };
+      }
+    }
+
+    const hotStart = Math.max(start, spilledLines);
+    for (let index = hotStart; index < end; index++) {
+      const line = stream.stableLines[index - spilledLines]!;
+      lines[index - start] = {
+        id: line.id,
+        text: line.text,
+        stableAtRevision: line.stableAtRevision,
+        digest: line.digest,
+      };
+    }
+
+    for (let index = 0; index < lines.length; index++) {
+      if (!lines[index]) {
+        throw new Error(`[butui] stable window 缺失 slot: ${streamId}/${start + index}`);
+      }
+    }
+
+    return {
+      streamId,
+      revision: stream.revision,
+      offset: start,
+      totalLines,
+      lines: lines as StreamLineRecord[],
+    };
   }
 
   private async spillOldest(
@@ -848,6 +951,11 @@ function runsContainLineId(
       distance % run.step === 0
     );
   });
+}
+
+function clampIndex(value: number, total: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.min(total, Math.max(0, Math.floor(value)));
 }
 
 function parseSequentialLineId(
