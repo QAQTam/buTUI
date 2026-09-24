@@ -9,7 +9,7 @@
 树 + 鼠标选区 / OSC 52 + 流式 Diff / 共享动画时钟 / 精确 ScrollBar +
 通用插件 / Slot / Keymap / 鼠标交互 / OSC 22 指针 / 拖动惯性 / tween /
 spring / timeline / Shimmer / Keymap chord / Command Palette / Slider /
-SplitPane / 高频 chunk 合帧已跑通**，`bun test` 597 个用例全绿。
+SplitPane / 高频 chunk 合帧 / smooth reveal 已跑通**，`bun test` 604 个用例全绿。
 
 ```
 应用（你的 agent / 工具 / TUI）
@@ -615,10 +615,55 @@ frame 模式的语义：
 实测（`bun --conditions=browser run scripts/render-bench.tsx`，1ms tick、
 每 tick 2 个 chunk）：
 
-| 模式 | 用时 | chunk/s | 终端写入 | 写入字节 |
-|---|---:|---:|---:|---:|
-| `microtask` | 1111 ms | 1800 | 1000 | 89640 |
-| `frame` 60fps | 1131 ms | 1769 | 68 | 7439 |
+| 模式 | 终端写入 | 写入字节 | 说明 |
+|---|---:|---:|---|
+| `microtask` | 1000 | 89640 | 每个 tick 都绘制 |
+| `frame` 60fps | 68 | 7529 | 合并终端差分 |
+| `smooth` reveal | 81 | 9140 | 合并 + 连续推进可见 cursor |
+
+### 平滑显现：smooth reveal
+
+`frame` 只减少**绘制次数**，chunk 到齐后画面仍可能一次跳出。要让字像水一样
+逐列流出来，再叠加 `smooth`：
+
+```tsx
+<StreamMarkdown
+  source={source}
+  smooth={{
+    speed: 160,            // 基础 160 列/秒；CJK 按 2 列
+    catchUpMs: 180,        // 积压在这个时间内平滑追平
+    maxColumnsPerFrame: 256,
+  }}
+/>
+```
+
+也可以手动包装：
+
+```ts
+import { createSmoothStream } from "@butui/stream";
+
+const view = createSmoothStream(source, { speed: 160 });
+view.lag();      // 还剩多少列没显示
+view.finish();   // 跳过动画，立刻显示当前 target
+view.dispose();  // 退订 source / 时钟
+```
+
+语义：
+
+- 挂载时已有历史立即显示，只有之后新增的内容做 reveal。
+- target 可以按 2000 tok/s 增长，但可见 cursor 按 60fps、每帧有限列推进。
+- 积压变大时按 `catchUpMs` 加速，不会无限落后；`maxColumnsPerFrame` 防止
+  超大 backlog 一帧喷完。
+- `Bun.sliceAnsi` 按 grapheme / SGR 边界切片，CJK、emoji、Markdown 样式不会
+  被劈开。
+- `TERM=dumb` / `BUTUI_REDUCED_MOTION=1` 下直接显示，不做 reveal。
+
+`frame` 与 `smooth` 解决不同问题：前者压终端差分频率，后者控制视觉推进。
+只做 smooth 时保持默认 `microtask` 即可 —— reveal 自己已经把可见变更限制在
+60fps；如果再叠低 fps 的 frame，反而会把 reveal 帧吞掉。
+
+`bun --conditions=browser run scripts/smooth-stream-demo.tsx` 可直接观察 2000
+chunk/s 输入下的逐列流动效果。
 
 ### 用法
 
@@ -641,6 +686,7 @@ source.push("host ops 只有 13 个。\n\n");
 | `lines` | 已定稿的行，**只增不改**（同一个数组引用） |
 | `tail()` | 未定稿的尾巴（0~2 行） |
 | `version()` | 每次变化自增，用来触发重绘 |
+| `onChange()` | 可选订阅；`createSmoothStream()` 用它接收 target 更新 |
 | `frozen` | 已冻结的行数 |
 | `stats` | 各层计数器，O(1) 回归测试就靠它 |
 

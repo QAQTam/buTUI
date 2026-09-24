@@ -3,8 +3,8 @@
  *
  *   bun --conditions=browser run scripts/render-bench.tsx
  *
- * 用 1ms tick、每 tick 2 个 chunk 模拟 2000 tok/s。对比默认 microtask 和
- * frame 模式的终端写入次数 / 字节数；两者最终内容一致。
+ * 用 1ms tick、每 tick 2 个 chunk 模拟 2000 tok/s。对比默认 microtask、
+ * frame 合帧和 smooth reveal 的终端写入次数 / 字节数。
  */
 import type { ButuiEvent } from "@butui/core";
 import { createTuiApp, type TuiSize, type TuiTerminal } from "@butui/runtime";
@@ -33,13 +33,21 @@ class BenchTerminal implements TuiTerminal {
 const TICKS = 1000;
 const CHUNKS_PER_TICK = 2;
 
-async function run(mode: "microtask" | "frame") {
+async function run(mode: "microtask" | "frame" | "smooth") {
   const terminal = new BenchTerminal();
   const source = createTextStream({ width: 80 });
   const app = createTuiApp({
     terminal,
-    view: () => <StreamText source={source} />,
-    render: { mode, fps: 60 },
+    view: () =>
+      mode === "smooth" ? (
+        <StreamText
+          source={source}
+          smooth={{ speed: 160, catchUpMs: 180, reducedMotion: false }}
+        />
+      ) : (
+        <StreamText source={source} />
+      ),
+    ...(mode === "frame" ? { render: { mode: "frame" as const, fps: 60 } } : {}),
     onQuit: () => {},
   });
 
@@ -53,7 +61,7 @@ async function run(mode: "microtask" | "frame") {
     await Bun.sleep(1);
   }
   source.flush();
-  await Bun.sleep(mode === "frame" ? 25 : 5);
+  await Bun.sleep(mode === "smooth" ? 500 : mode === "frame" ? 25 : 5);
 
   const elapsed = performance.now() - started;
   app.dispose();
@@ -69,7 +77,7 @@ console.log("模拟：2000 chunks/s（1000 tick × 2 chunk，1ms/tick）\n");
 console.log("| 模式 | 用时 | chunk/s | 终端写入 | 写入字节 |");
 console.log("|---|---:|---:|---:|---:|");
 
-for (const mode of ["microtask", "frame"] as const) {
+for (const mode of ["microtask", "frame", "smooth"] as const) {
   const result = await run(mode);
   console.log(
     `| ${mode} | ${result.elapsed.toFixed(1)} ms | ${Math.round(

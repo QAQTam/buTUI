@@ -165,6 +165,31 @@ source.push(delta);
 契约：`source.lines` 只增不改（同一个数组引用）；每条 delta 的成本是
 `O(|delta| + W)`，与已累积长度无关（SPEC §5.7）。
 
+高频输入如果希望“逐列流动”而不是按 chunk 跳出：
+
+```tsx
+<StreamMarkdown
+  source={source}
+  smooth={{ speed: 160, catchUpMs: 180, maxColumnsPerFrame: 256 }}
+/>
+```
+
+或手动：
+
+```ts
+const view = createSmoothStream(source, { speed: 160 });
+view.lag();
+view.finish();
+view.dispose();
+```
+
+- `speed` 单位是终端列 / 秒；CJK / emoji 按 `Bun.stringWidth` 计宽。
+- 已有历史立即显示；只 reveal 创建之后新增的 target。
+- `catchUpMs` 是积压追平时间，`maxColumnsPerFrame` 是单帧推进上限。
+- `TERM=dumb` / `BUTUI_REDUCED_MOTION=1|true` 下直接显示。
+- `StreamSource.onChange?(listener)` 是可选订阅；自定义 source 要接 smooth
+  时应该实现它。已有 `createTextStream` / `createMarkdownStream` 已实现。
+
 ### 4.5 图片
 
 ```ts
@@ -680,6 +705,9 @@ const split = createSplitPane({
 - **动画已有共享时钟、tween / spring / timeline、Diff 游标、拖动惯性和
   Shimmer**：还缺更完整的 stagger 编排、滚动回弹策略和动画调试工具；不要假设
   60fps。
+- **Smooth reveal 会主动限制视觉速率**：持续输入超过 `speed` 且 backlog 超过
+  `maxColumnsPerFrame * fps` 的追赶能力时，画面会落后于 target。这是平滑优先
+  的取舍；需要严格实时可调大 `speed` / `maxColumnsPerFrame` 或调用 `finish()`。
 - **ScrollBar 目前只有垂直轴**：没有自动隐藏、hover 展开、水平轴或触控惯性。
 - **SplitPane 的拖动几何依赖 `size`**：根视图可省略并使用终端尺寸；嵌在
   padding / border / 兄弟节点容器里时必须传实际轴尺寸，否则 min/max 夹取会按

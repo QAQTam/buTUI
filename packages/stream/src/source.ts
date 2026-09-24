@@ -48,6 +48,13 @@ export interface StreamSource {
   /** 已经不会再变的行数 */
   readonly frozen: number;
   readonly stats: Readonly<Record<string, number>>;
+  /**
+   * 可选：内容变化通知。
+   *
+   * `createSmoothStream()` 用它驱动 reveal cursor；自定义 source 如果要做
+   * 平滑显现，应实现这个订阅。返回函数用于退订。
+   */
+  onChange?(listener: () => void): () => void;
 }
 
 /** 纯文本流：增量折行 */
@@ -55,21 +62,26 @@ export function createTextStream(options: { width: number }): StreamSource {
   const buffer = new LineBuffer({ width: options.width });
   const lines: StreamLine[] = [];
   const [version, setVersion] = createSignal(0);
-  const [tail, setTail] = createSignal("");
+  const listeners = new Set<() => void>();
+  let tailText = "";
   let nextId = 1;
   let flushed = false;
 
   const refresh = (added: string[]): void => {
     for (const text of added) lines.push({ id: nextId++, text, stable: true });
-    const nextTail = buffer.tailLines().join("\n");
-    if (tail() !== nextTail) setTail(nextTail);
+    tailText = buffer.tailLines().join("\n");
     setVersion(v => v + 1);
+    for (const listener of [...listeners]) listener();
   };
 
   return {
     lines,
-    tail,
+    tail: () => tailText,
     version,
+    onChange(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
     get frozen() {
       return buffer.committedCount;
     },
@@ -85,8 +97,9 @@ export function createTextStream(options: { width: number }): StreamSource {
       const added = buffer.flush();
       flushed = true;
       for (const text of added) lines.push({ id: nextId++, text, stable: true });
-      setTail("");
+      tailText = "";
       setVersion(v => v + 1);
+      for (const listener of [...listeners]) listener();
     },
   };
 }
@@ -96,7 +109,8 @@ export function createMarkdownStream(options: MarkdownStreamOptions): StreamSour
   const stream = new MarkdownStream(options);
   const lines: StreamLine[] = [];
   const [version, setVersion] = createSignal(0);
-  const [tail, setTail] = createSignal("");
+  const listeners = new Set<() => void>();
+  let tailText = "";
   let syncedFrozen = 0;
   let nextId = 1;
   let flushed = false;
@@ -109,15 +123,19 @@ export function createMarkdownStream(options: MarkdownStreamOptions): StreamSour
       }
       syncedFrozen = frozen;
     }
-    const nextTail = stream.tailLines().map(line => line.text).join("\n");
-    if (tail() !== nextTail) setTail(nextTail);
+    tailText = stream.tailLines().map(line => line.text).join("\n");
     setVersion(v => v + 1);
+    for (const listener of [...listeners]) listener();
   };
 
   return {
     lines,
-    tail,
+    tail: () => tailText,
     version,
+    onChange(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
     get frozen() {
       return stream.frozenCount;
     },
@@ -134,7 +152,8 @@ export function createMarkdownStream(options: MarkdownStreamOptions): StreamSour
       stream.flush();
       flushed = true;
       sync();
-      setTail("");
+      tailText = "";
+      for (const listener of [...listeners]) listener();
     },
   };
 }

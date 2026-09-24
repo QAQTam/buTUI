@@ -313,8 +313,33 @@ reconcile（N=9000 时 4.4 ms/push）。`createStore(..., { shallow: true })` �
 实测（`scripts/stream-bench.tsx`）：N=100 → 0.051 ms/delta，N=9000 →
 0.021 ms/delta；markdown N=50 → 0.062 ms/delta，N=6000 → 0.041 ms/delta。
 
+**平滑显现（smooth reveal）。** O(1) 只保证输入处理成本，不保证视觉速度：
+一个 500 字的 chunk 仍然会一次跳出。`@butui/stream` 因此增加
+`createSmoothStream(source, options)`：
+
+```text
+source.push(chunk) → target 立即增长
+scheduler tick       → reveal cursor 每帧推进有限列
+renderer             → 只画 cursor 覆盖的 prefix
+```
+
+- `speed` 是基础列 / 秒；CJK / emoji 按 `Bun.stringWidth` 计列。
+- `catchUpMs` 控制积压追平时间，`maxColumnsPerFrame` 防止超大 backlog 一帧喷完。
+- `Bun.sliceAnsi` 负责 ANSI / grapheme 安全切片，CJK、emoji、Markdown 样式不会
+  被劈开。
+- 已定稿行只追加；volatile tail 可以重写，但 cursor 不回退。
+- 挂载时已有历史立即显示，只 reveal 挂载后新增内容。
+- 共享 60fps 时钟，所有 smooth stream 只有一个 timer；无积压时自动退订。
+- `TERM=dumb` / `BUTUI_REDUCED_MOTION=1` 直接显示。
+
+组件 API 是 `<StreamText smooth>` / `<StreamMarkdown smooth>`；手动组合可用
+`createSmoothStream()` 并调 `lag()` / `finish()` / `dispose()`。`StreamSource`
+新增可选 `onChange(listener)`，用于把 target 更新通知给 reveal 层。
+
 **已知取舍**（markdown 流）：不支持 setext 标题（需要回溯整个段落）；
-表格按块关闭时整块渲染；不识别缩进代码块。
+表格按块关闭时整块渲染；不识别缩进代码块。Smooth reveal 会主动限制视觉速率：
+如果持续输入超过 `speed` 且 backlog 超过 `maxColumnsPerFrame * fps` 的追赶能力，
+画面会落后于 target；这是刻意的“平滑优先”取舍。
 
 ---
 
@@ -1635,7 +1660,8 @@ P1：
 
 已实现（v0.1）：
 
-- `StreamText` / `StreamMarkdown`（`@butui/stream`，O(1) 追加）
+- `StreamText` / `StreamMarkdown`（`@butui/stream`，O(1) 追加；可选
+  `smooth` reveal）
 - `ReasoningLine`（思考流：`session.reasoningFor(turnId)`，turn 结束即丢）
 - `ContextMeter`（上下文占用条 + `formatTokens`）
 - `ToolCard`

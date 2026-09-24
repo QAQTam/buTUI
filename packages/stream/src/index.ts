@@ -2,5 +2,6 @@ export * from "./line-buffer.ts";
 export * from "./markdown.ts";
 export * from "./diff.ts";
 export * from "./source.ts";
+export * from "./smooth.ts";
 export * from "./components.tsx";
 export { parseAnsiRuns, stripAnsi } from "@butui/core";
