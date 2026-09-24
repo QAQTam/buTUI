@@ -19,6 +19,7 @@ export * from "./scroll.ts";
 export * from "./scrollbar.ts";
 export * from "./scrollbar.tsx";
 export * from "./stream-window.ts";
+export * from "./stream-window.tsx";
 export * from "./slider.ts";
 export * from "./slider.tsx";
 export * from "./splitpane.ts";

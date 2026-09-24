@@ -3,6 +3,7 @@ import { createModifiers, MemoryLedger, type KeyEvent, type MouseEvent } from "@
 import {
   createScrollBarForStreamWindow,
   createStreamWindowInput,
+  StreamWindow,
 } from "@butui/components";
 import {
   MemorySpillStore,
@@ -16,6 +17,7 @@ import {
   type StreamEnvelope,
 } from "@butui/stream";
 import { mount } from "@butui/test";
+import { createSignal } from "solid-js";
 
 class DelayedSpillStore implements SpillStore {
   private readonly inner = new MemorySpillStore();
@@ -281,5 +283,44 @@ describe("createStreamWindow", () => {
       viewport: 10,
       overflow: true,
     });
+  });
+
+  test("<StreamWindow> 挂载窗口并响应高度 / 键盘 / 滚轮", async () => {
+    const ledger = await createSpilledLedger(1_500);
+    const [height, setHeight] = createSignal(10);
+    const app = mount(
+      () => (
+        <StreamWindow
+          ledger={ledger}
+          streamId="stream-1"
+          height={height()}
+          width={40}
+        />
+      ),
+      { width: 40, height: 12 }
+    );
+
+    await new Promise(resolve => setTimeout(resolve, 0));
+    app.flush();
+    expect(app.text()).toContain("value-1");
+    expect(app.text()).not.toContain("value-11");
+
+    app.key("down");
+    await new Promise(resolve => setTimeout(resolve, 0));
+    app.flush();
+    expect(app.text()).toContain("value-2");
+
+    app.wheel(1, 0);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    app.flush();
+    expect(app.text()).toContain("value-3");
+
+    setHeight(5);
+    app.flush();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    app.flush();
+    expect(app.text()).toContain("value-5");
+    expect(app.text()).not.toContain("value-6");
+    app.unmount();
   });
 });
