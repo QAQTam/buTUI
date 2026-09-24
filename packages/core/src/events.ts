@@ -134,6 +134,11 @@ export interface MouseEvent {
   target?: Node;
   /** 语义标识：`message:<id>` / `tool:<callId>` / `checkpoint:<id>`（SPEC §4.2） */
   semantic?: string;
+  /**
+   * presented routing 专用：事件目标来自已消失的旧 frame，随后按 semantic
+   * 回退或退到 root。应用可据此忽略旧 UI 上的点击。
+   */
+  stale?: boolean;
   stopPropagation: () => void;
   preventDefault: () => void;
   readonly defaultPrevented: boolean;

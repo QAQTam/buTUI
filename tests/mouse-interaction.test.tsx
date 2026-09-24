@@ -294,6 +294,101 @@ describe("mouse interaction", () => {
     app.dispose();
   });
 
+  test("presented routing 节点消失后按 semantic 回退并标记 stale", async () => {
+    const terminal = new FakeTerminal();
+    const [showOld, setShowOld] = createSignal(true);
+    const seen: string[] = [];
+    const app = createTuiApp({
+      terminal,
+      size: { columns: 12, rows: 1 },
+      inputRouting: "presented",
+      selection: false,
+      onQuit: () => {},
+      view: () => (
+        <Show
+          when={showOld()}
+          fallback={
+            <box
+              width={5}
+              height={1}
+              semantic="card:c1"
+              onClick={event => seen.push(`new:${event.stale}`)}
+            >
+              <text>B</text>
+            </box>
+          }
+        >
+          <box
+            width={5}
+            height={1}
+            semantic="card:c1"
+            onClick={event => seen.push(`old:${event.stale}`)}
+          >
+            <text>A</text>
+          </box>
+        </Show>
+      ),
+    });
+
+    terminal.blockWrites = true;
+    setShowOld(false);
+    await tick();
+
+    app.send(mouse("press", 0, 0));
+    expect(seen).toEqual(["new:true"]);
+
+    terminal.drain();
+    await tick();
+    app.send(mouse("press", 0, 0));
+    expect(seen).toEqual(["new:true", "new:undefined"]);
+    app.dispose();
+  });
+
+  test("presented routing 找不到 semantic 时退 root，不误触同坐标新节点", async () => {
+    const terminal = new FakeTerminal();
+    const [showOld, setShowOld] = createSignal(true);
+    let newClicks = 0;
+    const staleEvents: Array<boolean | undefined> = [];
+    const app = createTuiApp({
+      terminal,
+      size: { columns: 12, rows: 1 },
+      inputRouting: "presented",
+      selection: false,
+      onMouse: event => {
+        staleEvents.push(event.stale);
+      },
+      onQuit: () => {},
+      view: () => (
+        <Show
+          when={showOld()}
+          fallback={
+            <box
+              width={5}
+              height={1}
+              semantic="other"
+              onClick={() => newClicks++}
+            >
+              <text>B</text>
+            </box>
+          }
+        >
+          <box width={5} height={1} semantic="card:c1">
+            <text>A</text>
+          </box>
+        </Show>
+      ),
+    });
+
+    terminal.blockWrites = true;
+    setShowOld(false);
+    await tick();
+
+    app.send(mouse("press", 0, 0));
+    expect(newClicks).toBe(0);
+    expect(staleEvents).toEqual([true]);
+    app.dispose();
+  });
+
   test("presented routing 在 resize 后等待新 frame 再恢复命中", async () => {
     const terminal = new FakeTerminal();
     let clicks = 0;

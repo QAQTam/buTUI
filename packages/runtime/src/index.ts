@@ -43,6 +43,7 @@ import {
   onFocusChange,
   onMutation,
   trapFocus,
+  walk,
 } from "@butui/core";
 import {
   type Frame,
@@ -325,6 +326,16 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
   const presentedFrames = new PresentedFrameStore();
   let hasPresentedOnce = false;
   let sessionRevision = 0;
+
+  const uniqueNodeBySemantic = (semantic: string): Node | undefined => {
+    let found: Node | undefined;
+    for (const node of walk(root)) {
+      if (node.semantic !== semantic) continue;
+      if (found) return undefined;
+      found = node;
+    }
+    return found;
+  };
 
   const selectionAllowed = (): boolean =>
     selectionOptions !== undefined && (selectionOptions.enabled?.() ?? true);
@@ -631,14 +642,14 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
   const applyLocalCoordinates = (
     event: MouseEvent,
     target: Node | undefined,
-    frame?: Frame
+    frame?: Frame,
+    boundsOverride?: MouseBounds
   ): void => {
     const bounds =
       target === capturedMouseNode && capturedMouseBounds
         ? capturedMouseBounds
-        : frame
-          ? boundsOfInFrame(target, frame)
-          : boundsOf(target);
+        : boundsOverride ??
+          (frame ? boundsOfInFrame(target, frame) : boundsOf(target));
     if (!bounds) {
       delete event.localX;
       delete event.localY;
@@ -868,16 +879,48 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
           ? computeFrame()
           : undefined;
       const hitFrame = presented?.layout ?? logicalFrame;
-      const hitNodeId = presented
-        ? presented.index.hit(event.x, event.y)?.nodeId
-        : hitFrame?.nodeAt(event.x, event.y);
-      const hitTarget = nodeById(root, hitNodeId);
+      const hit = presented?.index.hit(event.x, event.y);
+      let hitTarget = presented
+        ? nodeById(root, hit?.nodeId)
+        : nodeById(root, hitFrame?.nodeAt(event.x, event.y));
+      let stale = false;
+      let boundsOverride: MouseBounds | undefined;
+
+      if (presented && !hitTarget && hit) {
+        if (hit.semantic) {
+          const fallback = uniqueNodeBySemantic(hit.semantic);
+          if (fallback) {
+            hitTarget = fallback;
+            stale = true;
+            boundsOverride = presented.index.semanticBounds(hit.semantic);
+          } else {
+            hitTarget = root;
+            stale = true;
+          }
+        } else {
+          hitTarget = root;
+          stale = true;
+        }
+      }
+
+      if (stale) event.stale = true;
+      else delete event.stale;
       const target = capturedMouseNode ?? hitTarget;
-      applyLocalCoordinates(event, target, presented?.layout);
+      applyLocalCoordinates(
+        event,
+        target,
+        presented?.layout,
+        capturedMouseNode ? undefined : boundsOverride
+      );
       updateMousePointer(target);
       if (event.action === "press") {
         endMouseDrag(event, presented?.layout);
-        event.clickCount = clickCountFor(event, target);
+        if (stale) {
+          lastMousePress = undefined;
+          event.clickCount = 1;
+        } else {
+          event.clickCount = clickCountFor(event, target);
+        }
         if (!capturedMouseNode && !selecting) {
           updateMouseHover(event, hitTarget, presented?.layout);
         }
@@ -893,7 +936,9 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
       }
       const dragDelivered =
         event.action === "move" ? updateMouseDrag(event, presented?.layout) : 0;
-      const selectionHandled = handleSelectionMouse(event, target);
+      const selectionHandled = stale
+        ? false
+        : handleSelectionMouse(event, target);
       // move 由选择器消费；press / release 仍按普通 hit test 派发，
       // 保证点击组件和拖拽选择可以共存。
       if (event.action === "move" && selectionHandled && dragDelivered === 0) {
