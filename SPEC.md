@@ -1330,6 +1330,27 @@ const form = createForm({
 
 ---
 
+### 5.37 Command Menu（v0.1 实现）
+
+`<CommandMenu>` 是非模态命令列表，直接消费同一个 `CommandRegistry`：
+
+```tsx
+<CommandMenu
+  registry={registry}
+  shortcut={command => shortcutFor(command.id)}
+  onExecute={(command, query) => record(command.id, query)}
+/>
+```
+
+- 复用 `filterCommands()` / `CommandRegistry` / `<Input>` / `<List>`，不创建
+  `Modal` 或 focus trap，可嵌入页面、Popover 或插件面板。
+- 输入自动聚焦；↑↓ / PageUp/PageDown / Home/End / Ctrl+P/N 导航。
+- Enter / 鼠标点击执行，Esc 清空查询；`showAll={false}` 时隐藏空查询结果。
+- registry 注册 / 注销会响应式刷新；执行错误仍由 `CommandRegistry.onError` 隔离。
+- `onExecute` 在 registry 执行前调用，可接入 telemetry 或记录执行意图。
+
+---
+
 ### 5.17 应用上下文（v0.1 实现）
 
 组件要能问「现在多宽 / 什么色深 / 我想订一个全局键」，但既不该认识 runtime，
@@ -1835,6 +1856,7 @@ P1：
 - `Button`：`<Button>`（Enter / 空格 / 点击，焦点态自亮）
 - `ProgressBar` / `Spinner` / `Badge` / `Divider` / `KeyHint` / `Shimmer`：展示组件
 - `CommandPalette`：`filterCommands` + `CommandRegistry` + `<Input>` / `<List>` / `<Modal>`
+- `CommandMenu`：非模态 `CommandRegistry` + `<Input>` / `<List>`（见 §5.37）
 - `Toast`：`createToastQueue` / `<ToastViewport>`，TTL / dedupe / overflow /
   action / pause-resume（见 §5.28）
 - `Tooltip`：`createTooltipController` / `tooltipPosition` / `<Tooltip>`，
@@ -2272,6 +2294,7 @@ type UiCommand =
   之前。
 - `@butui/keymap/solid` 提供 `useKeymap()`。
 - `<CommandPalette>` 复用 `CommandRegistry` 与 `filterCommands()`，不复制命令表。
+- `<CommandMenu>` 提供非模态版本，复用同一过滤 / 执行语义。
 
 不能把：
 

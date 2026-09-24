@@ -36,7 +36,7 @@ const app = createTuiApp({
 | 布局 | `@butui/layout` | **稳定**（`Cell` / `Line` / `Frame` / `layout`） |
 | 渲染 | `@butui/renderer` | **稳定**（`Renderer` / `plainText` / `paintLine`） |
 | 终端 | `@butui/terminal` | **稳定**（`TerminalSession` / 输入解码 / 能力探测 / `osc22` / `osc52`） |
-| 基础组件 | `@butui/components` | **稳定**（编辑器 / 选择 / 列表 / 滚动 / ScrollBar / Slider / SplitPane / CommandPalette / Toast / Tooltip / Popover / Portal / Dynamic / MultiSelect / Form / Autocomplete / Checkbox / RadioGroup / Diff / 弹窗 / 展示组件） |
+| 基础组件 | `@butui/components` | **稳定**（编辑器 / 选择 / 列表 / 滚动 / ScrollBar / Slider / SplitPane / CommandPalette / CommandMenu / Toast / Tooltip / Popover / Portal / Dynamic / MultiSelect / Form / Autocomplete / Checkbox / RadioGroup / Diff / 弹窗 / 展示组件） |
 | 插件 / Slot | `@butui/plugins` | **稳定**（`Plugin` / `SlotRegistry`；Solid 适配在 `@butui/plugins/solid`；loader 在 `@butui/plugins/loader`） |
 | 命令 / Keymap | `@butui/keymap` | **稳定**（`CommandRegistry` / `Keymap`；Solid 适配在 `@butui/keymap/solid`） |
 | 流式文本 | `@butui/stream` | **稳定**（`StreamSource` / `DiffStream` / `<stream>`） |
@@ -840,6 +840,22 @@ const form = createForm({
 - RadioGroup 支持 vertical / horizontal；方向键、Home / End、Space / Enter 和点击。
 - disabled / heading 不参与导航；不维护第二份选择状态。
 - 可直接调用 `form.setValue()` 接入 Form。
+
+### 4.35 Command Menu：`<CommandMenu>`
+
+```tsx
+<CommandMenu
+  registry={registry}
+  shortcut={command => shortcutFor(command.id)}
+  onExecute={(command, query) => record(command.id, query)}
+/>
+```
+
+- 非模态命令菜单，不创建 `Modal` / focus trap，适合嵌入页面或 Popover。
+- 结果直接来自 `CommandRegistry.list()`；运行期注册 / 注销会刷新。
+- 复用 `filterCommands()` / `<Input>` / `<List>`，查询与键盘行为同 CommandPalette。
+- Enter / 鼠标点击执行，Esc 清空查询；`showAll={false}` 时隐藏空查询结果。
+- `onExecute` 在 registry 执行前调用；命令错误仍由 `CommandRegistry.onError` 隔离。
 
 ## 5. 已知缺口（不要依赖，也不建议自己绕）
 
