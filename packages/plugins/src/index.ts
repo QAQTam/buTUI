@@ -8,6 +8,7 @@
 export * from "./types.ts";
 export * from "./capability.ts";
 export * from "./capability-policy.ts";
+export * from "./cgroup.ts";
 export * from "./approval.ts";
 export * from "./capability-proxy.ts";
 export * from "./process-rpc.ts";

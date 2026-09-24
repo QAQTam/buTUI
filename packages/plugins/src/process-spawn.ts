@@ -1,3 +1,4 @@
+import type { CgroupLease } from "./cgroup.ts";
 import { attachProcessRpc } from "./process-rpc.ts";
 import type {
   NdjsonRpcEndpoint,
@@ -15,12 +16,11 @@ export interface ProcessRpcResourcePolicy {
   maxBytesPerSecond?: number;
   killSignal?: string | number;
   /**
-   * 已有 cgroup 目录或 fd。
+   * 已有 cgroup 目录、fd 或 manager lease。
    *
-   * memory.max / cpu.max / pids.max 等硬限制由外部创建和配置；Bun 只负责让子进程
-   * 在启动时加入该 cgroup。
+   * 传 lease 时会在子进程退出后自动 release；字符串 / fd 只透传给 Bun。
    */
-  cgroup?: string | number;
+  cgroup?: string | number | CgroupLease;
 }
 
 export interface SpawnProcessRpcOptions {
@@ -39,6 +39,7 @@ export interface SpawnedProcessRpcProcess extends ProcessRpcSubprocess {
 export interface SpawnedProcessRpc {
   process: SpawnedProcessRpcProcess;
   endpoint: NdjsonRpcEndpoint;
+  cgroup?: CgroupLease;
 }
 
 /**
@@ -51,33 +52,54 @@ export function spawnProcessRpc(
   options: SpawnProcessRpcOptions
 ): SpawnedProcessRpc {
   const resources = options.resources ?? {};
-  const child = Bun.spawn({
-    cmd: [...options.cmd],
-    ...(options.cwd ? { cwd: options.cwd } : {}),
-    ...(options.env ? { env: options.env } : {}),
-    stdin: "pipe",
-    stdout: "pipe",
-    stderr: "pipe",
-    ...(resources.timeoutMs !== undefined
-      ? { timeout: normalizePositive(resources.timeoutMs, "timeoutMs") }
-      : {}),
-    ...(resources.maxOutputBytes !== undefined
-      ? {
-          maxBuffer: normalizePositive(
-            resources.maxOutputBytes,
-            "maxOutputBytes"
-          ),
-        }
-      : {}),
-    ...(resources.killSignal !== undefined
-      ? { killSignal: resources.killSignal }
-      : {}),
-    ...(resources.cgroup !== undefined
-      ? { cgroup: resources.cgroup }
-      : {}),
-  });
+  const cgroupLease = isCgroupLease(resources.cgroup)
+    ? resources.cgroup
+    : undefined;
+  const cgroupTarget: string | number | undefined = cgroupLease
+    ? cgroupLease.path
+    : typeof resources.cgroup === "string" ||
+        typeof resources.cgroup === "number"
+      ? resources.cgroup
+      : undefined;
+  let child: Bun.Subprocess<"pipe", "pipe", "pipe">;
+  try {
+    child = Bun.spawn({
+      cmd: [...options.cmd],
+      ...(options.cwd ? { cwd: options.cwd } : {}),
+      ...(options.env ? { env: options.env } : {}),
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      ...(resources.timeoutMs !== undefined
+        ? { timeout: normalizePositive(resources.timeoutMs, "timeoutMs") }
+        : {}),
+      ...(resources.maxOutputBytes !== undefined
+        ? {
+            maxBuffer: normalizePositive(
+              resources.maxOutputBytes,
+              "maxOutputBytes"
+            ),
+          }
+        : {}),
+      ...(resources.killSignal !== undefined
+        ? { killSignal: resources.killSignal }
+        : {}),
+      ...(cgroupTarget !== undefined ? { cgroup: cgroupTarget } : {}),
+    });
+  } catch (error) {
+    if (cgroupLease) void cgroupLease.release().catch(() => {});
+    throw error;
+  }
   if (!child.stdin || !child.stdout) {
+    if (cgroupLease) void cgroupLease.release().catch(() => {});
     throw new Error("[butui] spawnProcessRpc requires pipe stdio");
+  }
+
+  if (cgroupLease) {
+    void child.exited
+      .then(() => cgroupLease.release())
+      .catch(() => cgroupLease.release())
+      .catch(() => {});
   }
 
   const endpoint = attachProcessRpc(child, {
@@ -104,6 +126,7 @@ export function spawnProcessRpc(
   return {
     process: child,
     endpoint,
+    ...(cgroupLease ? { cgroup: cgroupLease } : {}),
   };
 }
 
@@ -134,4 +157,13 @@ function normalizePositive(value: number, name: string): number {
     throw new Error(`[butui] ${name} must be a positive finite number`);
   }
   return Math.floor(value);
+}
+
+function isCgroupLease(value: unknown): value is CgroupLease {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as { path?: unknown }).path === "string" &&
+    typeof (value as { release?: unknown }).release === "function"
+  );
 }

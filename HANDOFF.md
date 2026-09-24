@@ -3,9 +3,9 @@
 > 交接时间：2026-09-24
 > 仓库：`/home/qaqtamsy/项目/buTUI-v0.2-frontier`
 > 功能基线提交：`61d889b feat(components): add capability approval dialog`
-> 工作区状态：本文件与 process resource limits 一并提交
-> 本轮能力：process timeout + output limits + cgroup passthrough
-> 当前回归：`737 pass / 0 fail`，84 个测试文件，`tsc --noEmit` 通过
+> 工作区状态：本文件与 cgroup lifecycle 一并提交
+> 本轮能力：cgroup v2 create / release / recover
+> 当前回归：`742 pass / 0 fail`，85 个测试文件，`tsc --noEmit` 通过
 
 ## 1. 项目定位
 
@@ -463,8 +463,10 @@ const bar = createScrollBar({
   plugin + method rate-limit，拒绝时记录 reason / detail 且不执行 handler。
 - Process resource limits：`spawnProcessRpc` 映射 Bun timeout / maxBuffer /
   killSignal，并在 host 侧限制 stdout 总字节与 bytes/s token bucket；cgroup 用于接入
-  外部 memory.max / cpu.max / pids.max。Worker / process 只做崩溃和堆隔离，
-  不是 capability 或 OS sandbox。
+  外部 memory.max / cpu.max / pids.max。
+- Cgroup lifecycle：`createCgroupManager` 支持 v2 detect、create、lease release、
+  stale recover、自有 prefix 过滤与 EBUSY 重试；无权限时明确 unsupported。
+  Worker / process 只做崩溃和堆隔离，不是 capability 或 OS sandbox。
 
 关键实测：
 
@@ -591,8 +593,8 @@ bridge、真实 tool event 对接或 bugent 快捷键迁移。
 当前：
 
 ```text
-737 pass / 0 fail
-84 test files
+742 pass / 0 fail
+85 test files
 tsc --noEmit pass
 ```
 
@@ -616,6 +618,7 @@ tsc --noEmit pass
 - `tests/rpc-handshake.test.ts`
 - `tests/capability-policy.test.ts`
 - `tests/process-resources.test.ts`
+- `tests/cgroup.test.ts`
 - `tests/keymap.test.ts`
 - `tests/keymap-runtime.test.tsx`
 - `tests/command-palette.test.tsx`
@@ -646,8 +649,8 @@ git diff --check
 - 插件已有 manifest / 配置 / 直接依赖发现 / capability 白名单、运行时审批、
   approval queue / dialog、lease / TTL / revoke、Worker RPC、crash fail-fast、
   capability proxy、restart supervision、NDJSON process transport、protocol
-  handshake、path / rate 策略和 process timeout / output limits；heap / CPU /
-  pids 硬上限仍依赖外部 cgroup，尚无自动 cgroup 生命周期和权限 sandbox。
+  handshake、path / rate 策略、process resource limits 和 cgroup v2 lifecycle；
+  仍无自动 cgroup 委派、OS 权限 sandbox 和策略审计持久化。
 - 鼠标已有 hover / 双击 / 右键 / pointer capture / local 坐标 / drag 生命周期 /
   OSC 22 指针 / 拖动惯性；无 pointerId、多指针。惯性只接 ScrollBar / Slider。
 - Keymap 已有多键 chord / 前缀超时，Command Palette 已有基础 UI；无用户自定义
@@ -684,8 +687,9 @@ git diff --check
    bugent 决定默认策略、目录清理和恢复语义。
 4. **插件 worker / 跨进程隔离**：审批队列、dialog、lease / TTL / revoke、
    Worker RPC、crash fail-fast、capability proxy、restart supervision、NDJSON
-   process transport、protocol handshake、path / rate 策略和 process resource
-   limits 已完成；下一步做 cgroup 生命周期、权限 sandbox 与策略审计持久化。
+   process transport、protocol handshake、path / rate 策略、process resource
+   limits 与 cgroup v2 lifecycle 已完成；下一步做自动 cgroup 委派、权限 sandbox
+   和策略审计持久化。
 5. **Portal / Dynamic / Toast / Tooltip**：补齐 OpenTUI 已有的通用组件接口。
 6. **动画编排增强**：更复杂的 stagger、滚动回弹和动画调试工具。
 7. **WebUI diff / 水平 ScrollBar**：等真实需求出现后再做。
