@@ -2,10 +2,10 @@
 
 > 交接时间：2026-09-24  
 > 仓库：`/home/qaqtamsy/项目/buTUI`  
-> 功能基线提交：`0b61553 feat(mouse): 拖动释放惯性`
+> 功能基线提交：`8f26879 feat(components): Shimmer 与流式状态接入`
 > 工作区状态：功能提交后干净，本文件为对应交接刷新
-> 本轮能力：dragend 速度采样 + 指数衰减惯性 + ScrollBar / Slider 接入
-> 当前回归：`573 pass / 0 fail`，58 个测试文件，`tsc --noEmit` 通过
+> 本轮能力：tween / spring / timeline + Shimmer 粒度 + ReasoningLine 接入
+> 当前回归：`584 pass / 0 fail`，60 个测试文件，`tsc --noEmit` 通过
 
 ## 1. 项目定位
 
@@ -15,7 +15,8 @@ buTUI 是基于 Bun + TypeScript 的通用 TUI Runtime。参考 OpenTUI 的接�
 - 稳定的 `createTuiApp` 应用入口；
 - SolidJS 2 RC 的细粒度响应式 host renderer；
 - 流式文本 / Markdown / Diff 的 O(1) 或 O(视口) 增量路径；
-- 鼠标、OSC 22 指针、拖动惯性、滚动、Slider、SplitPane、插件 / Slot、Keymap 等通用交互能力；
+- 鼠标、OSC 22 指针、拖动惯性、tween / spring / timeline / Shimmer、滚动、
+  Slider、SplitPane、插件 / Slot、Keymap 等通用交互能力；
 - agent 事件协议、Session、undo、artifact、图片等可组合上层。
 
 设计文档：
@@ -61,6 +62,7 @@ bun --conditions=browser run scripts/plugin-demo.tsx
 bun --conditions=browser run scripts/keymap-demo.tsx
 bun --conditions=browser run scripts/mouse-demo.tsx
 bun --conditions=browser run scripts/split-pane-demo.tsx
+bun --conditions=browser run scripts/shimmer-demo.tsx
 bun --conditions=browser run scripts/scroll-demo.tsx
 bun --conditions=browser run scripts/list-demo.tsx
 bun --conditions=browser run scripts/stream-bench.tsx
@@ -103,7 +105,7 @@ bun --conditions=browser run scripts/stream-bench.tsx
 | `@butui/web` | 实验性 DOM 渲染，不是当前优先级 |
 | `@butui/test` | headless mount、快照、事件注入 |
 
-源码约 17,400 行，测试约 10,800 行，58 个测试文件。
+源码约 18,200 行，测试约 11,000 行，60 个测试文件。
 
 ## 5. 已完成能力
 
@@ -205,9 +207,12 @@ const app = createTuiApp({
 - `AnimationScheduler`：进程内单例，默认 30fps，有订阅者才启动。
 - `useAnimationFrame()`：Solid 访问器，支持 `enabled` 和测试注入。
 - `startDragInertia()`：dragend 速度按指数衰减，输出整数 cell 位移，低速自动停。
+- `createTween()`：数值 / 颜色插值、duration、delay、easing。
+- `createSpring()`：固定小步长阻尼积分，适合面板 / 回弹。
+- `createTimeline()`：并行 step；`sequenceSteps()` / `staggerSteps()` 做串行和错峰。
 - `tick()` 可手动驱动，内部会 `flush()`，确保 runtime 收到节点变更。
 - `TERM=dumb` / `BUTUI_REDUCED_MOTION=1|true` 降级。
-- 当前消费者：Diff 的 `stable:false` 流式游标、ScrollBar / Slider 拖动惯性。
+- 当前消费者：Diff 流式游标、ScrollBar / Slider 拖动惯性、`ReasoningLine` 前缀。
 - 不要把 shimmer 铺到整条 markdown / 整个 diff；只做局部状态行或当前变化行。
 
 ### 5.7 精确 ScrollBar
@@ -338,6 +343,14 @@ const bar = createScrollBar({
   传实际轴尺寸。
 - 已有 `scripts/split-pane-demo.tsx`、`tests/splitpane.test.tsx`。
 
+### 5.13 Shimmer
+
+- `shimmerSegments()`：按 `line / word / cell` 计算每段的显示列和 intensity。
+- `<Shimmer>`：只改颜色，不改变文本宽度 / 行高；默认 word + 6 cell 带宽。
+- `phase` 可受控；不传时订阅共享动画时钟，active=false / reduced-motion 时不订阅。
+- `ReasoningLine` 只在 streaming 时对前缀做 shimmer；稳定后冻结。
+- 已有 `scripts/shimmer-demo.tsx`、`tests/shimmer.test.tsx`。
+
 ## 6. 稳定接口入口
 
 | 入口 | 文件 |
@@ -359,7 +372,8 @@ const bar = createScrollBar({
 | 鼠标捕获 / 双击 / hover | `packages/runtime/src/index.ts`、`packages/core/src/{events,dispatch}.ts` |
 | OSC 22 / 指针形状类型 | `packages/terminal/src/index.ts`、`packages/core/src/events.ts` |
 | Solid `useMouseCapture` | `packages/solid/src/app-context.ts` |
-| 动画调度 / 拖动惯性 | `packages/solid/src/{animation,inertia}.ts` |
+| 动画 / tween / spring / timeline / 拖动惯性 | `packages/solid/src/{animation,easing,tween,spring,timeline,inertia}.ts` |
+| Shimmer 模型 / 组件 | `packages/components/src/{shimmer.ts,shimmer.tsx}` |
 | 布局 / Frame / selectionText | `packages/layout/src/index.ts` |
 | 渲染器 | `packages/renderer/src/index.ts` |
 | 终端输入 / OSC 52 | `packages/terminal/src/{input,index}.ts` |
@@ -408,21 +422,23 @@ bridge、真实 tool event 对接或 bugent 快捷键迁移。
     终端后鼠标指针可能残留在 pointer / grab。无按键 hover 需要 1003。
 22. 惯性只在 `dragend` 启动，新拖动 / unmount 必须 cancel；SplitPane 和文本
     选择不做惯性。速度单位固定为 cell/ms，不要混用秒或帧。
+23. Shimmer 只改颜色，不能改变文本宽度 / 行高；默认 word，cell 仅用于单行窄
+    状态。不要把 shimmer 铺到完整 Markdown / Diff，稳定后必须停止订阅。
 
 ### 包边界
 
-23. `@butui/agent` 不能静态依赖 `@butui/image`，browser 打包会碰 Bun builtin。
-24. `bun test` 的 preload 要写在 `[test].preload`，顶层 `preload` 只影响
+24. `@butui/agent` 不能静态依赖 `@butui/image`，browser 打包会碰 Bun builtin。
+25. `bun test` 的 preload 要写在 `[test].preload`，顶层 `preload` 只影响
     `bun run`。
-25. `@butui/web` 是实验层；当前 WebUI 尚未消费 `tool.diff`。
+26. `@butui/web` 是实验层；当前 WebUI 尚未消费 `tool.diff`。
 
 ## 9. 测试与验收
 
 当前：
 
 ```text
-573 pass / 0 fail
-58 test files
+584 pass / 0 fail
+60 test files
 tsc --noEmit pass
 ```
 
@@ -435,6 +451,8 @@ tsc --noEmit pass
 - `tests/agent-diff.test.tsx`
 - `tests/scrollbar.test.tsx`
 - `tests/animation.test.tsx`
+- `tests/animation-primitives.test.ts`
+- `tests/shimmer.test.tsx`
 - `tests/plugins.test.ts`
 - `tests/plugin-slot.test.tsx`
 - `tests/plugin-loader.test.ts`
@@ -467,7 +485,8 @@ git diff --check
 - Diff 没有 word-level diff、任意位置删除、hunk 折叠、“滚开后有新行”提示。
 - ScrollBar 只有垂直轴；无自动隐藏、hover 展开、水平轴。
 - SplitPane 的拖动 min/max 依赖应用传对 `size`；无折叠、嵌套拖动约束、双击复位。
-- 动画有共享时钟、Diff 游标和拖动惯性；无通用 tween / spring / timeline / shimmer。
+- 动画已有共享时钟、tween / spring / timeline、Diff 游标、拖动惯性和 Shimmer；
+  还缺更复杂的 stagger 编排、滚动回弹策略和动画调试工具。
 - 编辑器模型没有内部选区、剪贴板历史、撤销栈。
 - 列表只支持单列 + 固定行高，变高行不支持。
 - `flexShrink` 未实现。
@@ -483,7 +502,7 @@ git diff --check
 2. **插件运行时约束 / 审批**：capability 目前只是 import 前门控，下一步做权限
    审批 UI 或 worker 隔离。
 3. **Portal / Dynamic / Toast / Tooltip**：补齐 OpenTUI 已有的通用组件接口。
-4. **Timeline / tween / spring**：建立在现有 `AnimationScheduler` 上。
+4. **动画编排增强**：更复杂的 stagger、滚动回弹和动画调试工具。
 5. **自定义 renderable / component catalogue**：保持 Bun/TS 的 tag→节点映射，
    不照搬 OpenTUI 的 Zig Renderable 类层次。
 6. **WebUI diff**：等 WebUI 重新成为优先级再做。

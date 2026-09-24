@@ -1509,12 +1509,12 @@ P1：
 
 ### 9.5 动画
 
-- timeline
-- tween
-- spring
-- easing
-- sequence
-- stagger
+- ~~timeline~~ ✅ 见 §5.26
+- ~~tween~~ ✅ 见 §5.26
+- ~~spring~~ ✅ 见 §5.26
+- ~~easing~~ ✅ 见 §5.26
+- ~~sequence~~ ✅ `sequenceSteps()`
+- ~~stagger~~ ✅ `staggerSteps()`
 - ~~reduced motion~~ ✅
 - ~~只在需要时启动帧循环~~ ✅ 共享 `AnimationScheduler`，见 §5.19
 
