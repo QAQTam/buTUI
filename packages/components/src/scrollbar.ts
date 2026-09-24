@@ -133,6 +133,8 @@ export interface ScrollBarModel {
   beginDrag(trackY: number): boolean;
   /** 拖动到轨道局部坐标；没有在拖动时返回 false */
   drag(trackY: number): boolean;
+  /** 按轨道 cell 增量滚动；惯性动画用 */
+  dragBy(delta: number): boolean;
   endDrag(): void;
   /** 点击轨道直接定位（不进入拖拽） */
   jump(trackY: number, align?: "center" | "start"): boolean;
@@ -186,6 +188,13 @@ export function createScrollBar(options: ScrollBarOptions): ScrollBarModel {
     dragging: () => (dragRev(), draggingValue),
     beginDrag,
     drag,
+    dragBy(delta) {
+      const current = geometry();
+      if (!current.overflow || current.thumbRange === 0 || delta === 0) return false;
+      const next = metrics().top + delta * (current.maxTop / current.thumbRange);
+      options.onScroll(Math.round(next));
+      return true;
+    },
     endDrag() {
       if (!draggingValue) return;
       draggingValue = false;

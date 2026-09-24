@@ -7,8 +7,8 @@
 分支式 Undo + WebUI remote attach + 图片子系统（Kitty / iTerm2 / Sixel /
 半块 / 占位符）+ Artifact Canvas + 列表 / 虚拟列表 / 滚动视口 / 弹窗 / 表格 /
 树 + 鼠标选区 / OSC 52 + 流式 Diff / 共享动画时钟 / 精确 ScrollBar +
-通用插件 / Slot / Keymap / 鼠标交互 / OSC 22 指针 / Slider / SplitPane 已跑通**，
-`bun test` 567 个用例全绿。
+通用插件 / Slot / Keymap / 鼠标交互 / OSC 22 指针 / 拖动惯性 / Slider /
+SplitPane 已跑通**，`bun test` 573 个用例全绿。
 
 ```
 应用（你的 agent / 工具 / TUI）
@@ -144,6 +144,9 @@ createTuiApp({
 - `onMouseEnter / onMouseLeave` 是合成事件，只在命中节点变化时触发且不冒泡。
 - `onDragStart / onDrag / onDragEnd` 在左键移动超过 `dragThreshold` 后触发，
   target 固定为按下时的节点；默认阈值 1 cell。
+- `onDragEnd` 的 `velocityX / velocityY` 是最近窗口速度，单位 cell/ms。
+- `startDragInertia()` 基于共享动画时钟做指数衰减，并按整数 cell 调用
+  `onStep`；`<ScrollBar>` / `<Slider>` 已默认接入，可传 `inertia={false}` 关闭。
 - `mouseMotion: "hover"` 会开启终端 1003，允许无按键移动触发 hover；
   默认 `"drag"` 只上报按键拖动，事件量更低。
 - `app.captureMouse(node)` 让拖拽在指针移出目标后继续收到 `move`，
@@ -280,6 +283,7 @@ const bar = createScrollBar({
 - 拖拽保留 `grabOffset`，拖到轨道两端精确得到 `0 / maxTop`。
 - 点击轨道默认把 thumb 中心对齐到点击行；`jump(y, "start")` 可精确到顶部。
 - 鼠标拖动走 `onDrag + localY + capture`：拖出轨道矩形后仍继续更新。
+- 释放时默认按 `dragend.velocityY` 继续滚动；`inertia={false}` 可关闭。
 - `selectable={false}` 保证全局文本选择不会抢走 scrollbar 手势。
 - `<Diff scrollbar>` 已接入，多出来的宽度固定为 1 cell。
 
@@ -302,6 +306,7 @@ const slider = createSlider({
 
 - 纯模型：比例、step、端点、键盘步进都在 `createSlider`。
 - 鼠标：`localX + pointer capture + onDrag`，拖出轨道矩形后继续更新。
+- 释放时默认按 `dragend.velocityX` 继续移动；`inertia={false}` 可关闭。
 - 键盘：方向键、PageUp/PageDown、Home/End。
 - 终端宽度变化不会影响模型；组件只决定画多宽。
 
@@ -853,7 +858,7 @@ Demo 的工作区是**内存实现**，但走的是完全一样的 journal / dif
 | 包 | 职责 |
 |---|---|
 | `@butui/core` | 节点树、`rev` 失效传播、`childrenRevSum`、focus、事件冒泡、theme、ANSI 解析 |
-| `@butui/solid` | `@solidjs/universal` host ops、JSX 类型、Bun 编译插件、共享动画帧时钟、`useMouseCapture` |
+| `@butui/solid` | `@solidjs/universal` host ops、JSX 类型、Bun 编译插件、共享动画帧时钟 / 拖动惯性、`useMouseCapture` |
 | `@butui/runtime` | `createTuiApp`：终端、合帧重绘、事件分发、鼠标选区 / OSC 52 / OSC 22 指针 —— 应用作者的唯一入口 |
 | `@butui/components` | `createTextEditor` / `<Input>` / `<Textarea>` / `<Markdown>` / `<Code>` / `<Diff>` / `<ScrollBar>` / `<Slider>` / `<SplitPane>`、`createSelection` / `<List>` / `<VirtualList>`、`createScrollView`、`<Select>` / `<Tabs>` / `<Table>` / `<Tree>`、`<Button>` / `<Dialog>` / `<Modal>`、`ProgressBar` / `Spinner` / `Badge` / `Divider` / `KeyHint` |
 | `@butui/plugins` | 通用 `SlotRegistry` / `Plugin` / 错误隔离；`@butui/plugins/solid` 提供 `createSlot` / `<Slot>`；`@butui/plugins/loader` 提供 manifest / 配置 / 动态加载 / 自动发现 / capability 门控 |
@@ -1039,6 +1044,6 @@ Bun.plugin(onLoad)
   列表只支持单列 + 固定行高
 - Artifact Canvas：artifact 的持久化（现在只在 Session 内存里）、WebUI 侧的服务端图片路由
 - 图片子系统：半块图的终端背景透出、Kitty 图片随滚动的位置缓存
-- 动画目前只有共享时钟 + Diff 流式游标；shimmer / tween / timeline 还没做
+- 动画目前有共享时钟、Diff 流式游标和拖动惯性；shimmer / tween / timeline 还没做
 - Kitty keyboard protocol 的发送侧
 - `flexShrink` 没实现：row 里只有显式 `truncate` / `wrap={false}` 的 text 会让位

@@ -411,16 +411,22 @@ session.dispatch({
 - 行更新使用逐行版本信号；改一行不会重新计算整个 diff 的文本 / token。
 - `highlight` 只对 context 行做轻量语法高亮；add / remove 始终保持红绿语义。
 
-### 4.17 动画：`AnimationScheduler` / `useAnimationFrame`
+### 4.17 动画：`AnimationScheduler` / `useAnimationFrame` / `startDragInertia`
 
 ```tsx
 const time = useAnimationFrame({ enabled: () => source.streaming() });
+const inertia = startDragInertia({
+  velocityX: event.velocityX,
+  velocityY: event.velocityY,
+  onStep: (dx, dy) => moveBy(dx, dy),
+});
 ```
 
 - 进程内共享调度器默认 30fps，只有存在订阅者时才启动；全部退订后停止。
 - `tick(time)` 可手动驱动，测试和未来的 runtime render clock 不依赖墙钟。
-- `TERM=dumb` 或 `BUTUI_REDUCED_MOTION=1|true` 时调用方应关闭动画；
-  `<Diff>` 已按这个规则降级。
+- `startDragInertia()` 做指数衰减，输出整数 cell 位移，自动在低速停止。
+- `TERM=dumb` 或 `BUTUI_REDUCED_MOTION=1|true` 时默认不启动惯性 / 动画；
+  `<Diff>`、`<ScrollBar>`、`<Slider>` 已按这个规则降级。
 - 动画只应更新仍在变化的少量行。不要把 shimmer 铺到完整 diff / markdown，
   否则每帧都会制造大量样式变化和重绘。
 
@@ -441,6 +447,7 @@ const bar = createScrollBarFor(view);
 - `createScrollBar()` 拖动保留 `grabOffset`；`jump(y, "start")` 可精确到轨道行。
 - `<ScrollBar>` 按下后捕获自身节点，`onDrag` 用 `localY` 更新，拖出轨道矩形
   仍继续。
+- 释放时默认按 `dragend.velocityY` 继续滚动；`inertia={false}` 可关闭。
 - ScrollBar 声明 `selectable={false}`。runtime 会从命中节点向上继承该属性，
   不启动全局文本选择，因此拖拽不会被选区吃掉。
 - `<Diff scrollbar>` 与 `createScrollBarFor(view)` 使用同一几何模型。
@@ -537,6 +544,10 @@ keymap.bindCommand(
   无按键 hover，需要传 `"hover"` 开启终端 1003。
 - `onDragStart / onDrag / onDragEnd` 在移动超过 `mouse.dragThreshold` 后触发；
   target 固定为按下节点，release 时结束。
+- `onDragEnd` 的 `velocityX / velocityY` 是最近窗口速度，单位 cell/ms；可用
+  `mouse.velocityWindowMs` / `mouse.maxVelocity` 调整。
+- `startDragInertia()` 把速度衰减成整数 cell 位移；`<ScrollBar>` / `<Slider>`
+  默认接入，`inertia={false}` 可关闭，SplitPane 不默认启用。
 - `captureMouse(node)` 后鼠标事件发给捕获节点，release 自动解除；组件使用
   `useMouseCapture()`。
 - 节点 `cursor?: MousePointerStyle` 通过 OSC 22 切换鼠标指针；未声明时，
@@ -562,6 +573,7 @@ const slider = createSlider({
 
 - `sliderValueAt()` 是纯函数：比例、step、端点都精确。
 - `beginDrag` / `drag` / `endDrag` 管理拖动状态；鼠标使用 `localX + capture`。
+- 释放时默认按 `dragend.velocityX` 继续移动；`inertia={false}` 可关闭。
 - 键盘支持左右 / 上下 / PageUp / PageDown / Home / End。
 - 组件宽度只影响显示，不影响模型值域。
 - 当前是单行水平 slider；没有垂直轴、双 thumb 或刻度组件。
@@ -603,8 +615,8 @@ const split = createSplitPane({
 - **流式 Diff 不支持任意位置删除 / splice**：后端应把重算限制在尾部；需要完整
   重排时新建一个 `DiffStream`。目前也没有 word-level diff、折叠 hunk 和
   “视口外有新行”提示。
-- **动画只有共享时钟与 Diff 游标**：还没有 tween / spring / timeline /
-  stagger，也没有 shimmer 组件；不要假设 60fps。
+- **动画只有共享时钟、Diff 游标与拖动惯性**：还没有通用 tween / spring /
+  timeline / stagger，也没有 shimmer 组件；不要假设 60fps。
 - **ScrollBar 目前只有垂直轴**：没有自动隐藏、hover 展开、水平轴或触控惯性。
 - **SplitPane 的拖动几何依赖 `size`**：根视图可省略并使用终端尺寸；嵌在
   padding / border / 兄弟节点容器里时必须传实际轴尺寸，否则 min/max 夹取会按
@@ -618,8 +630,9 @@ const split = createSplitPane({
 - **没有布局调试工具**（类似 flexbox inspector）。
 - **焦点不会自动清理**：被移除的节点如果还是焦点，`focusedId()` 会保留它的
   id（下一次 tab 会自动跳到活着的节点）。组件里用 `isFocused` 不受影响。
-- **鼠标没有 pointerId / 多指针 / 惯性**：hover 默认关闭（1003 事件量高）；
+- **鼠标没有 pointerId / 多指针**：hover 默认关闭（1003 事件量高）；
   OSC 22 是 best-effort，终端可忽略；跨终端窗口的 capture 不在协议范围内。
+  惯性只接在 ScrollBar / Slider，不作用于 SplitPane 或文本选择。
 - **Keymap 只有单键**：多键 chord、超时前缀状态机和 Command Palette UI 还没做；
   当前 keymap 也不持久化用户自定义绑定。
 - **插件 capability 不是沙箱**：它只在动态 import 前做同意门控，没有运行时

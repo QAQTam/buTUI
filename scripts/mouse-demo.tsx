@@ -54,7 +54,7 @@ createTuiApp({
         </For>
       </row>
       <Slider model={sliderModel} width={31} showValue />
-      <text color="muted">拖 slider 可移出矩形，capture 会继续收到 drag</text>
+      <text color="muted">拖 slider 可移出矩形；快速释放会按速度继续滑动</text>
     </box>
   ),
 });

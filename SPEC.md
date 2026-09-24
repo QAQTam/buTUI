@@ -731,8 +731,8 @@ id** —— 前者在插入后漂移，后者会在每个 chunk 都变成新行�
 
 **动画边界。** 动画只允许落在仍在变化的行；新增共享 `AnimationScheduler`
 （30fps、有订阅者才启动、全部退订即停）和 `useAnimationFrame`。`<Diff>` 的
-游标只在 `stable:false` 时订阅，定稿后自动停止；`TERM=dumb` 或
-`BUTUI_REDUCED_MOTION=1|true` 不启动。不要把 shimmer 铺到整个 diff 或整条
+游标只在 `stable:false` 时订阅，定稿后自动停止；拖动惯性也复用同一调度器。
+`TERM=dumb` 或 `BUTUI_REDUCED_MOTION=1|true` 不启动。不要把 shimmer 铺到整个 diff 或整条
 markdown —— 那会让每帧产生大面积样式变化，和 §17「流式输出不整屏闪烁」冲突。
 
 **已知边界：** 没有 word-level diff、任意位置删除、hunk 折叠或“滚开时有新行”
@@ -773,6 +773,8 @@ scrollbar 时不启动文本选择。
 
 **跨区域拖动。** 按下 thumb / 轨道后捕获 scrollbar 节点；后续 `onDrag` 使用
 相对轨道的 `localY` 更新位置，因此指针移出 scrollbar 矩形后拖动仍继续。
+释放时读取 `dragend.velocityY`，默认通过 `startDragInertia()` 继续滚动；
+`inertia={false}` 可关闭。
 
 `createScrollBarFor(view)` 是 `createScrollView()` 的直连适配器；`<Diff
 scrollbar>` 也使用同一模型，因此根转录、列表、diff 的 thumb 比例与拖动语义
@@ -922,6 +924,8 @@ test 后向目标节点冒泡。
 - `onMouseEnter` / `onMouseLeave`：合成事件，只在命中节点变化时触发且不冒泡
 - `onDragStart` / `onDrag` / `onDragEnd`：左键移动超过 `dragThreshold` 后触发，
   target 固定为按下时节点；默认阈值 1 cell
+- `velocityX` / `velocityY`：只在 `dragend` 上有值，单位 cell/ms；runtime 用
+  最近 100ms 的指针采样计算，并可夹取最大速度
 - `localX` / `localY`：相对目标节点左上角；捕获 / drag 时允许为负或超出尺寸
 
 hover 需要终端持续上报无按键移动，因此 `mouseMotion` 有两个模式：
@@ -960,8 +964,24 @@ move」的问题，Slider / SplitPane 已据此实现。
   无按键 hover 需要 `"hover"`。
 - 相同形状去重，不重复写控制序列；终端不支持时忽略。
 
+拖动惯性由 `@butui/solid` 的 `startDragInertia()` 提供：
+
+```ts
+const inertia = startDragInertia({
+  velocityX: event.velocityX,
+  velocityY: event.velocityY,
+  onStep: (dx, dy) => moveBy(dx, dy),
+});
+```
+
+- 使用共享 `AnimationScheduler`，指数衰减到阈值后自动退订。
+- 位移按整数 cell 输出，内部保留小数余量，不丢慢速尾段。
+- `TERM=dumb` / `BUTUI_REDUCED_MOTION=1|true` 默认不启动。
+- `<ScrollBar>` / `<Slider>` 默认接入，`inertia={false}` 可关闭；SplitPane
+  不做惯性，避免面板尺寸难以精确停下。
+
 **已知边界：** 还没有 DOM 式 pointerId / 多指针、hover 的 `mouseover/out`
-冒泡语义、拖动惯性和跨终端窗口的 capture。
+冒泡语义和跨终端窗口的 capture。
 
 ---
 
@@ -981,6 +1001,7 @@ const slider = createSlider({
 
 - `sliderValueAt(localX, track, min, max, step)` 做比例、step 和端点夹取；
 - 鼠标走 `localX + capture + onDrag`，拖出矩形后继续更新；
+- 释放时按 `dragend.velocityX` 默认启动惯性；`inertia={false}` 可关闭；
 - 键盘支持左右 / 上下 / PageUp / PageDown / Home / End；
 - 组件宽度只影响显示，不影响模型的值域；
 - 和 ScrollBar 共用「本地坐标 + capture + drag」的交互模式。

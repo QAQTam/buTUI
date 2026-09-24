@@ -146,6 +146,37 @@ describe("mouse interaction", () => {
     app.dispose();
   });
 
+  test("dragend 上报最近窗口的释放速度（cell/ms）", () => {
+    const terminal = new FakeTerminal();
+    let clock = 0;
+    const velocities: Array<[number | undefined, number | undefined]> = [];
+    const app = createTuiApp({
+      terminal,
+      size: { columns: 20, rows: 2 },
+      selection: false,
+      mouse: { now: () => clock, velocityWindowMs: 100 },
+      onQuit: () => {},
+      view: () => (
+        <box
+          width={15}
+          height={1}
+          selectable={false}
+          onDragEnd={event =>
+            velocities.push([event.velocityX, event.velocityY])
+          }
+        />
+      ),
+    });
+
+    app.send(mouse("press", 0, 0));
+    clock = 100;
+    app.send(mouse("move", 10, 0));
+    app.send(mouse("release", 10, 0));
+
+    expect(velocities).toEqual([[0.1, 0]]);
+    app.dispose();
+  });
+
   test("dragstart / drag / dragend 按阈值触发并携带本地坐标", () => {
     const terminal = new FakeTerminal();
     const calls: string[] = [];

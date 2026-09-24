@@ -96,6 +96,10 @@ export interface MouseOptions {
   doubleClickMs?: number;
   /** 超过多少 cell 才算 drag，默认 1。 */
   dragThreshold?: number;
+  /** 计算 release 速度时回看多久，默认 100ms。 */
+  velocityWindowMs?: number;
+  /** 速度上限，cell/ms，默认 5；防止异常采样造成过冲。 */
+  maxVelocity?: number;
   /** 注入时钟；测试用。 */
   now?: () => number;
 }
@@ -283,11 +287,14 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
         x: number;
         y: number;
         started: boolean;
+        samples: Array<{ x: number; y: number; time: number }>;
       }
     | undefined;
-  const mouseNow = options.mouse?.now ?? Date.now;
+  const mouseNow = options.mouse?.now ?? (() => performance.now());
   const doubleClickMs = options.mouse?.doubleClickMs ?? 400;
   const dragThreshold = Math.max(0, options.mouse?.dragThreshold ?? 1);
+  const velocityWindowMs = Math.max(1, options.mouse?.velocityWindowMs ?? 100);
+  const maxVelocity = Math.max(0, options.mouse?.maxVelocity ?? 5);
   const frameBounds = new WeakMap<Frame, Map<number, MouseBounds>>();
 
   const selectionAllowed = (): boolean =>
@@ -588,6 +595,8 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
       button: options.button ?? "none",
       x: source.x,
       y: source.y,
+      ...(source.velocityX !== undefined ? { velocityX: source.velocityX } : {}),
+      ...(source.velocityY !== undefined ? { velocityY: source.velocityY } : {}),
       modifiers: source.modifiers,
     }) as MouseEvent;
     applyLocalCoordinates(event, target);
@@ -615,6 +624,29 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
     requestPaint();
   };
 
+  const recordMouseSample = (event: MouseEvent): void => {
+    if (!pressedMouse) return;
+    const time = mouseNow();
+    const samples = pressedMouse.samples;
+    samples.push({ x: event.x, y: event.y, time });
+    const cutoff = time - velocityWindowMs;
+    while (samples.length > 1 && samples[0]!.time < cutoff) samples.shift();
+  };
+
+  const releaseVelocity = (): { x: number; y: number } => {
+    const samples = pressedMouse?.samples ?? [];
+    const first = samples[0];
+    const last = samples[samples.length - 1];
+    if (!first || !last || last.time <= first.time) return { x: 0, y: 0 };
+    const dt = last.time - first.time;
+    const clamp = (value: number): number =>
+      Math.max(-maxVelocity, Math.min(maxVelocity, value));
+    return {
+      x: clamp((last.x - first.x) / dt),
+      y: clamp((last.y - first.y) / dt),
+    };
+  };
+
   const beginMouseDrag = (
     event: MouseEvent,
     target: Node | undefined
@@ -625,11 +657,13 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
       x: event.x,
       y: event.y,
       started: false,
+      samples: [{ x: event.x, y: event.y, time: mouseNow() }],
     };
   };
 
   const updateMouseDrag = (event: MouseEvent): number => {
     if (!pressedMouse) return 0;
+    recordMouseSample(event);
     const distance = Math.max(
       Math.abs(event.x - pressedMouse.x),
       Math.abs(event.y - pressedMouse.y)
@@ -654,6 +688,10 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
 
   const endMouseDrag = (event: MouseEvent): number => {
     if (!pressedMouse) return 0;
+    recordMouseSample(event);
+    const velocity = releaseVelocity();
+    event.velocityX = velocity.x;
+    event.velocityY = velocity.y;
     const target = capturedMouseNode ?? pressedMouse.target;
     const delivered = pressedMouse.started
       ? dispatchSyntheticMouse("dragend", target, event, {

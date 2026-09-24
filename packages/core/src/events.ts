@@ -123,6 +123,13 @@ export interface MouseEvent {
    */
   localX?: number;
   localY?: number;
+  /**
+   * 释放速度，cell/ms；只在 `dragend` 上有值。
+   *
+   * runtime 用最近一小段指针采样计算；应用可据此启动惯性动画。
+   */
+  velocityX?: number;
+  velocityY?: number;
   modifiers: KeyModifiers;
   target?: Node;
   /** 语义标识：`message:<id>` / `tool:<callId>` / `checkpoint:<id>`（SPEC §4.2） */

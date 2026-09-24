@@ -1,6 +1,11 @@
-import type { KeyEvent, Node } from "@butui/core";
-import { useMouseCapture } from "@butui/solid";
-import { Show, createSignal } from "solid-js";
+import type { KeyEvent, MouseEvent, Node } from "@butui/core";
+import {
+  type AnimationScheduler,
+  type DragInertiaHandle,
+  startDragInertia,
+  useMouseCapture,
+} from "@butui/solid";
+import { Show, createSignal, onCleanup } from "solid-js";
 import type { SliderModel } from "./slider.ts";
 
 export interface SliderProps {
@@ -16,6 +21,12 @@ export interface SliderProps {
   /** 右侧显示当前值 */
   showValue?: boolean;
   valueColor?: string;
+  /** 释放 thumb 后按速度继续移动；默认 true */
+  inertia?: boolean;
+  /** 测试 / 嵌入方注入惯性调度器 */
+  inertiaScheduler?: AnimationScheduler;
+  /** 测试 / 嵌入方覆盖 reduced-motion 检测 */
+  inertiaReducedMotion?: boolean;
   semantic?: string;
 }
 
@@ -31,8 +42,15 @@ export function Slider(props: SliderProps) {
   const thumbChar = (): string => props.thumbChar ?? "●";
   const [node, setNode] = createSignal<Node>();
   const capture = useMouseCapture();
+  let inertia: DragInertiaHandle | undefined;
+
+  const stopInertia = (): void => {
+    inertia?.cancel();
+    inertia = undefined;
+  };
 
   const beginAt = (position: number): void => {
+    stopInertia();
     const current = node();
     if (current) capture?.capture(current);
     props.model.beginDrag(position, width());
@@ -43,10 +61,34 @@ export function Slider(props: SliderProps) {
     props.model.drag(localX, width());
   };
 
-  const end = (): void => {
-    props.model.endDrag();
-    capture?.release();
+  const end = (event?: MouseEvent): void => {
+    if (props.model.dragging()) {
+      props.model.endDrag();
+      capture?.release();
+    }
+    if (
+      event?.action === "dragend" &&
+      props.inertia !== false &&
+      (event.velocityX ?? 0) !== 0
+    ) {
+      stopInertia();
+      inertia = startDragInertia({
+        velocityX: event.velocityX,
+        ...(props.inertiaScheduler ? { scheduler: props.inertiaScheduler } : {}),
+        ...(props.inertiaReducedMotion !== undefined
+          ? { reducedMotion: props.inertiaReducedMotion }
+          : {}),
+        onStep: deltaX => {
+          props.model.setFromPosition(props.model.position(width()) + deltaX, width());
+        },
+        onEnd: () => {
+          inertia = undefined;
+        },
+      });
+    }
   };
+
+  onCleanup(stopInertia);
 
   const onKey = (event: KeyEvent): void => {
     if (props.model.handleKey(event)) event.preventDefault();
@@ -62,8 +104,8 @@ export function Slider(props: SliderProps) {
         selectable={false}
         semantic={props.semantic ?? "slider"}
         onDrag={event => drag(event.localX)}
-        onDragEnd={end}
-        onMouseUp={end}
+        onDragEnd={event => end(event)}
+        onMouseUp={event => end(event)}
         onKey={onKey}
       >
         <Show when={pos() > 0}>

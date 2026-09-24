@@ -10,6 +10,7 @@ import {
   topForThumb,
 } from "@butui/components";
 import { createTuiApp } from "@butui/runtime";
+import { AnimationScheduler } from "@butui/solid";
 import { mount } from "@butui/test";
 import { createSignal } from "solid-js";
 import { FakeTerminal } from "./helpers/terminal.ts";
@@ -139,6 +140,50 @@ describe("<ScrollBar>", () => {
     app.flush();
     expect(top()).toBe(68);
     app.unmount();
+  });
+
+  test("释放 thumb 后按速度继续滚动", () => {
+    const terminal = new FakeTerminal();
+    terminal.size = { columns: 1, rows: 10 };
+    const scheduler = new AnimationScheduler({ now: () => 0 });
+    scheduler.stop();
+    let clock = 0;
+    let top = 0;
+    const model = createScrollBar({
+      top: () => top,
+      total: () => 100,
+      viewport: () => 10,
+      track: () => 10,
+      onScroll: value => {
+        top = value;
+      },
+    });
+    const app = createTuiApp({
+      terminal,
+      size: { columns: 1, rows: 10 },
+      selection: false,
+      mouse: { now: () => clock, velocityWindowMs: 100 },
+      onQuit: () => {},
+      view: () => (
+        <ScrollBar
+          model={model}
+          inertiaScheduler={scheduler}
+          inertiaReducedMotion={false}
+        />
+      ),
+    });
+
+    app.send(mouse("press", 0, 0));
+    clock = 100;
+    app.send(mouse("move", 0, 3));
+    app.send(mouse("release", 0, 3));
+    expect(top).toBe(30);
+
+    scheduler.tick(0);
+    scheduler.tick(64);
+    expect(top).toBeGreaterThan(30);
+    app.dispose();
+    expect(scheduler.size).toBe(0);
   });
 
   test("全局文本选择不会抢走 scrollbar 的拖拽", () => {

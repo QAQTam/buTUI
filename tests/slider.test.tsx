@@ -10,6 +10,7 @@ import {
 } from "@butui/core";
 import { Slider, createSlider, sliderValueAt } from "@butui/components";
 import { createTuiApp } from "@butui/runtime";
+import { AnimationScheduler } from "@butui/solid";
 import { mount } from "@butui/test";
 import { createSignal } from "solid-js";
 import { FakeTerminal } from "./helpers/terminal.ts";
@@ -125,6 +126,50 @@ describe("<Slider>", () => {
     expect(model.dragging()).toBe(false);
     expect(app.capturedMouse()).toBeUndefined();
     app.dispose();
+  });
+
+  test("释放 thumb 后按速度继续移动", () => {
+    const terminal = new FakeTerminal();
+    terminal.size = { columns: 20, rows: 1 };
+    const scheduler = new AnimationScheduler({ now: () => 0 });
+    scheduler.stop();
+    let clock = 0;
+    const [value, setValue] = createSignal(0);
+    const model = createSlider({
+      value,
+      min: 0,
+      max: 100,
+      step: 1,
+      onChange: setValue,
+    });
+    const app = createTuiApp({
+      terminal,
+      size: { columns: 20, rows: 1 },
+      selection: false,
+      mouse: { now: () => clock, velocityWindowMs: 100 },
+      onQuit: () => {},
+      view: () => (
+        <Slider
+          model={model}
+          width={10}
+          inertiaScheduler={scheduler}
+          inertiaReducedMotion={false}
+        />
+      ),
+    });
+
+    app.send(mouse("press", 0, 0));
+    clock = 100;
+    app.send(mouse("move", 4, 0));
+    app.send(mouse("release", 4, 0));
+    const afterDrag = value();
+    expect(afterDrag).toBeGreaterThan(0);
+
+    scheduler.tick(0);
+    scheduler.tick(64);
+    expect(value()).toBeGreaterThan(afterDrag);
+    app.dispose();
+    expect(scheduler.size).toBe(0);
   });
 
   test("键盘方向键 / Home / End 可操作", () => {
