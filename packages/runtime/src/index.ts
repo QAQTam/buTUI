@@ -54,7 +54,13 @@ import {
 } from "@butui/layout";
 import { type RenderStats, Renderer } from "@butui/renderer";
 import { AnimationScheduler, provideAppScope, provideFocusScope, render } from "@butui/solid";
-import { TerminalSession, osc22, osc52, terminalSize } from "@butui/terminal";
+import {
+  TerminalSession,
+  osc22,
+  osc52,
+  terminalSize,
+  type RawLeaseContext,
+} from "@butui/terminal";
 import { createSignal, flush } from "solid-js";
 import {
   RenderScheduler,
@@ -90,6 +96,12 @@ export interface TuiTerminal {
   /** 可选：suspend / resume terminal ownership。 */
   suspend?(reason?: string): Promise<void>;
   resume?(): Promise<void>;
+  /** 可选：临时把终端交给 raw owner。 */
+  withRawLease?<T>(
+    owner: string,
+    reason: string,
+    run: (context: RawLeaseContext) => Promise<T> | T
+  ): Promise<T>;
   /** 可选：恢复前是否必须整屏重画。 */
   requiresFullDamage?(): boolean;
   /** 可选：终端层自行去重 / stop 时恢复 default */
@@ -248,6 +260,12 @@ export interface TuiApp {
   suspend(reason?: string): Promise<void>;
   /** 恢复 frame ownership，并强制下一帧 full damage。 */
   resume(): Promise<void>;
+  /** 临时把终端交给 raw owner，结束后自动恢复 frame。 */
+  withRawLease<T>(
+    owner: string,
+    reason: string,
+    run: (context: RawLeaseContext) => Promise<T> | T
+  ): Promise<T>;
   /** 立刻画一帧（一般不用调；变更会自动重绘） */
   paint(): RenderStats;
   /** 请求一帧（按 `render.mode` 合并；默认同一 tick 内只画一次） */
@@ -1191,6 +1209,33 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
     requestPaint();
   }
 
+  async function withRawLease<T>(
+    owner: string,
+    reason: string,
+    run: (context: RawLeaseContext) => Promise<T> | T
+  ): Promise<T> {
+    if (!terminal.withRawLease) {
+      throw new Error("[butui] terminal 不支持 raw lease");
+    }
+    if (disposed || suspended) {
+      throw new Error("[butui] runtime 已暂停或关闭");
+    }
+
+    suspended = true;
+    if (selectionHasText || selecting) resetSelection(false);
+    renderScheduler?.cancel();
+    appAnimationScheduler?.stop();
+    presentedFrames.invalidate();
+    try {
+      return await terminal.withRawLease(owner, reason, run);
+    } finally {
+      suspended = false;
+      renderer.invalidate();
+      presentedFrames.invalidate();
+      requestPaint();
+    }
+  }
+
   const dispose = (): void => {
     if (disposed) return;
     stop();
@@ -1209,6 +1254,7 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
     stop,
     suspend,
     resume,
+    withRawLease,
     paint,
     requestPaint,
     send,

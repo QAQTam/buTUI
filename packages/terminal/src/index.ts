@@ -170,6 +170,12 @@ export interface TerminalWriteOptions {
   frameId?: number;
 }
 
+export interface RawLeaseContext {
+  lease: TerminalLease;
+  /** raw owner 直接写终端；返回 false 表示底层 backpressure。 */
+  write(bytes: string | Uint8Array): boolean;
+}
+
 export class TerminalSession {
   private readonly stdin: NodeJS.ReadStream;
   private readonly stdout: NodeJS.WriteStream;
@@ -253,6 +259,41 @@ export class TerminalSession {
 
   requiresFullDamage(): boolean {
     return this.arbiter.requiresFullDamage();
+  }
+
+  /**
+   * 临时把终端交给 raw owner（子进程 / 调试器）。
+   * 无论 callback 成功或抛错，都会释放 raw lease 并恢复 frame lease。
+   */
+  async withRawLease<T>(
+    owner: string,
+    reason: string,
+    run: (context: RawLeaseContext) => Promise<T> | T
+  ): Promise<T> {
+    const shouldResume = this.lease !== undefined;
+    await this.suspend(reason);
+    let raw: TerminalLease | undefined;
+    try {
+      raw = await this.arbiter.acquire({
+        owner,
+        kind: "raw",
+        reason,
+        priority: Number.MAX_SAFE_INTEGER,
+      });
+      return await run({
+        lease: raw,
+        write: bytes => {
+          const receipt = this.arbiter.write(raw!, {
+            kind: "append",
+            bytes,
+          });
+          return receipt.accepted && !receipt.blocked;
+        },
+      });
+    } finally {
+      if (raw) await this.arbiter.release(raw);
+      if (shouldResume) await this.resume();
+    }
   }
 
   start(): void {
