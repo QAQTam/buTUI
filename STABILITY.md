@@ -36,7 +36,7 @@ const app = createTuiApp({
 | 布局 | `@butui/layout` | **稳定**（`Cell` / `Line` / `Frame` / `layout`） |
 | 渲染 | `@butui/renderer` | **稳定**（`Renderer` / `plainText` / `paintLine`） |
 | 终端 | `@butui/terminal` | **稳定**（`TerminalSession` / 输入解码 / 能力探测 / `osc22` / `osc52`） |
-| 基础组件 | `@butui/components` | **稳定**（编辑器 / 选择 / 列表 / 滚动 / ScrollBar / Slider / SplitPane / CommandPalette / Toast / Tooltip / Popover / Portal / Dynamic / MultiSelect / Form / Autocomplete / Diff / 弹窗 / 展示组件） |
+| 基础组件 | `@butui/components` | **稳定**（编辑器 / 选择 / 列表 / 滚动 / ScrollBar / Slider / SplitPane / CommandPalette / Toast / Tooltip / Popover / Portal / Dynamic / MultiSelect / Form / Autocomplete / Checkbox / RadioGroup / Diff / 弹窗 / 展示组件） |
 | 插件 / Slot | `@butui/plugins` | **稳定**（`Plugin` / `SlotRegistry`；Solid 适配在 `@butui/plugins/solid`；loader 在 `@butui/plugins/loader`） |
 | 命令 / Keymap | `@butui/keymap` | **稳定**（`CommandRegistry` / `Keymap`；Solid 适配在 `@butui/keymap/solid`） |
 | 流式文本 | `@butui/stream` | **稳定**（`StreamSource` / `DiffStream` / `<stream>`） |
@@ -826,6 +826,19 @@ const form = createForm({
 - 组件组合 Input / List / Selection，不复制编辑或滚动逻辑。
 - ↑↓ / PageUp/PageDown / Home/End 导航，Enter 选择，Esc 清空。
 - disabled 项展示但不可选择；点击结果直接选择。
+
+### 4.34 Checkbox / RadioGroup
+
+```tsx
+<Checkbox checked={enabled()} onChange={setEnabled} label="启用插件" />
+
+<RadioGroup options={modes} value={mode()} onChange={setMode} />
+```
+
+- Checkbox 受控 `checked`；Space / Enter / 点击切换；disabled 不响应。
+- RadioGroup 支持 vertical / horizontal；方向键、Home / End、Space / Enter 和点击。
+- disabled / heading 不参与导航；不维护第二份选择状态。
+- 可直接调用 `form.setValue()` 接入 Form。
 
 ## 5. 已知缺口（不要依赖，也不建议自己绕）
 

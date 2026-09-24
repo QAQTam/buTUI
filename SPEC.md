@@ -1309,6 +1309,26 @@ const form = createForm({
 
 ---
 
+### 5.36 Checkbox / RadioGroup（v0.1 实现）
+
+```tsx
+<Checkbox checked={enabled()} onChange={setEnabled} label="启用插件" />
+
+<RadioGroup
+  options={modes}
+  value={mode()}
+  onChange={setMode}
+  orientation="horizontal"
+/>
+```
+
+- Checkbox 受控 checked，Space / Enter / 点击切换，disabled 不响应。
+- RadioGroup 支持 vertical / horizontal、方向键、Home / End 和点击。
+- 自动跳过 disabled / heading；不维护第二份选择状态。
+- 可直接通过 `form.setValue()` 接入 Form。
+
+---
+
 ### 5.17 应用上下文（v0.1 实现）
 
 组件要能问「现在多宽 / 什么色深 / 我想订一个全局键」，但既不该认识 runtime，
@@ -1824,6 +1844,7 @@ P1：
 - `Popover`：`createPopoverController` / `<Popover>` 交互式 overlay（见 §5.33）
 - `Form`：`createForm` / `<Form>` / `useForm` / `<FormField>`（见 §5.34）
 - `Autocomplete`：`filterAutocompleteOptions` / `<Autocomplete>`（见 §5.35）
+- `Checkbox` / `RadioGroup`：受控 boolean / 单选控件（见 §5.36）
 - `Select` / `Tabs`：`<Select>`（↑↓ + Enter）与 `<Tabs>`（←→ 立即切换）
 - `Table`：列宽显式给或按内容算，支持左 / 中 / 右对齐
 - `Tree`：受控展开（`expanded` + `onToggle`），←→ 展开收起、→ 进子节点
