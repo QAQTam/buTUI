@@ -18,6 +18,8 @@ export interface StreamWindowOptions {
   ledger: StreamLedger;
   streamId: StreamId;
   initialOffset?: number;
+  /** 最多缓存多少个窗口；0 表示关闭，默认 8。 */
+  cacheSize?: number;
 }
 
 export interface StreamWindowSource extends StreamSource {
@@ -39,6 +41,8 @@ export function createStreamWindow(
   let currentRevision = ledger.project(streamId).revision;
   let lastCount = 0;
   let generation = 0;
+  const cacheSize = Math.max(0, Math.floor(options.cacheSize ?? 8));
+  const cache = new Map<string, StreamLineWindow>();
   const listeners = new Set<() => void>();
   const [version, setVersion] = createSignal(0);
   const [loading, setLoading] = createSignal(false);
@@ -47,26 +51,58 @@ export function createStreamWindow(
     for (const listener of [...listeners]) listener();
   };
 
-  const load = async (
+  const applyWindow = (window: StreamLineWindow): void => {
+    currentLines = window.lines.map((line, index) => ({
+      id: window.offset + index + 1,
+      text: line.text,
+      stable: true,
+    }));
+    currentOffset = window.offset;
+    currentTotal = window.totalLines;
+    currentRevision = window.revision;
+  };
+
+  const cacheKey = (offset: number, count: number): string => {
+    const revision = ledger.project(streamId).revision;
+    return `${revision}\u0000${offset}\u0000${count}`;
+  };
+
+  const cacheWindow = (key: string, window: StreamLineWindow): void => {
+    if (cacheSize === 0) return;
+    cache.delete(key);
+    cache.set(key, window);
+    while (cache.size > cacheSize) {
+      cache.delete(cache.keys().next().value!);
+    }
+  };
+
+  const loadWindow = async (
     offset: number,
-    count: number
+    count: number,
+    bypassCache: boolean
   ): Promise<StreamLineWindow> => {
     const request = ++generation;
     lastCount = Math.max(0, Math.floor(count));
+    const key = cacheKey(Math.floor(offset), lastCount);
+    const cached = bypassCache ? undefined : cache.get(key);
+    if (cached) {
+      cache.delete(key);
+      cache.set(key, cached);
+      applyWindow(cached);
+      setLoading(false);
+      setVersion(value => value + 1);
+      notify();
+      return cached;
+    }
+
     setLoading(true);
     let committed = false;
     try {
       const window = await ledger.readStableRange(streamId, offset, count);
       if (request !== generation) return window;
 
-      currentLines = window.lines.map((line, index) => ({
-        id: window.offset + index + 1,
-        text: line.text,
-        stable: true,
-      }));
-      currentOffset = window.offset;
-      currentTotal = window.totalLines;
-      currentRevision = window.revision;
+      applyWindow(window);
+      cacheWindow(key, window);
       committed = true;
       return window;
     } finally {
@@ -77,6 +113,11 @@ export function createStreamWindow(
       }
     }
   };
+
+  const load = (
+    offset: number,
+    count: number
+  ): Promise<StreamLineWindow> => loadWindow(offset, count, false);
 
   return {
     get lines() {
@@ -112,7 +153,7 @@ export function createStreamWindow(
     load,
     refresh() {
       if (lastCount === 0) return Promise.resolve(undefined);
-      return load(currentOffset, lastCount);
+      return loadWindow(currentOffset, lastCount, true);
     },
   };
 }

@@ -14,6 +14,7 @@ import { mount } from "@butui/test";
 
 class DelayedSpillStore implements SpillStore {
   private readonly inner = new MemorySpillStore();
+  readManyCalls = 0;
 
   write(record: SpillRecord): void {
     this.inner.write(record);
@@ -27,6 +28,7 @@ class DelayedSpillStore implements SpillStore {
     streamId: string,
     lineIds: readonly LineId[]
   ): Promise<(SpillRecord | undefined)[]> {
+    this.readManyCalls++;
     const delay = lineIds[0] === "line-1" ? 30 : 0;
     if (delay > 0) {
       await new Promise(resolve => setTimeout(resolve, delay));
@@ -134,5 +136,26 @@ describe("createStreamWindow", () => {
       "value-1404",
       "value-1405",
     ]);
+  });
+
+  test("重复窗口命中缓存，refresh 强制绕过缓存", async () => {
+    const store = new DelayedSpillStore();
+    const ledger = await createSpilledLedger(1_500, store);
+    const source = createStreamWindow({
+      ledger,
+      streamId: "stream-1",
+      cacheSize: 2,
+    });
+    store.readManyCalls = 0;
+
+    await source.load(1_400, 5);
+    const afterFirstLoad = store.readManyCalls;
+    expect(afterFirstLoad).toBeGreaterThan(0);
+
+    await source.load(1_400, 5);
+    expect(store.readManyCalls).toBe(afterFirstLoad);
+
+    await source.refresh();
+    expect(store.readManyCalls).toBeGreaterThan(afterFirstLoad);
   });
 });
