@@ -2,10 +2,10 @@
 
 > 交接时间：2026-09-24  
 > 仓库：`/home/qaqtamsy/项目/buTUI`  
-> 功能基线提交：`55e34e7 perf(stream): target 120fps smooth reveal`
+> 功能基线提交：`6902cf2 feat(runtime): handle terminal backpressure`
 > 工作区状态：功能提交后干净，本文件为对应交接刷新
-> 本轮能力：smooth reveal 提升到 120fps，并压内存 / CPU 热路径
-> 当前回归：`607 pass / 0 fail`，63 个测试文件，`tsc --noEmit` 通过
+> 本轮能力：stdout backpressure + bugent v1 接入清单
+> 当前回归：`610 pass / 0 fail`，64 个测试文件，`tsc --noEmit` 通过
 
 ## 1. 项目定位
 
@@ -25,6 +25,7 @@ buTUI 是基于 Bun + TypeScript 的通用 TUI Runtime。参考 OpenTUI 的接�
 - `SPEC.md`：总体设计、实现决策、已知取舍。
 - `STABILITY.md`：稳定 API、兼容规则、明确缺口。
 - `README.md`：快速开始、组件用法、实测说明。
+- `BUGENT_V1.md`：bugent 第一版接入、验收和冻结边界。
 - 本文件：接手工作必须知道的上下文与下一步。
 
 ## 2. 环境与参考源码
@@ -110,7 +111,7 @@ bun --conditions=browser run scripts/smooth-bench.tsx
 | `@butui/web` | 实验性 DOM 渲染，不是当前优先级 |
 | `@butui/test` | headless mount、快照、事件注入 |
 
-源码约 19,300 行，测试约 11,550 行，63 个测试文件。
+源码约 19,500 行，测试约 11,650 行，64 个测试文件。
 
 ## 5. 已完成能力
 
@@ -374,12 +375,12 @@ const bar = createScrollBar({
 ### 5.15 高频渲染合帧
 
 - `RenderScheduler`：microtask 与 frame 两种模式；默认行为不变。
-- `createTuiApp({ render: { mode: "frame", fps: 60 } })`：空闲后首帧走微任务，
+- `createTuiApp({ render: { mode: "frame", fps: 120 } })`：空闲后首帧走微任务，
   帧预算内只标脏，deadline 读取最新树并绘制尾帧。
 - `paint()` 仍立即绘制，不受帧预算限制。
 - `scripts/render-bench.tsx` 用 1ms tick × 2 chunk 模拟 2000 chunk/s：
-  microtask 写入 1000 次 / 89640 字节，frame@60 写入 68 次 / 7439 字节，
-  smooth@120 写入 176 次 / 17921 字节。
+  microtask 写入 1000 次 / 89640 字节，frame@120 写入 143 次 / 14430 字节，
+  smooth@120 写入 176 次 / 17653 字节。
 - 回归：`tests/render-scheduler.test.ts`、`tests/runtime.test.tsx`。
 
 ### 5.16 Smooth Reveal
@@ -398,6 +399,22 @@ const bar = createScrollBar({
 - `StreamSource.onChange()` 是 smooth 的 target 订阅点。
 - 已有 `scripts/smooth-stream-demo.tsx`、`tests/smooth-stream.test.tsx`。
 
+### 5.17 终端 Backpressure
+
+- `TerminalSession.write()` 透传 `stdout.write()` 的 `false`。
+- `Renderer` 在 `RenderStats.blocked` 上报，runtime 暂停自动绘制，只把节点标脏。
+- `TerminalSession.onDrain()` 转发 stdout `drain`；runtime 在 drain 后合并画最新树。
+- 自定义 `TuiTerminal` 不实现 `onDrain` 时忽略 backpressure，兼容旧测试终端。
+- 回归：`tests/terminal-backpressure.test.ts`、`tests/runtime.test.tsx`。
+
+### 5.18 bugent 第一版接入
+
+- 设计尝试收口，第一版实施清单见 `BUGENT_V1.md`。
+- 第一版只使用 runtime / stream smooth / keymap / input / list / modal / diff /
+  session；插件沙箱、WebUI、水平 ScrollBar、Kitty keyboard 发送侧不进入关键路径。
+- 通过 workspace package exports 使用，不复制源码。
+- 新公共 API 进入 v0.2；v0.1 只接受 bugfix / 兼容性补丁。
+
 ## 6. 稳定接口入口
 
 | 入口 | 文件 |
@@ -405,6 +422,7 @@ const bar = createScrollBar({
 | `createTuiApp` / `TuiApp` / 文本选择 | `packages/runtime/src/index.ts` |
 | 高频渲染合帧调度 | `packages/runtime/src/render-scheduler.ts` |
 | Smooth reveal / StreamSource onChange | `packages/stream/src/{smooth,source}.ts` |
+| bugent v1 接入 / 冻结边界 | `BUGENT_V1.md` |
 | `AgentEvent` / `tool.diff` 线协议 | `packages/agent/src/protocol.ts` |
 | Session / `diffFor()` | `packages/agent/src/session.ts` |
 | `DiffStream` / `DiffPatch` | `packages/stream/src/diff.ts` |
@@ -485,21 +503,23 @@ bridge、真实 tool event 对接或 bugent 快捷键迁移。
     显示，不能把历史也重新“流”一遍。
 28. Smooth 默认 120fps；不要在 tick 里无条件重建 tail / 调 sliceAnsi。只缓存
     未 reveal 行的宽度，并在 reveal 后删除；否则 CPU 和内存都会按历史行数涨。
+29. `stdout.write() === false` 是背压，不是错误。runtime 必须暂停下一帧，等
+    `drain` 后画最新树；继续写会让 Node 写缓冲增长，慢终端下表现为内存上涨。
 
 ### 包边界
 
-29. `@butui/agent` 不能静态依赖 `@butui/image`，browser 打包会碰 Bun builtin。
-30. `bun test` 的 preload 要写在 `[test].preload`，顶层 `preload` 只影响
+30. `@butui/agent` 不能静态依赖 `@butui/image`，browser 打包会碰 Bun builtin。
+31. `bun test` 的 preload 要写在 `[test].preload`，顶层 `preload` 只影响
     `bun run`。
-31. `@butui/web` 是实验层；当前 WebUI 尚未消费 `tool.diff`。
+32. `@butui/web` 是实验层；当前 WebUI 尚未消费 `tool.diff`。
 
 ## 9. 测试与验收
 
 当前：
 
 ```text
-607 pass / 0 fail
-63 test files
+610 pass / 0 fail
+64 test files
 tsc --noEmit pass
 ```
 
@@ -525,6 +545,7 @@ tsc --noEmit pass
 - `tests/inertia.test.ts`
 - `tests/slider.test.tsx`
 - `tests/splitpane.test.tsx`
+- `tests/terminal-backpressure.test.ts`
 - `tests/solid-cleanup-contract.test.tsx`
 
 提交前至少跑：
