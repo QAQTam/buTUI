@@ -32,6 +32,8 @@ export * from "./toast.ts";
 export * from "./toast.tsx";
 export * from "./tooltip.ts";
 export * from "./tooltip.tsx";
+export * from "./popover.ts";
+export * from "./popover.tsx";
 export * from "./portal.tsx";
 export * from "./dynamic.tsx";
 export * from "./capability-approval.tsx";

@@ -36,7 +36,7 @@ const app = createTuiApp({
 | 布局 | `@butui/layout` | **稳定**（`Cell` / `Line` / `Frame` / `layout`） |
 | 渲染 | `@butui/renderer` | **稳定**（`Renderer` / `plainText` / `paintLine`） |
 | 终端 | `@butui/terminal` | **稳定**（`TerminalSession` / 输入解码 / 能力探测 / `osc22` / `osc52`） |
-| 基础组件 | `@butui/components` | **稳定**（编辑器 / 选择 / 列表 / 滚动 / ScrollBar / Slider / SplitPane / CommandPalette / Toast / Tooltip / Portal / Dynamic / MultiSelect / Diff / 弹窗 / 展示组件） |
+| 基础组件 | `@butui/components` | **稳定**（编辑器 / 选择 / 列表 / 滚动 / ScrollBar / Slider / SplitPane / CommandPalette / Toast / Tooltip / Popover / Portal / Dynamic / MultiSelect / Diff / 弹窗 / 展示组件） |
 | 插件 / Slot | `@butui/plugins` | **稳定**（`Plugin` / `SlotRegistry`；Solid 适配在 `@butui/plugins/solid`；loader 在 `@butui/plugins/loader`） |
 | 命令 / Keymap | `@butui/keymap` | **稳定**（`CommandRegistry` / `Keymap`；Solid 适配在 `@butui/keymap/solid`） |
 | 流式文本 | `@butui/stream` | **稳定**（`StreamSource` / `DiffStream` / `<stream>`） |
@@ -771,6 +771,25 @@ const tip = createTooltipController({ delayMs: 400 });
 - Space / Enter / 点击切换；Ctrl+A 全选；Ctrl+Shift+A 清空。
 - heading / disabled 不参与选择或导航。
 - 内部复用 `<List>` / `createSelection()` 的滚动和键盘语义。
+
+### 4.31 Popover：`createPopoverController` / `<Popover>`
+
+```tsx
+const popover = createPopoverController();
+
+<box onClick={event => popover.toggle({ x: event.x, y: event.y })}>
+  <text>打开</text>
+</box>
+
+<Popover controller={popover} width={30} height={8}>
+  <Button onPress={run}>执行</Button>
+</Popover>
+```
+
+- controller 与 layer 分离，目标节点负责 show / toggle / hide。
+- 四向定位并夹取到终端视口；固定 width / height。
+- 内容可交互；Esc 关闭并触发 `onDismiss`。
+- 不劫持全局点击，不自动实现 click-outside。
 
 ## 5. 已知缺口（不要依赖，也不建议自己绕）
 

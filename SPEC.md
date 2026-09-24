@@ -1246,6 +1246,27 @@ const [values, setValues] = createSignal<readonly string[]>([]);
 
 ---
 
+### 5.33 Popover（v0.1 实现）
+
+```tsx
+const popover = createPopoverController();
+
+<box onClick={event => popover.toggle({ x: event.x, y: event.y })}>
+  <text>打开</text>
+</box>
+
+<Popover controller={popover} width={30} height={8}>
+  <Button onPress={run}>执行</Button>
+</Popover>
+```
+
+- controller 管 show / toggle / hide、锚点与 onChange。
+- `<Popover>` 使用根 `<layer>`，四向定位并夹取到视口。
+- 内容可放 Button / Input 等交互组件；Esc 关闭并触发 onDismiss。
+- Popover 不提供点击外部自动关闭，避免全局事件劫持。
+
+---
+
 ### 5.17 应用上下文（v0.1 实现）
 
 组件要能问「现在多宽 / 什么色深 / 我想订一个全局键」，但既不该认识 runtime，
@@ -1758,6 +1779,7 @@ P1：
 - `Portal`：`<Portal mount>` 显式挂载 children，默认 app root（见 §5.30）
 - `Dynamic`：`createDynamic` / `<Dynamic>` 函数组件与 intrinsic tag 切换（见 §5.31）
 - `MultiSelect`：`createMultiSelect` / `<MultiSelect>` 受控多选与全选 / 反选（见 §5.32）
+- `Popover`：`createPopoverController` / `<Popover>` 交互式 overlay（见 §5.33）
 - `Select` / `Tabs`：`<Select>`（↑↓ + Enter）与 `<Tabs>`（←→ 立即切换）
 - `Table`：列宽显式给或按内容算，支持左 / 中 / 右对齐
 - `Tree`：受控展开（`expanded` + `onToggle`），←→ 展开收起、→ 进子节点
