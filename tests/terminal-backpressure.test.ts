@@ -198,6 +198,37 @@ describe("TerminalSession backpressure", () => {
     session.stop();
   });
 
+  test("raw lease 清理跨模式 InputDecoder 残留", async () => {
+    const { stdin, stdout } = streams(true);
+    const session = new TerminalSession({
+      stdin,
+      stdout,
+      altScreen: false,
+      mouse: false,
+      bracketedPaste: false,
+      focusEvents: false,
+    });
+    const events: unknown[] = [];
+    session.onEvent(event => events.push(event));
+    session.start();
+
+    (stdin as unknown as EventEmitter).emit("data", Buffer.from("\x1b["));
+    await session.withRawLease("child", "pty", async context => {
+      const off = context.onInput(() => {});
+      (stdin as unknown as EventEmitter).emit("data", Buffer.from("raw"));
+      off();
+    });
+    (stdin as unknown as EventEmitter).emit("data", Buffer.from("A"));
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: "key",
+      name: "A",
+      text: "A",
+    });
+    session.stop();
+  });
+
   test.skipIf(process.platform === "win32")(
     "runPtyWithRawLease 运行子进程并恢复 frame lease",
     async () => {

@@ -99,6 +99,14 @@ export class InputDecoder {
     return this.drain();
   }
 
+  /** 丢弃未完成序列；raw lease / terminal resume 后使用。 */
+  reset(): void {
+    this.decoder = new TextDecoder("utf-8", { fatal: false });
+    this.buffer = "";
+    this.pasting = false;
+    this.pasteBuffer = "";
+  }
+
   /** 把 buffer 里剩下的东西当普通输入处理（用于超时后 flush 单独的 ESC） */
   flush(): ButuiEvent[] {
     if (this.buffer === "\x1b") {

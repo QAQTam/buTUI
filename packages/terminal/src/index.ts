@@ -251,6 +251,7 @@ export class TerminalSession {
   /** 暂停 frame lease，把终端交给 raw / 子进程。 */
   async suspend(reason = "suspend"): Promise<void> {
     if (!this.lease) return;
+    this.resetInputDecoder();
     await this.arbiter.suspend(this.lease, reason);
   }
 
@@ -258,6 +259,7 @@ export class TerminalSession {
   async resume(): Promise<void> {
     if (!this.lease) return;
     await this.arbiter.resume(this.lease);
+    this.resetInputDecoder();
   }
 
   requiresFullDamage(): boolean {
@@ -274,6 +276,7 @@ export class TerminalSession {
     run: (context: RawLeaseContext) => Promise<T> | T
   ): Promise<T> {
     const shouldResume = this.lease !== undefined;
+    this.resetInputDecoder();
     await this.suspend(reason);
     let raw: TerminalLease | undefined;
     const rawInputs = new Set<(chunk: Uint8Array) => void>();
@@ -307,6 +310,7 @@ export class TerminalSession {
       for (const listener of rawInputs) this.rawInputListeners.delete(listener);
       if (raw) await this.arbiter.release(raw);
       if (shouldResume) await this.resume();
+      this.resetInputDecoder();
     }
   }
 
@@ -483,6 +487,14 @@ export class TerminalSession {
     }, this.options.escapeTimeout);
     // 不要因为一个 25ms 定时器把进程钉住
     (this.escapeTimer as unknown as { unref?: () => void }).unref?.();
+  }
+
+  private resetInputDecoder(): void {
+    this.decoder.reset();
+    if (this.escapeTimer) {
+      clearTimeout(this.escapeTimer);
+      this.escapeTimer = undefined;
+    }
   }
 
   private setRawMode(enabled: boolean): void {
