@@ -1,5 +1,6 @@
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import type { PluginCapability } from "./types.ts";
 
 /**
  * 单条插件配置。
@@ -13,6 +14,8 @@ export interface PluginConfigEntry {
   order?: number;
   enabled?: boolean;
   options?: unknown;
+  /** 本条目的能力白名单；缺省时使用 loader 的 `allowedCapabilities`。 */
+  capabilities?: readonly PluginCapability[];
 }
 
 export interface ButuiPluginConfig {
@@ -101,6 +104,7 @@ function normalizeEntry(
   if (value.enabled !== undefined && typeof value.enabled !== "boolean") {
     throw new Error(`Plugin entry #${index}: "enabled" must be boolean`);
   }
+  const capabilities = normalizeCapabilities(value.capabilities, index);
 
   return {
     module,
@@ -108,7 +112,21 @@ function normalizeEntry(
     ...(value.order !== undefined ? { order: value.order as number } : {}),
     ...(value.enabled !== undefined ? { enabled: value.enabled as boolean } : {}),
     ...("options" in value ? { options: value.options } : {}),
+    ...(capabilities ? { capabilities } : {}),
   };
+}
+
+function normalizeCapabilities(
+  value: unknown,
+  index: number
+): PluginCapability[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.some(item => typeof item !== "string" || !item)) {
+    throw new Error(
+      `Plugin entry #${index}: "capabilities" must be an array of non-empty strings`
+    );
+  }
+  return [...new Set(value as string[])];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

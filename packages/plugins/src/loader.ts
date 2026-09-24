@@ -13,6 +13,7 @@ import {
 import type { SlotRegistry } from "./registry.ts";
 import type {
   Plugin,
+  PluginCapability,
   PluginContext,
   PluginErrorEvent,
 } from "./types.ts";
@@ -64,6 +65,17 @@ export interface LoadPluginsOptions<
   entries: PluginConfigInput;
   /** 相对模块解析基准，默认 `process.cwd()`。 */
   cwd?: string;
+  /**
+   * 能力白名单。默认 `"all"`，保持向后兼容；设置为数组后，manifest 声明的
+   * 能力必须在白名单内，否则插件在 import 前被拒绝。
+   */
+  allowedCapabilities?: readonly PluginCapability[] | "all";
+  /**
+   * 严格模式：要求每个插件都有 manifest。默认 false。
+   *
+   * 注意能力声明是同意门，不是沙箱；插件仍在应用进程内执行。
+   */
+  requireCapabilities?: boolean;
   /** 测试 / 自定义 bundler 注入点；默认用原生 `import()`。 */
   importer?: (url: string) => Promise<unknown>;
 }
@@ -104,6 +116,7 @@ export async function loadPlugins<
     const label = entry.id ?? entry.module;
     try {
       const resolved = await resolvePluginEntry(entry, cwd);
+      assertCapabilities(entry, resolved.manifest, options, label);
       const module = await importer(pathToFileURL(resolved.path).href);
       const candidate = extractPluginExport(module);
       if (candidate === undefined) {
@@ -173,6 +186,31 @@ export async function loadPlugins<
   };
 }
 
+function assertCapabilities<TNode, TSlots extends object, TContext extends PluginContext>(
+  entry: PluginConfigEntry,
+  manifest: PluginManifest | undefined,
+  options: LoadPluginsOptions<TNode, TSlots, TContext>,
+  label: string
+): void {
+  if (options.requireCapabilities && !manifest) {
+    throw new Error(
+      `Plugin "${label}" does not declare a manifest with capabilities`
+    );
+  }
+
+  const required = manifest?.capabilities ?? [];
+  if (required.length === 0) return;
+  const granted = entry.capabilities ?? options.allowedCapabilities ?? "all";
+  if (granted === "all") return;
+
+  const missing = required.filter(capability => !granted.includes(capability));
+  if (missing.length > 0) {
+    throw new Error(
+      `Plugin "${label}" requires capabilities not granted: ${missing.join(", ")}`
+    );
+  }
+}
+
 async function resolvePluginEntry(
   entry: PluginConfigEntry,
   cwd: string
@@ -219,4 +257,5 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export * from "./config.ts";
+export * from "./discovery.ts";
 export * from "./manifest.ts";

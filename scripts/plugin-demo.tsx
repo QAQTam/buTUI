@@ -19,6 +19,7 @@ const loaded = await loadPlugins<unknown, Slots, typeof context>({
   context,
   entries: config,
   cwd: path.dirname(configPath),
+  allowedCapabilities: ["slots"],
 });
 
 const Header = createSlot(registry);

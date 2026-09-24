@@ -1,4 +1,5 @@
 import path from "node:path";
+import type { PluginCapability } from "./types.ts";
 
 /**
  * 插件包 manifest。
@@ -17,6 +18,13 @@ export interface PluginManifest {
   id?: string;
   /** 默认排序值。 */
   order?: number;
+  /**
+   * 声明插件需要的能力。
+   *
+   * 这是加载前同意门：loader 会在 import 前检查，拒绝时插件代码不会执行。
+   * 但声明本身不是运行时沙箱。
+   */
+  capabilities?: readonly PluginCapability[];
 }
 
 export interface PluginManifestFile {
@@ -97,12 +105,27 @@ function validateManifest(value: unknown, source: string): PluginManifest {
       `Invalid buTUI plugin manifest at ${source}: "order" must be a finite number`
     );
   }
+  const capabilities = validateCapabilities(value.capabilities, source);
 
   return {
     entry,
     ...(value.id !== undefined ? { id: value.id as string } : {}),
     ...(value.order !== undefined ? { order: value.order as number } : {}),
+    ...(capabilities ? { capabilities } : {}),
   };
+}
+
+function validateCapabilities(
+  value: unknown,
+  source: string
+): PluginCapability[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.some(item => typeof item !== "string" || !item)) {
+    throw new Error(
+      `Invalid buTUI plugin manifest at ${source}: "capabilities" must be an array of non-empty strings`
+    );
+  }
+  return [...new Set(value as string[])];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

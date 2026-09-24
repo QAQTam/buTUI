@@ -9,6 +9,28 @@
 
 export type PluginContext = object;
 
+/**
+ * 插件能力名。
+ *
+ * 这是**加载同意门**，不是沙箱：loader 会在动态 import 前检查 manifest 声明的
+ * 能力，但没有能力在运行时阻断插件调用任意 Bun API。只应加载受信任代码。
+ */
+export type PluginCapability =
+  | "slots"
+  | "fs:read"
+  | "fs:write"
+  | "network"
+  | "process"
+  | (string & {});
+
+export const PLUGIN_CAPABILITIES = {
+  slots: "slots",
+  fsRead: "fs:read",
+  fsWrite: "fs:write",
+  network: "network",
+  process: "process",
+} as const satisfies Record<string, PluginCapability>;
+
 /** 多个插件贡献同一个 Slot 时的合成方式。 */
 export type SlotMode = "append" | "replace" | "single_winner";
 

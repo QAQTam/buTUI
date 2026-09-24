@@ -1,0 +1,6 @@
+{
+  "entry": "./index.tsx",
+  "id": "demo.header",
+  "order": 0,
+  "capabilities": ["slots"]
+}

@@ -471,13 +471,19 @@ registry.register({
 - `createSlotRegistry(host, key, context)` 要求同一 key 使用同一个 context
   对象；违反时直接抛错。
 - `@butui/plugins/loader` 提供 `readPluginManifest` / `findPluginManifest` /
-  `readPluginConfig` / `normalizePluginEntries` / `loadPlugins`。
+  `readPluginConfig` / `normalizePluginEntries` / `discoverPlugins` /
+  `loadPlugins`。
 - manifest 支持 `butui.plugin.json` 或 `package.json#butui`；配置支持 JSON / TS。
+- `discoverPlugins()` 默认只扫描直接依赖，`extraDirs` 加本地目录，
+  `includeAllInstalled` 才扫描全部 node_modules。
+- manifest 的 `capabilities` 是加载同意门：不满足 `allowedCapabilities` 时
+  在动态 import 前拒绝；`requireCapabilities: true` 要求必须有 manifest。
+  **它不是沙箱**，插件仍在应用进程内执行。
 - `loadPlugins()` 的模块导出支持默认导出、命名 `plugin` 和工厂函数；工厂收到
   `{ id, module, path, cwd, options, context, manifest? }`。
 - loader 单条失败记 `phase:"load"` 并继续；返回的 `dispose()` 只卸载本次成功
   加载的插件。
-- 当前没有 node_modules 自动扫描、权限或跨进程隔离，应用必须提供配置 / 条目。
+- 当前没有运行时沙箱、权限审批或跨进程隔离；应用必须提供配置 / 条目。
 
 ## 5. 已知缺口（不要依赖，也不建议自己绕）
 
@@ -503,8 +509,8 @@ registry.register({
 - **没有布局调试工具**（类似 flexbox inspector）。
 - **焦点不会自动清理**：被移除的节点如果还是焦点，`focusedId()` 会保留它的
   id（下一次 tab 会自动跳到活着的节点）。组件里用 `isFocused` 不受影响。
-- **插件只有配置加载，没有自动发现**：没有 node_modules 扫描、权限或跨进程
-  隔离；应用必须提供配置 / 条目，插件在应用进程内执行。
+- **插件 capability 不是沙箱**：它只在动态 import 前做同意门控，没有运行时
+  权限拦截、审批 UI 或跨进程隔离；插件在应用进程内执行，只应加载可信代码。
 - **`@butui/web` 是实验层**：接口可能变。
 
 ## 6. 版本

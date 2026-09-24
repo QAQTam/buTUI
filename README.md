@@ -7,7 +7,7 @@
 分支式 Undo + WebUI remote attach + 图片子系统（Kitty / iTerm2 / Sixel /
 半块 / 占位符）+ Artifact Canvas + 列表 / 虚拟列表 / 滚动视口 / 弹窗 / 表格 /
 树 + 鼠标选区 / OSC 52 + 流式 Diff / 共享动画时钟 / 精确 ScrollBar +
-通用插件 / Slot 已跑通**，`bun test` 523 个用例全绿。
+通用插件 / Slot 已跑通**，`bun test` 526 个用例全绿。
 
 ```
 应用（你的 agent / 工具 / TUI）
@@ -289,6 +289,27 @@ loaded.dispose();
 或写在 `package.json` 的 `"butui"` 字段。模块可以默认导出插件对象、命名导出
 `plugin`，或导出一个接收 `{ id, options, context, manifest }` 的工厂函数。
 
+自动发现项目直接依赖中的插件：
+
+```ts
+import { discoverPlugins, loadPlugins } from "@butui/plugins/loader";
+
+const discovered = await discoverPlugins({ cwd: process.cwd() });
+await loadPlugins({
+  registry,
+  host,
+  context,
+  entries: discovered.entries,
+  allowedCapabilities: ["slots", "fs:read"],
+});
+```
+
+manifest 可以声明能力：`"capabilities": ["slots", "fs:read"]`。loader 会在
+动态 `import()` 之前检查能力白名单；不满足时插件代码不会执行。严格模式可用
+`requireCapabilities: true` 拒绝没有 manifest 的插件。
+
+**能力声明是加载同意门，不是沙箱。** 插件仍在本进程内运行，只应加载可信代码。
+
 保证：
 
 - 插件按 `order` → 注册顺序 → `id` 稳定排序，`updateOrder()` 可动态调整。
@@ -301,6 +322,8 @@ loaded.dispose();
   必须复用同一个 context 对象。
 - `@butui/plugins/loader` 支持 JSON / TS 配置、包 manifest、动态 `import()`、
   工厂插件和统一 `dispose()`；坏模块只记 `load` 错误，不会中断后续插件。
+- `discoverPlugins()` 默认只扫描项目直接依赖，`extraDirs` 可加本地插件，
+  `includeAllInstalled` 才扫描全部 node_modules。
 
 `bun --conditions=browser run scripts/plugin-demo.tsx` 可运行最小示例。
 
@@ -666,7 +689,7 @@ Demo 的工作区是**内存实现**，但走的是完全一样的 journal / dif
 | `@butui/solid` | `@solidjs/universal` host ops、JSX 类型、Bun 编译插件、共享动画帧时钟 |
 | `@butui/runtime` | `createTuiApp`：终端、合帧重绘、事件分发、鼠标选区 / OSC 52 —— 应用作者的唯一入口 |
 | `@butui/components` | `createTextEditor` / `<Input>` / `<Textarea>` / `<Markdown>` / `<Code>` / `<Diff>` / `<ScrollBar>`、`createSelection` / `<List>` / `<VirtualList>`、`createScrollView`、`<Select>` / `<Tabs>` / `<Table>` / `<Tree>`、`<Button>` / `<Dialog>` / `<Modal>`、`ProgressBar` / `Spinner` / `Badge` / `Divider` / `KeyHint` |
-| `@butui/plugins` | 通用 `SlotRegistry` / `Plugin` / 错误隔离；`@butui/plugins/solid` 提供 `createSlot` / `<Slot>`；`@butui/plugins/loader` 提供 manifest / 配置 / 动态加载 |
+| `@butui/plugins` | 通用 `SlotRegistry` / `Plugin` / 错误隔离；`@butui/plugins/solid` 提供 `createSlot` / `<Slot>`；`@butui/plugins/loader` 提供 manifest / 配置 / 动态加载 / 自动发现 / capability 门控 |
 | `@butui/agent` | 事件协议（NDJSON）、Session reducer、流式 diff 事件、SPEC §10.2 组件、Artifact Canvas |
 | `@butui/undo` | 工作区变更日志、行级 patch、undo 预览与执行（SPEC §8） |
 | `@butui/web` | WebUI：ANSI→HTML、DOM 组件、`mountWebUI`（复用同一个 Session） |
@@ -838,8 +861,8 @@ Bun.plugin(onLoad)
 
 ## 还没做
 
-- 插件系统已有 manifest / 配置 / 动态加载；还缺 node_modules 自动发现、
-  权限与跨进程隔离
+- 插件已有 manifest / 配置 / 直接依赖自动发现 / 加载前 capability 门控；
+  还缺运行时沙箱、权限审批 UI 与跨进程隔离
 - `@butui/components` 继续长：Slider / ASCIIFont / LineNumberRenderable、
   水平 ScrollBar 等；CommandPalette 用 `<Input onKey={e => sel.handleKey(e)}>`
   + `<List>` 组合就够，不必再包一层

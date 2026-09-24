@@ -846,9 +846,36 @@ export default {
 SlotRegistry，并返回只卸载本次加载项的 `dispose()`。任何单条模块的解析、
 import、工厂或注册错误都记为 `phase:"load"`，后续插件继续加载。
 
+自动发现：
+
+```ts
+const discovered = await discoverPlugins({ cwd });
+const loaded = await loadPlugins({ registry, host, context, entries: discovered.entries });
+```
+
+- 默认只扫描项目 `dependencies` / `optionalDependencies` 中带 manifest 的包；
+- `extraDirs` 可加入本地插件包；
+- `includeAllInstalled: true` 才扫描全部 node_modules；
+- scoped package 与排序（manifest order → id/module）都支持。
+
+能力声明：
+
+```json
+{
+  "entry": "./src/index.ts",
+  "capabilities": ["slots", "fs:read"]
+}
+```
+
+loader 在动态 `import()` 前检查 `allowedCapabilities` / 单条 config 的
+`capabilities` 白名单；不满足时拒绝加载，插件代码不会执行。
+`requireCapabilities: true` 可进一步要求每个插件必须有 manifest。
+
+**能力声明是加载同意门，不是沙箱。** 插件仍在应用进程内执行，不能据此加载
+不可信代码；运行时权限审批与跨进程隔离不在 v0.1。
+
 **与 OpenTUI 的边界：** 不实现 `createRuntimePlugin` 那类 native module
-rewrite —— buTUI 默认零 native core，不需要替换 Zig ABI 模块。当前也不做
-node_modules 自动扫描、权限或跨进程隔离；应用必须提供配置或条目列表。
+rewrite —— buTUI 默认零 native core，不需要替换 Zig ABI 模块。
 
 ---
 
@@ -1748,6 +1775,10 @@ type UiCommand =
 - 注册表支持 batch、响应式订阅、错误缓存和错误监听。
 - loader 支持 JSON / TS 配置、包 manifest、相对路径 / 包名、工厂插件和
   统一 dispose。
+- `discoverPlugins()` 默认扫描直接依赖；`extraDirs` / `includeAllInstalled`
+  控制额外目录和全量 node_modules。
+- manifest 可声明 capabilities；loader 在 import 前做白名单门控，严格模式
+  可要求 manifest。声明不是运行时沙箱。
 - 插件之间必须有错误隔离；单个插件抛错不能让整屏失效。
 - 插件 API 不硬编码任何工具名；工具卡片、状态栏、帮助面板都只是 Slot 的
   普通消费者。
@@ -1755,7 +1786,7 @@ type UiCommand =
 当前不做的：
 
 - native runtime module rewrite；
-- node_modules 自动扫描、权限或动态安装；
+- 运行时沙箱、权限审批 UI；
 - 跨进程插件隔离。
 
 不能把：

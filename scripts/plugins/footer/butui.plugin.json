@@ -1,0 +1,6 @@
+{
+  "entry": "./index.tsx",
+  "id": "demo.footer",
+  "order": 10,
+  "capabilities": ["slots"]
+}

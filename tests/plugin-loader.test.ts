@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { SlotRegistry } from "@butui/plugins";
 import {
+  discoverPlugins,
   findPluginManifest,
   loadPlugins,
   normalizePluginEntries,
@@ -84,14 +85,24 @@ describe("plugin config", () => {
         JSON.stringify({
           plugins: [
             "./plain.ts",
-            { module: "./factory.ts", id: "factory:one", order: -10 },
+            {
+              module: "./factory.ts",
+              id: "factory:one",
+              order: -10,
+              capabilities: ["fs:read"],
+            },
           ],
         })
       );
       const json = await readPluginConfig(jsonPath);
       expect(normalizePluginEntries(json)).toEqual([
         { module: "./plain.ts" },
-        { module: "./factory.ts", id: "factory:one", order: -10 },
+        {
+          module: "./factory.ts",
+          id: "factory:one",
+          order: -10,
+          capabilities: ["fs:read"],
+        },
       ]);
 
       const tsPath = path.join(dir, "butui.config.ts");
@@ -225,6 +236,164 @@ describe("loadPlugins", () => {
       expect(loaded.errors[0]?.phase).toBe("load");
       expect(registry.resolveEntries("header")).toHaveLength(1);
       loaded.dispose();
+    });
+  });
+});
+
+describe("discoverPlugins", () => {
+  test("默认只发现直接依赖，支持 scoped、全量扫描和 extraDirs", async () => {
+    await withTempDir(async dir => {
+      await writeFile(
+        path.join(dir, "package.json"),
+        JSON.stringify({
+          name: "app",
+          dependencies: { "butui-direct": "1.0.0" },
+        })
+      );
+      await mkdir(path.join(dir, "node_modules", "butui-direct"), {
+        recursive: true,
+      });
+      await writeFile(
+        path.join(dir, "node_modules", "butui-direct", "package.json"),
+        JSON.stringify({
+          name: "butui-direct",
+          butui: { entry: "./index.ts", id: "direct", order: 5 },
+        })
+      );
+
+      await mkdir(path.join(dir, "node_modules", "butui-transitive"), {
+        recursive: true,
+      });
+      await writeFile(
+        path.join(dir, "node_modules", "butui-transitive", "package.json"),
+        JSON.stringify({
+          name: "butui-transitive",
+          butui: { entry: "./index.ts", id: "transitive" },
+        })
+      );
+
+      await mkdir(path.join(dir, "node_modules", "@scope", "butui-scoped"), {
+        recursive: true,
+      });
+      await writeFile(
+        path.join(
+          dir,
+          "node_modules",
+          "@scope",
+          "butui-scoped",
+          "package.json"
+        ),
+        JSON.stringify({
+          name: "@scope/butui-scoped",
+          butui: { entry: "./index.ts", id: "scoped", order: -1 },
+        })
+      );
+
+      const direct = await discoverPlugins({ cwd: dir });
+      expect(direct.plugins.map(plugin => plugin.manifest.id)).toEqual([
+        "direct",
+      ]);
+
+      const all = await discoverPlugins({ cwd: dir, includeAllInstalled: true });
+      expect(all.plugins.map(plugin => plugin.manifest.id)).toEqual([
+        "scoped",
+        "transitive",
+        "direct",
+      ]);
+      expect(all.entries.find(entry => entry.id === "scoped")?.module).toBe(
+        "@scope/butui-scoped"
+      );
+
+      const extraDir = path.join(dir, "local-plugin");
+      await mkdir(extraDir, { recursive: true });
+      await writeFile(
+        path.join(extraDir, "butui.plugin.json"),
+        JSON.stringify({ entry: "./plugin.ts", id: "extra" })
+      );
+      const extra = await discoverPlugins({
+        cwd: dir,
+        extraDirs: ["local-plugin"],
+      });
+      expect(extra.entries).toContainEqual({
+        module: path.join(extraDir, "plugin.ts"),
+        id: "extra",
+      });
+      expect(extra.entries).toHaveLength(2);
+    });
+  });
+});
+
+describe("plugin capabilities", () => {
+  test("能力不足时在 import 前拒绝，授权后才执行模块", async () => {
+    await withTempDir(async dir => {
+      const marker = `__butui_plugin_loaded_${Date.now()}`;
+      await writeFile(
+        path.join(dir, "plugin.ts"),
+        `globalThis.${marker} = true;
+         export default { id: "cap", slots: { header: () => ({ kind: "ok" }) } };`
+      );
+      await writeFile(
+        path.join(dir, "butui.plugin.json"),
+        JSON.stringify({
+          entry: "./plugin.ts",
+          id: "cap",
+          capabilities: ["fs:read", "network"],
+        })
+      );
+
+      const host = {};
+      const registry = new SlotRegistry<Node, Slots>(host, {});
+      const denied = await loadPlugins<Node, Slots>({
+        registry,
+        host,
+        context: {},
+        cwd: dir,
+        entries: ["./plugin.ts"],
+        allowedCapabilities: ["fs:read"],
+      });
+
+      expect(denied.ids).toEqual([]);
+      expect(denied.errors[0]?.error.message).toContain(
+        "requires capabilities not granted: network"
+      );
+      expect((globalThis as Record<string, unknown>)[marker]).toBeUndefined();
+
+      const allowed = await loadPlugins<Node, Slots>({
+        registry,
+        host,
+        context: {},
+        cwd: dir,
+        entries: ["./plugin.ts"],
+        allowedCapabilities: ["fs:read", "network"],
+      });
+      expect(allowed.ids).toEqual(["cap"]);
+      expect((globalThis as Record<string, unknown>)[marker]).toBe(true);
+      allowed.dispose();
+      delete (globalThis as Record<string, unknown>)[marker];
+    });
+  });
+
+  test("requireCapabilities 可拒绝没有 manifest 的插件", async () => {
+    await withTempDir(async dir => {
+      await writeFile(
+        path.join(dir, "plugin.ts"),
+        `export default { id: "loose", slots: {} };`
+      );
+      const host = {};
+      const registry = new SlotRegistry<Node, Slots>(host, {});
+      const loaded = await loadPlugins<Node, Slots>({
+        registry,
+        host,
+        context: {},
+        cwd: dir,
+        entries: ["./plugin.ts"],
+        requireCapabilities: true,
+      });
+
+      expect(loaded.ids).toEqual([]);
+      expect(loaded.errors[0]?.error.message).toContain(
+        "does not declare a manifest"
+      );
     });
   });
 });
