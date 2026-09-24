@@ -2,10 +2,10 @@
 
 > 交接时间：2026-09-24  
 > 仓库：`/home/qaqtamsy/项目/buTUI`  
-> 功能基线提交：`1ff0bc1 feat(keymap): 多键 chord 与前缀超时`
+> 功能基线提交：`5e5b2cd feat(components): Command Palette`
 > 工作区状态：功能提交后干净，本文件为对应交接刷新
-> 本轮能力：多键 chord + 前缀超时 + 短绑定/长前缀共存
-> 当前回归：`589 pass / 0 fail`，60 个测试文件，`tsc --noEmit` 通过
+> 本轮能力：Command Palette 过滤 / 导航 / 执行 + Keymap chord 接入
+> 当前回归：`593 pass / 0 fail`，61 个测试文件，`tsc --noEmit` 通过
 
 ## 1. 项目定位
 
@@ -16,7 +16,7 @@ buTUI 是基于 Bun + TypeScript 的通用 TUI Runtime。参考 OpenTUI 的接�
 - SolidJS 2 RC 的细粒度响应式 host renderer；
 - 流式文本 / Markdown / Diff 的 O(1) 或 O(视口) 增量路径；
 - 鼠标、OSC 22 指针、拖动惯性、tween / spring / timeline / Shimmer、滚动、
-  Slider、SplitPane、插件 / Slot、多键 Keymap 等通用交互能力；
+  Slider、SplitPane、插件 / Slot、多键 Keymap、Command Palette 等通用交互能力；
 - agent 事件协议、Session、undo、artifact、图片等可组合上层。
 
 设计文档：
@@ -60,6 +60,7 @@ bun --conditions=browser run scripts/diff-demo.tsx
 bun --conditions=browser run scripts/scrollbar-demo.tsx
 bun --conditions=browser run scripts/plugin-demo.tsx
 bun --conditions=browser run scripts/keymap-demo.tsx
+bun --conditions=browser run scripts/command-palette-demo.tsx
 bun --conditions=browser run scripts/mouse-demo.tsx
 bun --conditions=browser run scripts/split-pane-demo.tsx
 bun --conditions=browser run scripts/shimmer-demo.tsx
@@ -105,7 +106,7 @@ bun --conditions=browser run scripts/stream-bench.tsx
 | `@butui/web` | 实验性 DOM 渲染，不是当前优先级 |
 | `@butui/test` | headless mount、快照、事件注入 |
 
-源码约 18,300 行，测试约 11,100 行，60 个测试文件。
+源码约 18,500 行，测试约 11,200 行，61 个测试文件。
 
 ## 5. 已完成能力
 
@@ -352,6 +353,17 @@ const bar = createScrollBar({
 - `ReasoningLine` 只在 streaming 时对前缀做 shimmer；稳定后冻结。
 - 已有 `scripts/shimmer-demo.tsx`、`tests/shimmer.test.tsx`。
 
+### 5.14 Command Palette
+
+- `commandScore()` / `filterCommands()`：title / id / description 的 exact、
+  prefix、substring、subsequence 评分。
+- `<CommandPalette>`：直接消费 `CommandRegistry`，不复制命令表。
+- 输入自动聚焦；↑↓ / PageUp/PageDown / Home/End / Ctrl+P/N 选择，Enter 执行，
+  Esc 关闭，鼠标点击结果执行。
+- `when() === false` 默认隐藏；执行错误继续由 `CommandRegistry.onError` 隔离。
+- 可传 `shortcut()` 显示快捷键，可传 `limit` / `showAll` / `empty` 定制结果。
+- 已有 `scripts/command-palette-demo.tsx`、`tests/command-palette.test.tsx`。
+
 ## 6. 稳定接口入口
 
 | 入口 | 文件 |
@@ -375,6 +387,7 @@ const bar = createScrollBar({
 | Solid `useMouseCapture` | `packages/solid/src/app-context.ts` |
 | 动画 / tween / spring / timeline / 拖动惯性 | `packages/solid/src/{animation,easing,tween,spring,timeline,inertia}.ts` |
 | Shimmer 模型 / 组件 | `packages/components/src/{shimmer.ts,shimmer.tsx}` |
+| Command Palette 过滤 / 组件 | `packages/components/src/{command-palette.ts,command-palette.tsx}` |
 | 布局 / Frame / selectionText | `packages/layout/src/index.ts` |
 | 渲染器 | `packages/renderer/src/index.ts` |
 | 终端输入 / OSC 52 | `packages/terminal/src/{input,index}.ts` |
@@ -427,21 +440,23 @@ bridge、真实 tool event 对接或 bugent 快捷键迁移。
     状态。不要把 shimmer 铺到完整 Markdown / Diff，稳定后必须停止订阅。
 24. Keymap chord 的前缀会消费按键；短绑定与长前缀共存时必须等待 timeout /
     flushPending。scope 变化要丢弃 pending，dispose 要清理 timer。
+25. Command Palette 不维护第二份命令表；结果必须从 CommandRegistry 读取，
+    执行走 registry.execute()，when / 错误隔离不能绕过。
 
 ### 包边界
 
-25. `@butui/agent` 不能静态依赖 `@butui/image`，browser 打包会碰 Bun builtin。
-26. `bun test` 的 preload 要写在 `[test].preload`，顶层 `preload` 只影响
+26. `@butui/agent` 不能静态依赖 `@butui/image`，browser 打包会碰 Bun builtin。
+27. `bun test` 的 preload 要写在 `[test].preload`，顶层 `preload` 只影响
     `bun run`。
-27. `@butui/web` 是实验层；当前 WebUI 尚未消费 `tool.diff`。
+28. `@butui/web` 是实验层；当前 WebUI 尚未消费 `tool.diff`。
 
 ## 9. 测试与验收
 
 当前：
 
 ```text
-584 pass / 0 fail
-60 test files
+593 pass / 0 fail
+61 test files
 tsc --noEmit pass
 ```
 
@@ -461,6 +476,7 @@ tsc --noEmit pass
 - `tests/plugin-loader.test.ts`
 - `tests/keymap.test.ts`
 - `tests/keymap-runtime.test.tsx`
+- `tests/command-palette.test.tsx`
 - `tests/mouse-interaction.test.tsx`
 - `tests/mouse-pointer.test.tsx`
 - `tests/inertia.test.ts`
@@ -484,7 +500,8 @@ git diff --check
   权限审批 / 跨进程隔离。
 - 鼠标已有 hover / 双击 / 右键 / pointer capture / local 坐标 / drag 生命周期 /
   OSC 22 指针 / 拖动惯性；无 pointerId、多指针。惯性只接 ScrollBar / Slider。
-- Keymap 已有多键 chord / 前缀超时；无用户自定义绑定持久化和 Command Palette UI。
+- Keymap 已有多键 chord / 前缀超时，Command Palette 已有基础 UI；无用户自定义
+  绑定持久化和更丰富的 result metadata。
 - Diff 没有 word-level diff、任意位置删除、hunk 折叠、“滚开后有新行”提示。
 - ScrollBar 只有垂直轴；无自动隐藏、hover 展开、水平轴。
 - SplitPane 的拖动 min/max 依赖应用传对 `size`；无折叠、嵌套拖动约束、双击复位。
@@ -501,7 +518,8 @@ git diff --check
 
 按通用 TUI 收益排序：
 
-1. **Keymap 扩展**：用户自定义绑定持久化、Command Palette UI。
+1. **Keymap 扩展**：用户自定义绑定持久化、Command Palette result metadata /
+   权限过滤。
 2. **插件运行时约束 / 审批**：capability 目前只是 import 前门控，下一步做权限
    审批 UI 或 worker 隔离。
 3. **Portal / Dynamic / Toast / Tooltip**：补齐 OpenTUI 已有的通用组件接口。
