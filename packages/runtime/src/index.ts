@@ -396,8 +396,10 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
   const canDrain = typeof terminal.onDrain === "function";
   const paint = (): RenderStats => {
     const stats = renderer.draw(computeFrame());
-    renderBlocked = canDrain && stats.blocked;
-    renderScheduler?.markPainted();
+    const blocked = canDrain && stats.blocked;
+    renderBlocked = blocked;
+    if (blocked) renderScheduler?.markBlocked();
+    else renderScheduler?.markPainted();
     return stats;
   };
 
@@ -933,6 +935,7 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
       disposers.push(
         terminal.onDrain(() => {
           if (!renderBlocked) return;
+          renderScheduler?.markDrained();
           renderBlocked = false;
           requestPaint();
         })
@@ -949,6 +952,7 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
   function stop(): void {
     if (!started) return;
     started = false;
+    if (renderBlocked) renderScheduler?.markDrained();
     renderScheduler?.cancel();
     appAnimationScheduler?.stop();
     renderBlocked = false;

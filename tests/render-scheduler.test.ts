@@ -117,4 +117,21 @@ describe("RenderScheduler —— 高频 chunk 合帧", () => {
     expect(h.timers.size).toBe(0);
     expect(h.microtasks).toHaveLength(0);
   });
+
+  test("blocked 时停止 dispatch，drain 后恢复尾帧", () => {
+    const h = schedulerHarness({ mode: "frame", fps: 20 });
+    h.scheduler.markPainted();
+    h.now = 5;
+    h.scheduler.request();
+
+    h.scheduler.markBlocked();
+    expect(h.timers.size).toBe(0);
+    expect(h.frames).toBe(0);
+
+    h.now = 60;
+    h.scheduler.markDrained();
+    h.microtasks.shift()?.();
+    expect(h.frames).toBe(1);
+    h.scheduler.dispose();
+  });
 });

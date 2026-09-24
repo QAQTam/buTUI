@@ -115,6 +115,27 @@ export class RenderScheduler {
     });
   }
 
+  /** stdout 返回 backpressure；FrameClock 停止后续 dispatch。 */
+  markBlocked(): void {
+    const at = this.now();
+    this.lastPaintAt = at;
+    this.clock.settle({
+      status: "blocked",
+      frameId: this.clock.stats().frameId,
+      at,
+    });
+  }
+
+  /** stdout drain 后恢复调度；下一帧由调用方显式 request。 */
+  markDrained(): void {
+    const at = this.now();
+    this.clock.settle({
+      status: "drained",
+      frameId: this.clock.stats().frameId,
+      at,
+    });
+  }
+
   /** 取消尚未触发的尾帧（dispose 用）。 */
   cancel(): void {
     this.handle?.cancel();
