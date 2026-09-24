@@ -62,7 +62,8 @@ useKeyboard(event => {                   // 返回 true 即消费
 
 接口契约（哪些稳定、怎么演进、已知缺口）见 **[STABILITY.md](./STABILITY.md)**；
 接手开发、环境坑和下一步优先级见 **[HANDOFF.md](./HANDOFF.md)**；
-bugent 第一版接入清单见 **[BUGENT_V1.md](./BUGENT_V1.md)**。
+bugent 第一版接入清单见 **[BUGENT_V1.md](./BUGENT_V1.md)**；
+v0.2 架构设计草案见 **[V0.2.md](./V0.2.md)**。
 
 ## 列表 / 虚拟列表
 
