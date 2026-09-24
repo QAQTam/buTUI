@@ -17,6 +17,7 @@ import type {
 import { InputDecoder } from "./input.ts";
 
 export * from "./input.ts";
+export * from "./arbiter.ts";
 
 const ESC = "\x1b[";
 
