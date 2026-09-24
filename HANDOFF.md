@@ -2,8 +2,8 @@
 
 > 交接时间：2026-09-24  
 > 仓库：`/home/qaqtamsy/项目/buTUI`  
-> 功能基线提交：`ad9f929 feat(plugins): 支持 manifest 配置与动态加载`
-> 工作区状态：插件加载能力提交处干净
+> 功能基线提交：`6e9f285 feat(plugins): 自动发现与 capability 门控`
+> 工作区状态：插件自动发现 / capability 能力提交处干净
 > 本轮能力：插件自动发现 + capability 加载门控
 > 当前回归：`526 pass / 0 fail`，`tsc --noEmit` 通过
 
