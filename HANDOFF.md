@@ -2,10 +2,10 @@
 
 > 交接时间：2026-09-24
 > 仓库：`/home/qaqtamsy/项目/buTUI-v0.2-frontier`
-> 功能基线提交：`c572621 test(stream): cover window runtime integration`
-> 工作区状态：功能提交后干净，本文件为 v0.2 Frontier 交接刷新
-> 本轮能力：cold retention + viewport window + FrameClock scroll coalescing
-> 当前回归：`692 pass / 0 fail`，75 个测试文件，`tsc --noEmit` 通过
+> 功能基线提交：`61d889b feat(components): add capability approval dialog`
+> 工作区状态：本文件与 Worker RPC 原型一并提交
+> 本轮能力：worker RPC + malformed isolation + cleanup fence
+> 当前回归：`714 pass / 0 fail`，79 个测试文件，`tsc --noEmit` 通过
 
 ## 1. 项目定位
 
@@ -448,6 +448,9 @@ const bar = createScrollBar({
   revision-aware LRU 避免重复 cold read。
 - Applied replay：`applied` digest 使用 chunked `Uint32Array + present bitmap`，
   保留精确 duplicate / conflict 历史。
+- Plugin Worker RPC：`createWorkerRpc` / `serveWorkerRpc` 提供 structured clone
+  方法调用、并发 id 结算、timeout / dispose、远端错误、畸形消息隔离与
+  cleanup fence；Worker 只做崩溃 / 堆隔离，不是 capability sandbox。
 
 关键实测：
 
@@ -574,8 +577,8 @@ bridge、真实 tool event 对接或 bugent 快捷键迁移。
 当前：
 
 ```text
-692 pass / 0 fail
-75 test files
+714 pass / 0 fail
+79 test files
 tsc --noEmit pass
 ```
 
@@ -593,6 +596,7 @@ tsc --noEmit pass
 - `tests/plugins.test.ts`
 - `tests/plugin-slot.test.tsx`
 - `tests/plugin-loader.test.ts`
+- `tests/worker-rpc.test.ts`
 - `tests/keymap.test.ts`
 - `tests/keymap-runtime.test.tsx`
 - `tests/command-palette.test.tsx`
@@ -621,7 +625,8 @@ git diff --check
 ## 10. 已知缺口
 
 - 插件已有 manifest / 配置 / 直接依赖发现 / capability 白名单、运行时审批、
-  approval queue / dialog 和 lease / TTL / revoke；仍无 worker / 跨进程隔离。
+  approval queue / dialog 和 lease / TTL / revoke；Worker RPC 原语已具备，
+  仍无 worker crash fail-fast、capability proxy 和跨进程隔离。
 - 鼠标已有 hover / 双击 / 右键 / pointer capture / local 坐标 / drag 生命周期 /
   OSC 22 指针 / 拖动惯性；无 pointerId、多指针。惯性只接 ScrollBar / Slider。
 - Keymap 已有多键 chord / 前缀超时，Command Palette 已有基础 UI；无用户自定义
@@ -656,8 +661,9 @@ git diff --check
    决定默认策略、文件清理和崩溃恢复语义。
 3. **numeric index sidecar 生命周期**：1M 磁盘换出原型已完成；下一步由
    bugent 决定默认策略、目录清理和恢复语义。
-4. **插件 worker / 跨进程隔离**：审批队列、dialog 与 lease / TTL / revoke 已完成；
-   下一步做 worker 隔离和跨进程 capability 代理。
+4. **插件 worker / 跨进程隔离**：审批队列、dialog、lease / TTL / revoke 和
+   Worker RPC 原语已完成；下一步做 worker crash fail-fast、capability proxy
+   与进程 adapter。
 5. **Portal / Dynamic / Toast / Tooltip**：补齐 OpenTUI 已有的通用组件接口。
 6. **动画编排增强**：更复杂的 stagger、滚动回弹和动画调试工具。
 7. **WebUI diff / 水平 ScrollBar**：等真实需求出现后再做。
