@@ -8,28 +8,35 @@
  * 组件侧用 `useAnimationFrame()` 拿时间访问器即可；测试可以直接 `tick()`，
  * 不依赖墙钟。
  */
+import { FrameClock, type FrameRequestHandle } from "@butui/core";
 import { createEffect, createSignal, flush, type Accessor } from "solid-js";
 
 export interface AnimationSchedulerOptions {
   /** 默认 30fps；终端不需要 60fps 的手机级动画 */
   fps?: number;
   now?: () => number;
+  /** 嵌入 runtime 时注入共享 FrameClock；不传则自己创建一个。 */
+  clock?: FrameClock;
 }
 
 export class AnimationScheduler {
   private readonly listeners = new Set<(time: number) => void>();
   private readonly interval: number;
   private readonly now: () => number;
-  private timer: ReturnType<typeof setInterval> | undefined;
+  private readonly clock: FrameClock;
+  private handle: FrameRequestHandle | undefined;
+  private lastTickAt = Number.NEGATIVE_INFINITY;
+  private revision = 0;
 
   constructor(options: AnimationSchedulerOptions = {}) {
     const fps = Math.max(1, Math.min(120, options.fps ?? 30));
     this.interval = Math.max(1, Math.round(1000 / fps));
     this.now = options.now ?? (() => performance.now());
+    this.clock = options.clock ?? new FrameClock({ fps }, { now: this.now });
   }
 
   get active(): boolean {
-    return this.timer !== undefined;
+    return this.handle !== undefined;
   }
 
   get size(): number {
@@ -45,8 +52,9 @@ export class AnimationScheduler {
     };
   }
 
-  /** 手动推进一帧；测试用，也方便以后接 runtime 的 render clock */
+  /** 手动推进一帧；测试用，也方便嵌入方接管时钟。 */
   tick(time = this.now()): void {
+    this.lastTickAt = time;
     for (const listener of [...this.listeners]) listener(time);
     // Solid 2 的写入延迟到 flush；动画帧必须自己提交，否则 terminal 不会看到
     // 节点变更，也就不会 requestPaint。
@@ -54,14 +62,34 @@ export class AnimationScheduler {
   }
 
   stop(): void {
-    if (this.timer) clearInterval(this.timer);
-    this.timer = undefined;
+    this.handle?.cancel();
+    this.handle = undefined;
   }
 
   private start(): void {
-    if (this.timer) return;
-    this.timer = setInterval(() => this.tick(), this.interval);
-    (this.timer as unknown as { unref?: () => void }).unref?.();
+    if (this.handle) return;
+    this.schedule();
+  }
+
+  private schedule(): void {
+    const now = this.now();
+    const deadline = Number.isFinite(this.lastTickAt)
+      ? Math.max(now, this.lastTickAt + this.interval)
+      : now;
+
+    this.handle = this.clock.request({
+      lane: "decorative",
+      reason: "animation",
+      sessionRevision: ++this.revision,
+      deadline,
+      coalesceKey: "animation",
+      work: tick => {
+        this.handle = undefined;
+        if (this.listeners.size === 0) return;
+        this.tick(tick.clockTime);
+        if (this.listeners.size > 0) this.schedule();
+      },
+    });
   }
 }
 
