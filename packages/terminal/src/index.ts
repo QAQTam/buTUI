@@ -18,6 +18,7 @@ import { InputDecoder } from "./input.ts";
 import {
   TerminalArbiter,
   type TerminalLease,
+  type WriteReceipt,
 } from "./arbiter.ts";
 
 export * from "./input.ts";
@@ -411,13 +412,35 @@ export class TerminalSession {
     chunk: string,
     options: TerminalWriteOptions = {}
   ): boolean | void {
-    if (!this.lease) return this.stdout.write(chunk);
-    const receipt = this.arbiter.write(this.lease, {
+    const receipt = this.writeWithReceipt(chunk, options);
+    return receipt.accepted && !receipt.blocked;
+  }
+
+  /**
+   * 写出并返回完整 receipt。
+   *
+   * `write(false)` 仍然算 accepted，只是 blocked；调用方可用 receipt.drained
+   * 等待 writable 排空。没有 frame lease 时保留 v0.1 的直接写兼容路径。
+   */
+  writeWithReceipt(
+    chunk: string,
+    options: TerminalWriteOptions = {}
+  ): WriteReceipt {
+    if (!this.lease) {
+      const blocked = this.stdout.write(chunk) === false;
+      return {
+        accepted: true,
+        blocked,
+        bytesWritten: Buffer.byteLength(chunk),
+        acceptedAt: performance.now(),
+        ...(blocked ? { drained: this.waitForDrain() } : {}),
+      };
+    }
+    return this.arbiter.write(this.lease, {
       kind: options.kind ?? "frame",
       ...(options.frameId !== undefined ? { frameId: options.frameId } : {}),
       bytes: chunk,
     });
-    return receipt.accepted && !receipt.blocked;
   }
 
   /** 设置 OSC 22 指针形状；相同形状不重复写，stop 时恢复 default。 */
@@ -487,6 +510,16 @@ export class TerminalSession {
     }, this.options.escapeTimeout);
     // 不要因为一个 25ms 定时器把进程钉住
     (this.escapeTimer as unknown as { unref?: () => void }).unref?.();
+  }
+
+  private waitForDrain(): Promise<void> {
+    return new Promise(resolve => {
+      if (typeof this.stdout.once !== "function") {
+        resolve();
+        return;
+      }
+      this.stdout.once("drain", resolve);
+    });
   }
 
   private resetInputDecoder(): void {

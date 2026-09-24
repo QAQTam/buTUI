@@ -61,6 +61,7 @@ import {
   terminalSize,
   type PtyRunOptions,
   type RawLeaseContext,
+  type WriteReceipt,
 } from "@butui/terminal";
 import { createSignal, flush } from "solid-js";
 import {
@@ -68,8 +69,13 @@ import {
   type RenderOptions,
 } from "./render-scheduler.ts";
 import { PresentedFrameStore, type PresentedFrame } from "./presented-frame.ts";
+import {
+  FrameBarrierStore,
+  type FrameFlushMode,
+} from "./frame-barrier.ts";
 
 export type { RenderMode, RenderOptions } from "./render-scheduler.ts";
+export type { FrameFlushMode } from "./frame-barrier.ts";
 
 export interface TuiSize {
   columns: number;
@@ -79,6 +85,13 @@ export interface TuiSize {
 export interface TuiWriteOptions {
   kind?: "frame" | "append" | "control";
   frameId?: number;
+}
+
+export interface TuiPaintStats extends RenderStats {
+  /** 本次绘制的单调 frame id，可传给 waitUntilFrameFlushed()。 */
+  frameId: number;
+  /** 终端或兼容 writer 是否接受了这批 bytes。 */
+  accepted: boolean;
 }
 
 /**
@@ -92,6 +105,8 @@ export interface TuiTerminal {
   stop(): void;
   /** 返回 false 表示写缓冲已满；运行时会在 drain 前停止自动绘制。 */
   write(chunk: string, options?: TuiWriteOptions): boolean | void;
+  /** 可选：返回 accepted / blocked / drained 的完整写入凭据。 */
+  writeWithReceipt?(chunk: string, options?: TuiWriteOptions): WriteReceipt;
   /** 可选：stdout 写缓冲排空。 */
   onDrain?(listener: () => void): () => void;
   /** 可选：suspend / resume terminal ownership。 */
@@ -272,9 +287,16 @@ export interface TuiApp {
   /** 在 raw lease 内运行 Bun PTY 子进程，结束后恢复 frame。 */
   runPty(owner: string, reason: string, options: PtyRunOptions): Promise<number>;
   /** 立刻画一帧（一般不用调；变更会自动重绘） */
-  paint(): RenderStats;
+  paint(): TuiPaintStats;
   /** 请求一帧（按 `render.mode` 合并；默认同一 tick 内只画一次） */
   requestPaint(): void;
+  /**
+   * 等待指定 frame 的 accepted 或 drained。
+   *
+   * 省略 frameId 时等待调用之后绘制出的下一帧。默认 accepted：writable 已接收
+   * bytes，即使同时发生 backpressure；drained 才等待缓冲排空。
+   */
+  waitUntilFrameFlushed(frameId?: number, mode?: FrameFlushMode): Promise<void>;
   /** 把事件喂进运行时（自定义输入源 / 测试注入） */
   send(event: ButuiEvent): number;
   /**
@@ -460,11 +482,46 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
 
   let nextPaintFrameId = 1;
   let paintFrameId: number | undefined;
+  const paintState: { receipt?: WriteReceipt } = {};
+  const takePaintReceipt = (): WriteReceipt | undefined => paintState.receipt;
+  const frameBarriers = new FrameBarrierStore();
+  const nextFrameWaiters = new Set<{
+    mode: FrameFlushMode;
+    resolve(): void;
+    reject(error: unknown): void;
+  }>();
+
+  const beginFrameBarrier = (frameId: number) => {
+    const barrier = frameBarriers.begin(frameId);
+    for (const waiter of [...nextFrameWaiters]) {
+      nextFrameWaiters.delete(waiter);
+      const promise =
+        waiter.mode === "accepted" ? barrier.accepted : barrier.drained;
+      promise.then(waiter.resolve, waiter.reject);
+    }
+    return barrier;
+  };
+
+  const rejectFrameWaiters = (error: unknown): void => {
+    for (const waiter of [...nextFrameWaiters]) {
+      nextFrameWaiters.delete(waiter);
+      waiter.reject(error);
+    }
+    frameBarriers.rejectAll(error);
+  };
+
   const renderer = new Renderer(chunk => {
-    return terminal.write(chunk, {
+    const options: TuiWriteOptions = {
       kind: "frame",
       ...(paintFrameId !== undefined ? { frameId: paintFrameId } : {}),
-    });
+    };
+    if (terminal.writeWithReceipt) {
+      paintState.receipt = terminal.writeWithReceipt(chunk, options);
+      return (
+        paintState.receipt.accepted && !paintState.receipt.blocked
+      );
+    }
+    return terminal.write(chunk, options);
   }, {
     ...(options.afterDraw !== undefined ? { afterDraw: options.afterDraw } : {}),
   });
@@ -501,19 +558,58 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
   let suspended = false;
   let hoverAfterPresent: ((frame: Frame) => void) | undefined;
   const canDrain = typeof terminal.onDrain === "function";
-  const paint = (): RenderStats => {
+  const paint = (): TuiPaintStats => {
     const frame = computeFrame();
     const frameId = nextPaintFrameId++;
+    const barrier = beginFrameBarrier(frameId);
     paintFrameId = frameId;
+    paintState.receipt = undefined;
+
     let stats: RenderStats;
     try {
       stats = renderer.draw(frame);
-    } finally {
+    } catch (error) {
+      barrier.reject(error);
       paintFrameId = undefined;
+      paintState.receipt = undefined;
+      throw error;
     }
-    const blocked = canDrain && stats.blocked;
+
+    paintFrameId = undefined;
+    const receipt = takePaintReceipt();
+    paintState.receipt = undefined;
+    const rejected =
+      receipt !== undefined && !receipt.accepted && !receipt.blocked;
+    const accepted = receipt?.accepted ?? true;
+    const blocked = !rejected && canDrain && stats.blocked;
+
+    if (rejected) {
+      barrier.reject(
+        new Error(
+          `[butui] frame ${frameId} 被拒绝: ${receipt.rejectedReason ?? "unknown"}`
+        )
+      );
+    } else {
+      barrier.markAccepted();
+      if (!blocked) {
+        barrier.markDrained();
+      } else if (receipt?.drained) {
+        void receipt.drained.then(
+          () => barrier.markDrained(),
+          error => barrier.reject(error)
+        );
+      } else if (terminal.onDrain) {
+        const off = terminal.onDrain(() => {
+          off();
+          barrier.markDrained();
+        });
+      } else {
+        barrier.markDrained();
+      }
+    }
+
     renderBlocked = blocked;
-    if (!blocked) {
+    if (accepted && !blocked) {
       presentedFrames.present(
         frame,
         sessionRevision,
@@ -525,7 +621,7 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
     }
     if (blocked) renderScheduler?.markBlocked();
     else renderScheduler?.markPainted();
-    return stats;
+    return { ...stats, frameId, accepted };
   };
 
   // ── 合帧：任何节点变更 → 微任务 / frame 调度器里 flush + 画一帧 ───────
@@ -552,6 +648,28 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
     dirty = true;
     if (renderBlocked) return;
     renderScheduler?.request();
+  };
+
+  const waitUntilFrameFlushed = (
+    frameId?: number,
+    mode: FrameFlushMode = "accepted"
+  ): Promise<void> => {
+    if (disposed) {
+      return Promise.reject(new Error("[butui] runtime 已关闭"));
+    }
+    if (suspended) {
+      return Promise.reject(new Error("[butui] runtime 已暂停"));
+    }
+    if (frameId !== undefined) return frameBarriers.wait(frameId, mode);
+    return new Promise((resolve, reject) => {
+      const waiter = { mode, resolve, reject };
+      nextFrameWaiters.add(waiter);
+      requestPaint();
+      if (disposed || suspended) {
+        nextFrameWaiters.delete(waiter);
+        reject(new Error("[butui] runtime 在下一帧前关闭或暂停"));
+      }
+    });
   };
 
   const offMutation = onMutation(() => {
@@ -1187,6 +1305,7 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
   function stop(): void {
     if (!started) return;
     started = false;
+    rejectFrameWaiters(new Error("[butui] runtime stopped before frame flush"));
     if (renderBlocked) renderScheduler?.markDrained();
     renderScheduler?.cancel();
     appAnimationScheduler?.stop();
@@ -1204,6 +1323,7 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
 
   async function suspend(reason = "suspend"): Promise<void> {
     if (disposed || suspended) return;
+    rejectFrameWaiters(new Error("[butui] runtime suspended before frame flush"));
     suspended = true;
     if (selectionHasText || selecting) resetSelection(false);
     renderScheduler?.cancel();
@@ -1233,6 +1353,7 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
       throw new Error("[butui] runtime 已暂停或关闭");
     }
 
+    rejectFrameWaiters(new Error("[butui] runtime 进入 raw lease before frame flush"));
     suspended = true;
     if (selectionHasText || selecting) resetSelection(false);
     renderScheduler?.cancel();
@@ -1260,6 +1381,7 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
       throw new Error("[butui] runtime 已暂停或关闭");
     }
 
+    rejectFrameWaiters(new Error("[butui] runtime 进入 PTY before frame flush"));
     suspended = true;
     if (selectionHasText || selecting) resetSelection(false);
     renderScheduler?.cancel();
@@ -1277,6 +1399,7 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
 
   const dispose = (): void => {
     if (disposed) return;
+    rejectFrameWaiters(new Error("[butui] runtime disposed before frame flush"));
     stop();
     offMutation();
     offFocus();
@@ -1297,6 +1420,7 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
     runPty,
     paint,
     requestPaint,
+    waitUntilFrameFlushed,
     send,
     focusedId,
     isFocused: node => node !== undefined && node.id === focusedId(),

@@ -82,6 +82,35 @@ describe("TerminalSession backpressure", () => {
     session.stop();
   });
 
+  test("writeWithReceipt 区分 accepted 与 blocked，并可等待 drain", async () => {
+    const { stdin, stdout } = streams(false);
+    const session = new TerminalSession({
+      stdin,
+      stdout,
+      altScreen: false,
+      mouse: false,
+      bracketedPaste: false,
+      focusEvents: false,
+    });
+    session.start();
+
+    const receipt = session.writeWithReceipt("frame", {
+      kind: "frame",
+      frameId: 1,
+    });
+    expect(receipt).toMatchObject({ accepted: true, blocked: true });
+    let drained = false;
+    receipt.drained?.then(() => {
+      drained = true;
+    });
+    expect(drained).toBe(false);
+
+    stdout.emit("drain");
+    await Bun.sleep(0);
+    expect(drained).toBe(true);
+    session.stop();
+  });
+
   test("runtime frame 输出携带 frameId", () => {
     const { stdin, stdout } = streams(true);
     const session = new TerminalSession({

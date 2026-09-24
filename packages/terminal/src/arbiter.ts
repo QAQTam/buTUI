@@ -179,18 +179,19 @@ export class TerminalArbiter {
       }
     }
 
-    const accepted = this.writeRaw(batch.bytes) !== false;
-    const blocked = !accepted;
+    // Writable.write(false) 表示数据已入队但缓冲达到 highWaterMark；
+    // 它不是拒绝。accepted 与 blocked 必须分开表达。
+    const blocked = this.writeRaw(batch.bytes) === false;
     const receipt: WriteReceipt = {
-      accepted,
+      accepted: true,
       blocked,
       bytesWritten,
-      ...(accepted ? { acceptedAt: this.now() } : {}),
+      acceptedAt: this.now(),
       ...(blocked ? { drained: this.drainPromise() } : {}),
       ...(this.needsFullDamage ? { requiresFullDamage: true } : {}),
     };
 
-    if (accepted && batch.kind === "frame" && batch.frameId !== undefined) {
+    if (batch.kind === "frame" && batch.frameId !== undefined) {
       this.lastAcceptedFrameId = batch.frameId;
       this.needsFullDamage = false;
     }

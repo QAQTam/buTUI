@@ -11,7 +11,7 @@
 spring / timeline / Shimmer / Keymap chord / Command Palette / Command Menu /
 Slider / SplitPane / Toast / Tooltip / Popover / Portal / Dynamic / MultiSelect /
 Form / Autocomplete / Checkbox / RadioGroup / 高频 chunk 合帧 / smooth reveal 已跑通**，`bun test`
-785 个用例全绿。
+794 个用例全绿。
 
 ```
 应用（你的 agent / 工具 / TUI）
@@ -817,6 +817,17 @@ frame 模式的语义：
 runtime 会读取 `stdout.write()` 的 backpressure 信号：写缓冲满时暂停自动绘制，
 只更新内存状态；stdout `drain` 后合并画最新一帧，不会用旧帧排队，也不会让写缓冲
 持续增长。
+
+需要明确同步点时使用 `waitUntilFrameFlushed()`：
+
+```ts
+const painted = app.paint(); // { frameId, accepted, blocked, ... }
+await app.waitUntilFrameFlushed(painted.frameId, "accepted");
+await app.waitUntilFrameFlushed(painted.frameId, "drained");
+```
+
+`accepted` 表示 writable 已接收 bytes，即使同时触发 backpressure；`drained`
+才等待缓冲排空。省略 `frameId` 时等待调用后的下一帧。
 
 ### 平滑显现：smooth reveal
 

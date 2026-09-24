@@ -194,7 +194,7 @@ describe("TerminalArbiter", () => {
       flush: "drained",
     });
 
-    expect(receipt).toMatchObject({ accepted: false, blocked: true });
+    expect(receipt).toMatchObject({ accepted: true, blocked: true });
     let drained = false;
     receipt.drained?.then(() => {
       drained = true;

@@ -3,9 +3,9 @@
 > 交接时间：2026-09-24
 > 仓库：`/home/qaqtamsy/项目/buTUI-v0.2-frontier`
 > 功能基线提交：`61d889b feat(components): add capability approval dialog`
-> 工作区状态：本文件与 CommandMenu 组件一并提交
-> 本轮能力：non-modal command filtering + execution
-> 当前回归：`785 pass / 0 fail`，96 个测试文件，`tsc --noEmit` 通过
+> 工作区状态：本文件与 Frame barrier 一并提交
+> 本轮能力：accepted / drained frame synchronization
+> 当前回归：`794 pass / 0 fail`，98 个测试文件，`tsc --noEmit` 通过
 
 ## 1. 项目定位
 
@@ -530,6 +530,9 @@ const bar = createScrollBar({
   budget、backpressure 和 fake-clock 确定性。
 - TerminalArbiter：frame / append / raw lease、supersede、suspend / resume；
   `withRawLease` 支持原始 stdin 路由，`runPtyWithRawLease` 已接入 Bun.Terminal。
+- Frame barrier：`paint()` 返回 frameId / accepted，`waitUntilFrameFlushed()` 支持
+  accepted / drained；`write(false)` 明确为 accepted + blocked，dispose / suspend /
+  raw / PTY 会终止未完成的 drained 等待。
 - Presented-frame hit test：慢 stdout 下仍按用户看到的 frame 路由输入。
 - StreamLedger：append / replace-tail / finish / cancel、gap / duplicate /
   conflict、revision 和 replay。
