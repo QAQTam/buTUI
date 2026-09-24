@@ -7,4 +7,5 @@
  */
 export * from "./types.ts";
 export * from "./capability.ts";
+export * from "./approval.ts";
 export * from "./registry.ts";
