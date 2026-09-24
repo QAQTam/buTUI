@@ -2,10 +2,10 @@
 
 > 交接时间：2026-09-24  
 > 仓库：`/home/qaqtamsy/项目/buTUI`  
-> 功能基线提交：`bde021a feat(components): SplitPane 与分隔条拖动`
+> 功能基线提交：`16e5bb3 feat(mouse): OSC 22 指针形状`
 > 工作区状态：功能提交后干净，本文件为对应交接刷新
-> 本轮能力：SplitPane 纯几何模型 + 水平 / 垂直分栏 + 跨区域分隔条拖动
-> 当前回归：`558 pass / 0 fail`，56 个测试文件，`tsc --noEmit` 通过
+> 本轮能力：OSC 22 指针形状 + 命中解析 + capture / stop 恢复
+> 当前回归：`567 pass / 0 fail`，57 个测试文件，`tsc --noEmit` 通过
 
 ## 1. 项目定位
 
@@ -15,7 +15,7 @@ buTUI 是基于 Bun + TypeScript 的通用 TUI Runtime。参考 OpenTUI 的接�
 - 稳定的 `createTuiApp` 应用入口；
 - SolidJS 2 RC 的细粒度响应式 host renderer；
 - 流式文本 / Markdown / Diff 的 O(1) 或 O(视口) 增量路径；
-- 鼠标、滚动、Slider、SplitPane、插件 / Slot、Keymap 等通用交互能力；
+- 鼠标、OSC 22 指针、滚动、Slider、SplitPane、插件 / Slot、Keymap 等通用交互能力；
 - agent 事件协议、Session、undo、artifact、图片等可组合上层。
 
 设计文档：
@@ -103,7 +103,7 @@ bun --conditions=browser run scripts/stream-bench.tsx
 | `@butui/web` | 实验性 DOM 渲染，不是当前优先级 |
 | `@butui/test` | headless mount、快照、事件注入 |
 
-源码约 17,000 行，测试约 10,300 行，56 个测试文件。
+源码约 17,200 行，测试约 10,600 行，57 个测试文件。
 
 ## 5. 已完成能力
 
@@ -303,8 +303,12 @@ const bar = createScrollBar({
 - `mouseMotion: "hover"` 开启 1003；默认 `"drag"`。
 - `app.captureMouse(node)` / `releaseMouse()` / `capturedMouse()`；Solid 提供
   `useMouseCapture()`。release 自动解除捕获。
+- OSC 22：节点 `cursor` 属性、`MousePointerStyle`、`osc22()`；可点击链自动
+  `pointer`，capture 期间保持捕获节点，stop / dispose 恢复 `default`。
+- `mousePointer: false` 可关闭；无按键 hover 仍需 `mouseMotion: "hover"`。
 - 文本选择仍默认接管左键拖拽；控件用 `selectable={false}`。
-- 已有 `scripts/mouse-demo.tsx`、`tests/mouse-interaction.test.tsx`。
+- 已有 `scripts/mouse-demo.tsx`、`tests/mouse-interaction.test.tsx`、
+  `tests/mouse-pointer.test.tsx`。
 
 ### 5.11 Slider
 
@@ -347,6 +351,7 @@ const bar = createScrollBar({
 | CommandRegistry / Keymap | `packages/keymap/src/{commands,keymap,keys}.ts` |
 | Solid `useKeymap` | `packages/keymap/src/solid.ts` |
 | 鼠标捕获 / 双击 / hover | `packages/runtime/src/index.ts`、`packages/core/src/{events,dispatch}.ts` |
+| OSC 22 / 指针形状类型 | `packages/terminal/src/index.ts`、`packages/core/src/events.ts` |
 | Solid `useMouseCapture` | `packages/solid/src/app-context.ts` |
 | 动画调度 | `packages/solid/src/animation.ts` |
 | 布局 / Frame / selectionText | `packages/layout/src/index.ts` |
@@ -393,21 +398,23 @@ bridge、真实 tool event 对接或 bugent 快捷键迁移。
 19. ScrollBar 的轨道局部坐标来自每个轨道行；不需要也不应该扫描整帧找 bbox。
 20. SplitPane 必须捕获根节点，不能捕获分隔条；分隔条会随比例移动，否则
     `localX / localY` 的参考原点跟着漂移，拖动会产生反馈抖动。
+21. OSC 22 必须去重，并在 capture / stop / dispose 恢复 `default`；否则退出
+    终端后鼠标指针可能残留在 pointer / grab。无按键 hover 需要 1003。
 
 ### 包边界
 
-21. `@butui/agent` 不能静态依赖 `@butui/image`，browser 打包会碰 Bun builtin。
-22. `bun test` 的 preload 要写在 `[test].preload`，顶层 `preload` 只影响
+22. `@butui/agent` 不能静态依赖 `@butui/image`，browser 打包会碰 Bun builtin。
+23. `bun test` 的 preload 要写在 `[test].preload`，顶层 `preload` 只影响
     `bun run`。
-23. `@butui/web` 是实验层；当前 WebUI 尚未消费 `tool.diff`。
+24. `@butui/web` 是实验层；当前 WebUI 尚未消费 `tool.diff`。
 
 ## 9. 测试与验收
 
 当前：
 
 ```text
-558 pass / 0 fail
-56 test files
+567 pass / 0 fail
+57 test files
 tsc --noEmit pass
 ```
 
@@ -426,6 +433,7 @@ tsc --noEmit pass
 - `tests/keymap.test.ts`
 - `tests/keymap-runtime.test.tsx`
 - `tests/mouse-interaction.test.tsx`
+- `tests/mouse-pointer.test.tsx`
 - `tests/slider.test.tsx`
 - `tests/splitpane.test.tsx`
 - `tests/solid-cleanup-contract.test.tsx`
@@ -444,8 +452,8 @@ git diff --check
 
 - 插件已有 manifest / 配置 / 直接依赖发现 / capability 门控；无运行时沙箱 /
   权限审批 / 跨进程隔离。
-- 鼠标已有 hover / 双击 / 右键 / pointer capture / local 坐标 / drag 生命周期；
-  无 pointerId、多指针、OSC 22 指针形状、惯性。
+- 鼠标已有 hover / 双击 / 右键 / pointer capture / local 坐标 / drag 生命周期 /
+  OSC 22 指针；无 pointerId、多指针、惯性。
 - Keymap 只有单键；无多键 chord、前缀超时、用户自定义绑定持久化。
 - Diff 没有 word-level diff、任意位置删除、hunk 折叠、“滚开后有新行”提示。
 - ScrollBar 只有垂直轴；无自动隐藏、hover 展开、水平轴、惯性。
@@ -462,7 +470,7 @@ git diff --check
 
 按通用 TUI 收益排序：
 
-1. **鼠标组件继续**：水平 ScrollBar、OSC 22 指针形状与拖动惯性。
+1. **鼠标能力继续**：拖动惯性。水平 ScrollBar 暂无明确场景，不优先做。
 2. **Keymap 扩展**：多键 chord、前缀超时、用户自定义绑定持久化、Command Palette。
 3. **插件运行时约束 / 审批**：capability 目前只是 import 前门控，下一步做权限
    审批 UI 或 worker 隔离。
