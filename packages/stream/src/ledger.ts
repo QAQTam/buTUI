@@ -11,6 +11,12 @@
  *   - finish / cancel 后拒绝后续写入。
  */
 import type { MemoryLedger, MemoryReservation } from "@butui/core";
+import {
+  StreamRetention,
+  type RetentionPolicy,
+  type SpillManifest,
+  type SpillStore,
+} from "./spill.ts";
 
 export type StreamId = string;
 export type LineId = string;
@@ -62,6 +68,8 @@ export interface StreamLineRecord {
   text: string;
   stableAtRevision: SessionRevision;
   digest: string;
+  /** 已写入 cold storage；text 为空，需 hydrate 后恢复。 */
+  spilled?: boolean;
 }
 
 export interface StreamTailLine {
@@ -106,6 +114,11 @@ export interface StreamLedgerOptions {
   memory?: MemoryLedger;
   /** MemoryLedger owner，默认 butui-stream。 */
   memoryOwner?: string;
+  /** 可选 cold storage；启用 applyWithSpill()。 */
+  spill?: {
+    store: SpillStore;
+    policy?: RetentionPolicy;
+  };
 }
 
 interface StreamState {
@@ -124,11 +137,15 @@ export class StreamLedger {
   private readonly streams = new Map<StreamId, StreamState>();
   private readonly memory?: MemoryLedger;
   private readonly memoryOwner: string;
+  private readonly spillStore?: SpillStore;
+  private readonly spillPolicy?: RetentionPolicy;
   private nextLineId = 1;
 
   constructor(options: StreamLedgerOptions = {}) {
     this.memory = options.memory;
     this.memoryOwner = options.memoryOwner ?? "butui-stream";
+    this.spillStore = options.spill?.store;
+    this.spillPolicy = options.spill?.policy;
   }
 
   open(meta: OpenStreamMeta): void {
@@ -240,6 +257,106 @@ export class StreamLedger {
     stream.revision = revision;
     stream.applied.set(envelope.seq, digest);
     return { status: "applied", revision, linesAdded };
+  }
+
+  /**
+   * apply 的 spill-aware 版本。
+   *
+   * 只有 budget-exceeded 且配置了 spill store 时才尝试释放 cold 空间，然后
+   * 用同一个 envelope 重试；其他拒绝原因原样返回。
+   */
+  async applyWithSpill(envelope: StreamEnvelope): Promise<StreamApplyResult> {
+    const first = this.apply(envelope);
+    if (
+      first.status !== "rejected" ||
+      first.reason !== "budget-exceeded" ||
+      !this.spillStore
+    ) {
+      return first;
+    }
+
+    await this.spillOldest(envelope.streamId, operationBytes(envelope.op));
+    return this.apply(envelope);
+  }
+
+  /** 把已 spill 的 stable line 重新读回内存。 */
+  async hydrate(streamId: StreamId, lineIds?: readonly LineId[]): Promise<number> {
+    if (!this.spillStore) {
+      throw new Error("[butui] stream 未配置 spill store");
+    }
+    const stream = this.streams.get(streamId);
+    if (!stream) return 0;
+    const wanted = lineIds ? new Set(lineIds) : undefined;
+    let hydrated = 0;
+    for (const line of stream.stableLines) {
+      if (!line.spilled || (wanted && !wanted.has(line.id))) continue;
+      const record = await this.spillStore.read(streamId, line.id);
+      if (!record) {
+        throw new Error(`[butui] cold-read-error: ${streamId}/${line.id}`);
+      }
+      line.text = record.text;
+      line.digest = record.digest;
+      delete line.spilled;
+      hydrated++;
+    }
+    return hydrated;
+  }
+
+  private async spillOldest(
+    streamId: StreamId,
+    neededBytes: number
+  ): Promise<SpillManifest> {
+    const stream = this.streams.get(streamId);
+    if (!stream || !this.spillStore) {
+      throw new Error("[butui] spill 不可用");
+    }
+
+    const candidates = stream.stableLines.filter(line => !line.spilled);
+    const totalStableBytes = candidates.reduce(
+      (sum, line) => sum + Buffer.byteLength(line.text),
+      0
+    );
+    const maxBytes = this.spillPolicy?.maxBytes ?? Number.POSITIVE_INFINITY;
+    const targetBytes = Math.max(
+      neededBytes,
+      Number.isFinite(maxBytes) ? totalStableBytes - maxBytes : 0
+    );
+
+    const spillLines: StreamLineRecord[] = [];
+    let spillBytes = 0;
+    for (const line of candidates) {
+      spillLines.push(line);
+      spillBytes += Buffer.byteLength(line.text);
+      if (spillBytes >= targetBytes) break;
+    }
+    if (spillLines.length === 0) {
+      throw new Error("[butui] 没有可 spill 的 stable line");
+    }
+
+    const retention = new StreamRetention(this.spillStore, {
+      maxBytes: 0,
+      ...(this.spillPolicy?.keepTailLines !== undefined
+        ? { keepTailLines: this.spillPolicy.keepTailLines }
+        : {}),
+    });
+    const result = await retention.spill(streamId, spillLines);
+    const ids = new Set(spillLines.map(line => line.id));
+    for (const line of stream.stableLines) {
+      if (!ids.has(line.id)) continue;
+      line.text = "";
+      line.spilled = true;
+    }
+
+    let released = 0;
+    while (
+      stream.memoryReservations.length > 0 &&
+      released < result.manifest.bytes
+    ) {
+      const reservation = stream.memoryReservations.shift()!;
+      released += reservation.bytes;
+      reservation.release();
+    }
+    return result.manifest;
   }
 
   project(streamId: StreamId): StreamProjection {

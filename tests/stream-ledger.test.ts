@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { MemoryLedger } from "@butui/core";
 import {
+  MemorySpillStore,
   StreamLedger,
   type StreamEnvelope,
   type StreamOperation,
@@ -165,6 +166,44 @@ describe("StreamLedger", () => {
 
     streams.dispose();
     expect(memory.stats().usedBytes).toBe(0);
+  });
+
+  test("applyWithSpill 会释放旧 stable line 后重试成功", async () => {
+    const memory = new MemoryLedger({ totalBytes: 6 });
+    const store = new MemorySpillStore();
+    const streams = new StreamLedger({
+      memory,
+      memoryOwner: "test-stream",
+      spill: { store, policy: { maxBytes: 0 } },
+    });
+    streams.open({
+      streamId: "stream-1",
+      kind: "text",
+      priority: 1,
+      createdAt: 0,
+    });
+
+    expect(
+      (await streams.applyWithSpill(
+        envelope(1, { type: "append", delta: "hello\n" })
+      )).status
+    ).toBe("applied");
+    expect(streams.project("stream-1").stableLines[0]?.text).toBe("hello");
+
+    expect(
+      (await streams.applyWithSpill(
+        envelope(2, { type: "append", delta: "!" })
+      )).status
+    ).toBe("applied");
+    const line = streams.project("stream-1").stableLines[0]!;
+    expect(line.spilled).toBe(true);
+    expect(line.text).toBe("");
+    expect(store.stats()).toEqual({ records: 1, bytes: 5 });
+    expect(memory.stats().usedBytes).toBe(1);
+
+    expect(await streams.hydrate("stream-1")).toBe(1);
+    expect(streams.project("stream-1").stableLines[0]?.text).toBe("hello");
+    expect(streams.project("stream-1").stableLines[0]?.spilled).toBeUndefined();
   });
 
   test("stats 汇总 streams / lines / tombstones", () => {
