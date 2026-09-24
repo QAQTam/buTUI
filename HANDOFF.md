@@ -3,9 +3,9 @@
 > 交接时间：2026-09-24
 > 仓库：`/home/qaqtamsy/项目/buTUI-v0.2-frontier`
 > 功能基线提交：`61d889b feat(components): add capability approval dialog`
-> 工作区状态：本文件与 API freeze 一并提交
-> 本轮能力：stable / experimental boundary + export snapshot
-> 当前回归：`811 pass / 0 fail`，103 个测试文件，`tsc --noEmit` 通过
+> 工作区状态：本文件与 stream tail cache fix 一并提交
+> 本轮能力：committed/tail cache isolation
+> 当前回归：`812 pass / 0 fail`，103 个测试文件，`tsc --noEmit` 通过
 
 ## 1. 项目定位
 
@@ -145,6 +145,7 @@ bun --conditions=browser run scripts/plugin-isolation-bench.ts --calls=5000 --wa
 - 视口只复制可视行。
 - `StreamSource.onChange`：可选 target 变更订阅。
 - 回归测试 `tests/stream-o1.test.tsx` 和 `tests/stream-source.test.tsx`。
+- 2026-09-24 修复 `measureStreamNode` 的 committed/render cache 污染：tail 定稿后不再丢尾字符或把旧 tail 残留成重复行。
 
 ### 5.3 组件标准库
 

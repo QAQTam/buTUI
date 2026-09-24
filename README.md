@@ -11,7 +11,7 @@
 spring / timeline / Shimmer / Keymap chord / Command Palette / Command Menu /
 Slider / SplitPane / Toast / Tooltip / Popover / Portal / Dynamic / MultiSelect /
 Form / Autocomplete / Checkbox / RadioGroup / 高频 chunk 合帧 / smooth reveal 已跑通**，`bun test`
-811 个用例全绿。
+812 个用例全绿。
 
 ```
 应用（你的 agent / 工具 / TUI）

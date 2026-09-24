@@ -167,7 +167,10 @@ const cache = new WeakMap<Node, CacheEntry>();
 interface StreamCache {
   linesRef: readonly { text: string }[] | undefined;
   converted: number;
+  /** 已定稿行的 cell；尾部永远不能写进这里。 */
   cells: Line[];
+  /** 对外返回的视图数组：committed cells + 当前 tail。 */
+  render: Line[];
   tailText: string | undefined;
   tailCells: Line[];
   width: number;
@@ -246,14 +249,27 @@ function measureStreamNode(node: ElementNode, width: number, semantic: string | 
   const lines = (node.props.lines as readonly { text: string }[] | undefined) ?? [];
   let entry = streamCache.get(node);
   if (!entry || entry.linesRef !== lines || entry.width !== width) {
-    entry = { linesRef: lines, converted: 0, cells: [], tailText: undefined, tailCells: [], width, maxWidth: 0 };
+    entry = {
+      linesRef: lines,
+      converted: 0,
+      cells: [],
+      render: [],
+      tailText: undefined,
+      tailCells: [],
+      width,
+      maxWidth: 0,
+    };
     streamCache.set(node, entry);
   }
 
-  // 只转换新增的行，并增量维护最大宽度（不能用 Math.max(...map) —— 那是 O(N)）
+  // 先把旧 tail 从对外视图里剪掉；committed cells 本身保持纯定稿状态。
+  entry.render.length = entry.cells.length;
+
+  // 只转换新增的 committed 行，并增量维护最大宽度。
   for (let i = entry.converted; i < lines.length; i++) {
     const line = toCells(lines[i].text, node, "", semantic);
     entry.cells.push(line);
+    entry.render.push(line);
     if (line.length > entry.maxWidth) entry.maxWidth = line.length;
   }
   entry.converted = lines.length;
@@ -269,15 +285,13 @@ function measureStreamNode(node: ElementNode, width: number, semantic: string | 
             .split("\n")
             .map(text => toCells(text, node, "", semantic));
   }
-  const out = entry.cells;
-  out.length = entry.converted;
-  for (const line of entry.tailCells) out.push(line);
+  for (const line of entry.tailCells) entry.render.push(line);
 
   return {
-    lines: out,
+    lines: entry.render,
     width: Math.max(entry.maxWidth, ...entry.tailCells.map(l => l.length), 0),
-    height: out.length,
-    frozen: entry.converted,
+    height: entry.render.length,
+    frozen: entry.cells.length,
     // lines 数组本身即凭证：同一个数组只增不改，换数组 = 全量重建
     frozenToken: entry.linesRef,
   };

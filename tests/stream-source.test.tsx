@@ -25,6 +25,23 @@ describe("流式渲染：Solid 侧 O(1) 节点创建", () => {
     app.unmount();
   });
 
+  test("尾部行定稿后不会重复，也不会丢掉结尾字符", () => {
+    const source = createTextStream({ width: 80 });
+    const app = mount(() => <StreamText source={source} />, { width: 80, height: 10 });
+
+    source.push("- 「看下这个项目是干嘛的");
+    app.flush();
+    expect(app.text()).toContain("- 「看下这个项目是干嘛的");
+
+    source.push("」\n");
+    app.flush();
+    const text = app.text();
+    expect(text).toContain("- 「看下这个项目是干嘛的」");
+    expect(text.match(/看下这个项目是干嘛的/g)).toHaveLength(1);
+
+    app.unmount();
+  });
+
   test("markdown 流：长文档流式渲染的节点创建同样是常数", () => {
     const source = createMarkdownStream({ width: 30 });
     const app = mount(() => <StreamMarkdown source={source} />, { width: 30, height: 60 });
