@@ -16,6 +16,22 @@ function streams(writeResult: boolean) {
   return { stdin, stdout };
 }
 
+function capturingStreams() {
+  const stdin = new EventEmitter() as unknown as NodeJS.ReadStream;
+  (stdin as unknown as { setRawMode(): void }).setRawMode = () => {};
+  (stdin as unknown as { resume(): void }).resume = () => {};
+
+  let output = "";
+  const stdout = new EventEmitter() as NodeJS.WriteStream;
+  stdout.columns = 80;
+  stdout.rows = 24;
+  stdout.write = chunk => {
+    output += String(chunk);
+    return true;
+  };
+  return { stdin, stdout, output: () => output };
+}
+
 describe("TerminalSession backpressure", () => {
   test("start 获取 frame lease，stop 释放", () => {
     const { stdin, stdout } = streams(true);
@@ -210,6 +226,57 @@ describe("TerminalSession backpressure", () => {
       expect(session.frameLease?.state).toBe("active");
       expect(session.outputArbiter.current()).toBe(session.frameLease);
       expect(session.requiresFullDamage()).toBe(true);
+      session.stop();
+    }
+  );
+
+  test.skipIf(process.platform === "win32")(
+    "runPtyWithRawLease 转发宿主 resize",
+    async () => {
+      const { stdin, stdout, output } = capturingStreams();
+      const session = new TerminalSession({
+        stdin,
+        stdout,
+        altScreen: false,
+        mouse: false,
+        bracketedPaste: false,
+        focusEvents: false,
+      });
+      session.start();
+
+      const exitCode = await runPtyWithRawLease(session, "child", "tool", {
+        cmd: [
+          process.execPath,
+          "-e",
+          `
+            const started = Date.now();
+            const timer = setInterval(() => {
+              const columns = process.stdout.columns;
+              const rows = process.stdout.rows;
+              if (columns === 100 && rows === 30) {
+                process.stdout.write("SIZE:" + columns + "x" + rows);
+                process.exit(0);
+              }
+              if (Date.now() - started > 1000) process.exit(2);
+            }, 10);
+          `,
+        ],
+        cols: 80,
+        rows: 24,
+        onReady() {
+          stdout.columns = 100;
+          stdout.rows = 30;
+          process.emit("SIGWINCH");
+        },
+      });
+
+      expect(exitCode).toBe(0);
+      const deadline = Date.now() + 500;
+      while (!output().includes("SIZE:100x30") && Date.now() < deadline) {
+        await Bun.sleep(5);
+      }
+      expect(output()).toContain("SIZE:100x30");
+      expect(session.frameLease?.state).toBe("active");
       session.stop();
     }
   );

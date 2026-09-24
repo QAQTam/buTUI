@@ -526,6 +526,13 @@ export async function runPtyWithRawLease(
       },
     });
     let unsubscribeInput: (() => void) | undefined;
+    const unsubscribeResize = session.onResize(size => {
+      try {
+        terminal.resize(size.columns, size.rows);
+      } catch {
+        // 子进程退出和 PTY close 存在竞态；resize 失败不能影响 lease 恢复。
+      }
+    });
     try {
       const process = Bun.spawn({
         cmd: options.cmd,
@@ -538,6 +545,7 @@ export async function runPtyWithRawLease(
       return await process.exited;
     } finally {
       unsubscribeInput?.();
+      unsubscribeResize();
       terminal.close();
     }
   });
