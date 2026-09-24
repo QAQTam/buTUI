@@ -96,6 +96,30 @@ describe("@butui/runtime —— 应用作者的唯一入口（SPEC §6 / §17）
     app.dispose();
   });
 
+  test("frame 模式：不同 tick 的高频变更也合并，并绘制最终值", async () => {
+    const terminal = new FakeTerminal();
+    const [value, setValue] = createSignal(0);
+
+    const app = createTuiApp({
+      terminal,
+      view: () => <text>{`value=${value()}`}</text>,
+      render: { mode: "frame", fps: 20 },
+      onQuit: () => {},
+    });
+
+    terminal.output = "";
+    terminal.writes = 0;
+    setValue(1);
+    setValue(2);
+    setValue(3);
+    await Bun.sleep(80);
+
+    expect(terminal.writes).toBe(1);
+    expect(terminal.output).toContain("value=3");
+    expect(terminal.output).not.toContain("value=2");
+    app.dispose();
+  });
+
   test("键位顺序：应用级 onKey 先，返回 true 就不再派发给焦点节点", () => {
     const terminal = new FakeTerminal();
     const seen: string[] = [];

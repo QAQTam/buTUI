@@ -9,7 +9,7 @@
 树 + 鼠标选区 / OSC 52 + 流式 Diff / 共享动画时钟 / 精确 ScrollBar +
 通用插件 / Slot / Keymap / 鼠标交互 / OSC 22 指针 / 拖动惯性 / tween /
 spring / timeline / Shimmer / Keymap chord / Command Palette / Slider /
-SplitPane 已跑通**，`bun test` 593 个用例全绿。
+SplitPane / 高频 chunk 合帧已跑通**，`bun test` 597 个用例全绿。
 
 ```
 应用（你的 agent / 工具 / TUI）
@@ -588,6 +588,37 @@ const [open, setOpen] = createSignal(false);
 | 9000 | 0.003 ms | 0.004 ms | 0.013 ms | **0.021 ms** |
 
 markdown 流：N=50 → 0.062 ms/delta，N=6000 → 0.041 ms/delta。
+
+### 高频 chunk：frame 合帧
+
+默认 `microtask` 模式只合并同一个 tick；如果 2000 tok/s 的每个 token 来自
+不同 timer / I/O 回调，仍会触发 2000 次 `flush + layout + draw`。高频流式视图
+应显式开启帧预算：
+
+```tsx
+const app = createTuiApp({
+  render: {
+    mode: "frame",
+    fps: 60,
+  },
+  view: () => <StreamMarkdown source={source} />,
+});
+```
+
+frame 模式的语义：
+
+- 空闲后的第一次变更走微任务，不额外增加一整帧延迟；
+- 帧预算内的所有 chunk 只标脏，latest state wins；
+- deadline 到了才 `flush + layout + draw`，最终值不会丢；
+- `app.paint()` 仍可立即绘制，`render: { mode: "microtask" }` 保持旧行为。
+
+实测（`bun --conditions=browser run scripts/render-bench.tsx`，1ms tick、
+每 tick 2 个 chunk）：
+
+| 模式 | 用时 | chunk/s | 终端写入 | 写入字节 |
+|---|---:|---:|---:|---:|
+| `microtask` | 1111 ms | 1800 | 1000 | 89640 |
+| `frame` 60fps | 1131 ms | 1769 | 68 | 7439 |
 
 ### 用法
 

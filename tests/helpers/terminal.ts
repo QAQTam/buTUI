@@ -9,6 +9,7 @@ import type { TuiSize, TuiTerminal } from "@butui/runtime";
  */
 export class FakeTerminal implements TuiTerminal {
   output = "";
+  writes = 0;
   started = false;
   stopped = false;
   size: TuiSize = { columns: 40, rows: 6 };
@@ -23,6 +24,7 @@ export class FakeTerminal implements TuiTerminal {
     this.stopped = true;
   }
   write(chunk: string): void {
+    this.writes++;
     this.output += chunk;
   }
   onEvent(listener: (event: ButuiEvent) => void): () => void {

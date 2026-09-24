@@ -55,6 +55,12 @@ import { type RenderStats, Renderer } from "@butui/renderer";
 import { provideAppScope, provideFocusScope, render } from "@butui/solid";
 import { TerminalSession, osc22, osc52, terminalSize } from "@butui/terminal";
 import { createSignal, flush } from "solid-js";
+import {
+  RenderScheduler,
+  type RenderOptions,
+} from "./render-scheduler.ts";
+
+export type { RenderMode, RenderOptions } from "./render-scheduler.ts";
 
 export interface TuiSize {
   columns: number;
@@ -143,6 +149,14 @@ export interface TuiAppOptions {
   stickyTop?: number;
   stickyBottom?: number;
   /**
+   * 渲染合帧策略。
+   *
+   * 默认 `mode: "microtask"`。高频流式 chunk（例如 2000 tok/s）建议用
+   * `{ mode: "frame", fps: 60 }`：同一帧内所有 delta 只布局 / 差分一次，
+   * 最后一块仍会在尾帧绘制。
+   */
+  render?: RenderOptions;
+  /**
    * 帧后钩子：原生图片图层（`ImageLayer.render`）、调试统计等。
    *
    * 返回值会拼进同一批写入；只做观察（比如 `ScrollView.measure`）可以不返回。
@@ -210,7 +224,7 @@ export interface TuiApp {
   stop(): void;
   /** 立刻画一帧（一般不用调；变更会自动重绘） */
   paint(): RenderStats;
-  /** 请求一帧（微任务合并，同一 tick 内多次调用只画一次） */
+  /** 请求一帧（按 `render.mode` 合并；默认同一 tick 内只画一次） */
   requestPaint(): void;
   /** 把事件喂进运行时（自定义输入源 / 测试注入） */
   send(event: ButuiEvent): number;
@@ -373,15 +387,18 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
     });
   };
 
-  const paint = (): RenderStats => renderer.draw(computeFrame());
+  let renderScheduler: RenderScheduler | undefined;
+  const paint = (): RenderStats => {
+    const stats = renderer.draw(computeFrame());
+    renderScheduler?.markPainted();
+    return stats;
+  };
 
-  // ── 合帧：任何节点变更 → 微任务里 flush + 画一帧 ───────────────────────
+  // ── 合帧：任何节点变更 → 微任务 / frame 调度器里 flush + 画一帧 ───────
   let dirty = true;
-  let scheduled = false;
   let disposed = false;
 
   const runFrame = (): void => {
-    scheduled = false;
     if (disposed) return;
     // Solid 2 的写入延迟到 flush：先提交，再决定要不要画
     flush();
@@ -392,10 +409,10 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
     if (dirty) requestPaint();
   };
 
+  renderScheduler = new RenderScheduler(runFrame, options.render);
   const requestPaint = (): void => {
-    if (disposed || scheduled) return;
-    scheduled = true;
-    queueMicrotask(runFrame);
+    if (disposed) return;
+    renderScheduler?.request();
   };
 
   const offMutation = onMutation(() => {
@@ -909,6 +926,7 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
   function stop(): void {
     if (!started) return;
     started = false;
+    renderScheduler?.cancel();
     pressedMouse = undefined;
     hoveredMouseNode = undefined;
     capturedMouseNode = undefined;
@@ -923,6 +941,7 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
     offMutation();
     offFocus();
     disposed = true;
+    renderScheduler?.dispose();
   };
 
   const app: TuiApp = {

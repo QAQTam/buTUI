@@ -61,7 +61,7 @@ interface TuiApp {
   start(): void;                    // autoStart 默认 true
   stop(): void;                     // 幂等，还原终端
   paint(): RenderStats;             // 立刻画一帧（一般不用调）
-  requestPaint(): void;             // 请求一帧，微任务合并
+  requestPaint(): void;             // 按 render.mode 合并
   send(event: ButuiEvent): number;  // 自定义输入源 / 测试注入
   frame(): Frame;                   // 当前布局（现算，不是「上一帧」）
   selection(): TextSelectionSnapshot | null; // 当前鼠标选区
@@ -75,27 +75,46 @@ interface TuiApp {
 }
 ```
 
+高频流式输出可配置合帧模式：
+
+```ts
+interface RenderOptions {
+  mode?: "microtask" | "frame"; // 默认 microtask
+  fps?: number;                 // frame 模式默认 60，范围 1~240
+}
+
+createTuiApp({ render: { mode: "frame", fps: 60 }, ... });
+```
+
+`frame` 模式只限制**终端绘制频率**，不丢内容：帧内多个 chunk 共享一次
+`flush + layout + draw`，最终值由尾帧绘制。空闲后的第一次变更走微任务；同帧内
+新 chunk 不会重置 deadline。`paint()` 不受限制，始终立即绘制。
+
 **保证：**
 
 1. **自动重绘。** 任何 `touch()`（= 任何节点变更）都会合并到下一帧，同一 tick
    内多次变更只画一次。异步变更不需要任何手动通知。
-2. **事件顺序固定**：`onKey`（应用级，返回 `true` 即消费）→ `keymap` →
+2. **`frame` 模式有帧预算。** 在事件循环能按时执行 timer 的前提下，终端绘制
+   不会超过配置的 `fps`；最后一块内容仍会在尾帧绘制。
+3. **事件顺序固定**：`onKey`（应用级，返回 `true` 即消费）→ `keymap` →
    `useKeyboard` → 内建（ctrl+c、tab/shift+tab）→ 焦点节点（向上冒泡）。
    鼠标：hit test 命中节点 → 冒泡；**没有节点处理**才走 `onMouse`。
-3. **resize 一定会整屏重画**（不是差分），`size()` 在重排前更新。
-4. **`dispose()` 之后不再写终端**，所有订阅解除。
-5. **默认 `scroll: "bottom"`**：内容超出视口时贴底（聊天式）。固定布局传
+4. **resize 一定会整屏重画**（不是差分），`size()` 在重排前更新。
+5. **`dispose()` 之后不再写终端**，所有订阅解除。
+6. **默认 `scroll: "bottom"`**：内容超出视口时贴底（聊天式）。固定布局传
    `scroll: () => "top"`。
-6. **`afterDraw`** 的返回值会拼在同一批写入里（原生图片协议挂这里）。
-7. **`send()` 结束前会 `flush()`**：事件引发的 signal 写入立刻落到节点树上，
-   所以「send 之后读 `frame()`」永远是一致的。真正的**绘制**仍在微任务里合并。
-8. **`frame()` 是现算的当前布局**（布局层按 rev 缓存，很便宜），不是「上一次
+7. **`afterDraw`** 的返回值会拼在同一批写入里（原生图片协议挂这里）。
+8. **`send()` 结束前会 `flush()`**：事件引发的 signal 写入立刻落到节点树上，
+   所以「send 之后读 `frame()`」永远是一致的。真正的**绘制**仍按 `render.mode`
+   合并。
+9. **`frame()` 是现算的当前布局**（布局层按 rev 缓存，很便宜），不是「上一次
    画出来的帧」—— 测试和 hit test 拿到的都是最新状态。
-9. **文本选择默认开启且不进入布局缓存。** 左键拖拽只给最终帧的 cell 打
-   `selected` 标记，不 `touch()` 节点；松开时默认写 OSC 52。`selection: false`
-   可完全关闭。OSC 52 是 best-effort，不保证终端接受。
+10. **文本选择默认开启且不进入布局缓存。** 左键拖拽只给最终帧的 cell 打
+    `selected` 标记，不 `touch()` 节点；松开时默认写 OSC 52。`selection: false`
+    可完全关闭。OSC 52 是 best-effort，不保证终端接受。
 
-**不保证：** 一帧内的重绘次数上限；`paint()` 之外的时序细节；`root` 的子结构。
+**不保证：** 默认 `microtask` 模式的一帧内重绘次数上限；`paint()` 之外的时序
+细节；`root` 的子结构。
 
 ## 3. 兼容规则
 

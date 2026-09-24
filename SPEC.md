@@ -407,8 +407,23 @@ buTUI 的定位是**底层**：应用（agent / 工具 / 自己的 TUI）不该�
 signal / 定时器 / 异步图片加载
   → setProp / replaceText / insertNode
   → touch()  → onMutation
-  → queueMicrotask(flush + layout + draw)
+  → microtask：flush + layout + draw
+    或 frame：deadline 时 flush + layout + draw
 ```
+
+默认仍是 microtask 合帧，只合并同一个 tick。高频流式输出可传
+`render: { mode: "frame", fps: 60 }`：
+
+```text
+chunk 1 ─┐
+chunk 2 ─┼→ dirty（不重置 deadline）→ flush + layout + draw（最新状态）
+chunk 3 ─┘
+```
+
+空闲后的第一个变更走微任务；帧预算内后续 chunk 只标脏，不反复 flush。最后一次
+变更仍会排尾帧，所以不会丢掉流式内容的尾巴。`paint()` 仍是立即绘制的逃生口。
+在 1ms tick、每 tick 2 chunk 的基准里，microtask 模式写入 1000 次 / 89640
+字节，frame 60fps 写入 68 次 / 7439 字节，用时基本相同。
 
 没有它，每个 app 都要手写 `schedulePaint`，并且在每个可能改状态的地方记得
 调用 —— demo 里曾经有 6 处，漏一处就是「界面不刷新」这种最难查的 bug。
