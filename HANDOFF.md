@@ -2,10 +2,10 @@
 
 > 交接时间：2026-09-24  
 > 仓库：`/home/qaqtamsy/项目/buTUI`  
-> 功能基线提交：`16e5bb3 feat(mouse): OSC 22 指针形状`
+> 功能基线提交：`0b61553 feat(mouse): 拖动释放惯性`
 > 工作区状态：功能提交后干净，本文件为对应交接刷新
-> 本轮能力：OSC 22 指针形状 + 命中解析 + capture / stop 恢复
-> 当前回归：`567 pass / 0 fail`，57 个测试文件，`tsc --noEmit` 通过
+> 本轮能力：dragend 速度采样 + 指数衰减惯性 + ScrollBar / Slider 接入
+> 当前回归：`573 pass / 0 fail`，58 个测试文件，`tsc --noEmit` 通过
 
 ## 1. 项目定位
 
@@ -15,7 +15,7 @@ buTUI 是基于 Bun + TypeScript 的通用 TUI Runtime。参考 OpenTUI 的接�
 - 稳定的 `createTuiApp` 应用入口；
 - SolidJS 2 RC 的细粒度响应式 host renderer；
 - 流式文本 / Markdown / Diff 的 O(1) 或 O(视口) 增量路径；
-- 鼠标、OSC 22 指针、滚动、Slider、SplitPane、插件 / Slot、Keymap 等通用交互能力；
+- 鼠标、OSC 22 指针、拖动惯性、滚动、Slider、SplitPane、插件 / Slot、Keymap 等通用交互能力；
 - agent 事件协议、Session、undo、artifact、图片等可组合上层。
 
 设计文档：
@@ -103,7 +103,7 @@ bun --conditions=browser run scripts/stream-bench.tsx
 | `@butui/web` | 实验性 DOM 渲染，不是当前优先级 |
 | `@butui/test` | headless mount、快照、事件注入 |
 
-源码约 17,200 行，测试约 10,600 行，57 个测试文件。
+源码约 17,400 行，测试约 10,800 行，58 个测试文件。
 
 ## 5. 已完成能力
 
@@ -204,9 +204,10 @@ const app = createTuiApp({
 
 - `AnimationScheduler`：进程内单例，默认 30fps，有订阅者才启动。
 - `useAnimationFrame()`：Solid 访问器，支持 `enabled` 和测试注入。
+- `startDragInertia()`：dragend 速度按指数衰减，输出整数 cell 位移，低速自动停。
 - `tick()` 可手动驱动，内部会 `flush()`，确保 runtime 收到节点变更。
 - `TERM=dumb` / `BUTUI_REDUCED_MOTION=1|true` 降级。
-- 当前唯一消费者：Diff 的 `stable:false` 流式游标。
+- 当前消费者：Diff 的 `stable:false` 流式游标、ScrollBar / Slider 拖动惯性。
 - 不要把 shimmer 铺到整条 markdown / 整个 diff；只做局部状态行或当前变化行。
 
 ### 5.7 精确 ScrollBar
@@ -251,8 +252,9 @@ const bar = createScrollBar({
 - 拖拽保留 `grabOffset`。
 - 点击轨道默认居中 thumb；`jump(y, "start")` 精确到顶部。
 - `<ScrollBar>` 用 capture + `localY`，拖出轨道矩形仍继续更新。
+- 释放后按 `dragend.velocityY` 惯性滚动；`inertia={false}` 可关闭。
 - `<Diff scrollbar>` 已接入。
-- 当前仅垂直轴。
+- 当前仅垂直轴；水平轴暂无明确场景，不优先做。
 
 ### 5.8 通用插件 / Slot
 
@@ -306,6 +308,9 @@ const bar = createScrollBar({
 - OSC 22：节点 `cursor` 属性、`MousePointerStyle`、`osc22()`；可点击链自动
   `pointer`，capture 期间保持捕获节点，stop / dispose 恢复 `default`。
 - `mousePointer: false` 可关闭；无按键 hover 仍需 `mouseMotion: "hover"`。
+- `dragend.velocityX / velocityY` 由最近窗口指针采样得到，单位 cell/ms；
+  `mouse.velocityWindowMs` / `maxVelocity` 可调。
+- `startDragInertia()` 供任意组件复用；ScrollBar / Slider 默认接入。
 - 文本选择仍默认接管左键拖拽；控件用 `selectable={false}`。
 - 已有 `scripts/mouse-demo.tsx`、`tests/mouse-interaction.test.tsx`、
   `tests/mouse-pointer.test.tsx`。
@@ -314,6 +319,7 @@ const bar = createScrollBar({
 
 - `createSlider()`：纯模型，比例 / step / 端点 / 键盘步进。
 - `<Slider>`：单行轨道，鼠标 `localX + capture + onDrag`，拖出矩形继续更新。
+- 释放后按 `dragend.velocityX` 惯性移动；`inertia={false}` 可关闭。
 - 键盘：方向键 / PageUp / PageDown / Home / End。
 - ScrollBar 与 Slider 共用「本地坐标 + capture + drag」模式。
 - 已有 `tests/slider.test.tsx`。
@@ -353,7 +359,7 @@ const bar = createScrollBar({
 | 鼠标捕获 / 双击 / hover | `packages/runtime/src/index.ts`、`packages/core/src/{events,dispatch}.ts` |
 | OSC 22 / 指针形状类型 | `packages/terminal/src/index.ts`、`packages/core/src/events.ts` |
 | Solid `useMouseCapture` | `packages/solid/src/app-context.ts` |
-| 动画调度 | `packages/solid/src/animation.ts` |
+| 动画调度 / 拖动惯性 | `packages/solid/src/{animation,inertia}.ts` |
 | 布局 / Frame / selectionText | `packages/layout/src/index.ts` |
 | 渲染器 | `packages/renderer/src/index.ts` |
 | 终端输入 / OSC 52 | `packages/terminal/src/{input,index}.ts` |
@@ -400,21 +406,23 @@ bridge、真实 tool event 对接或 bugent 快捷键迁移。
     `localX / localY` 的参考原点跟着漂移，拖动会产生反馈抖动。
 21. OSC 22 必须去重，并在 capture / stop / dispose 恢复 `default`；否则退出
     终端后鼠标指针可能残留在 pointer / grab。无按键 hover 需要 1003。
+22. 惯性只在 `dragend` 启动，新拖动 / unmount 必须 cancel；SplitPane 和文本
+    选择不做惯性。速度单位固定为 cell/ms，不要混用秒或帧。
 
 ### 包边界
 
-22. `@butui/agent` 不能静态依赖 `@butui/image`，browser 打包会碰 Bun builtin。
-23. `bun test` 的 preload 要写在 `[test].preload`，顶层 `preload` 只影响
+23. `@butui/agent` 不能静态依赖 `@butui/image`，browser 打包会碰 Bun builtin。
+24. `bun test` 的 preload 要写在 `[test].preload`，顶层 `preload` 只影响
     `bun run`。
-24. `@butui/web` 是实验层；当前 WebUI 尚未消费 `tool.diff`。
+25. `@butui/web` 是实验层；当前 WebUI 尚未消费 `tool.diff`。
 
 ## 9. 测试与验收
 
 当前：
 
 ```text
-567 pass / 0 fail
-57 test files
+573 pass / 0 fail
+58 test files
 tsc --noEmit pass
 ```
 
@@ -434,6 +442,7 @@ tsc --noEmit pass
 - `tests/keymap-runtime.test.tsx`
 - `tests/mouse-interaction.test.tsx`
 - `tests/mouse-pointer.test.tsx`
+- `tests/inertia.test.ts`
 - `tests/slider.test.tsx`
 - `tests/splitpane.test.tsx`
 - `tests/solid-cleanup-contract.test.tsx`
@@ -453,12 +462,12 @@ git diff --check
 - 插件已有 manifest / 配置 / 直接依赖发现 / capability 门控；无运行时沙箱 /
   权限审批 / 跨进程隔离。
 - 鼠标已有 hover / 双击 / 右键 / pointer capture / local 坐标 / drag 生命周期 /
-  OSC 22 指针；无 pointerId、多指针、惯性。
+  OSC 22 指针 / 拖动惯性；无 pointerId、多指针。惯性只接 ScrollBar / Slider。
 - Keymap 只有单键；无多键 chord、前缀超时、用户自定义绑定持久化。
 - Diff 没有 word-level diff、任意位置删除、hunk 折叠、“滚开后有新行”提示。
-- ScrollBar 只有垂直轴；无自动隐藏、hover 展开、水平轴、惯性。
+- ScrollBar 只有垂直轴；无自动隐藏、hover 展开、水平轴。
 - SplitPane 的拖动 min/max 依赖应用传对 `size`；无折叠、嵌套拖动约束、双击复位。
-- 动画只有共享时钟和 Diff 游标；无 tween / spring / timeline / shimmer。
+- 动画有共享时钟、Diff 游标和拖动惯性；无通用 tween / spring / timeline / shimmer。
 - 编辑器模型没有内部选区、剪贴板历史、撤销栈。
 - 列表只支持单列 + 固定行高，变高行不支持。
 - `flexShrink` 未实现。
@@ -470,15 +479,15 @@ git diff --check
 
 按通用 TUI 收益排序：
 
-1. **鼠标能力继续**：拖动惯性。水平 ScrollBar 暂无明确场景，不优先做。
-2. **Keymap 扩展**：多键 chord、前缀超时、用户自定义绑定持久化、Command Palette。
-3. **插件运行时约束 / 审批**：capability 目前只是 import 前门控，下一步做权限
+1. **Keymap 扩展**：多键 chord、前缀超时、用户自定义绑定持久化、Command Palette。
+2. **插件运行时约束 / 审批**：capability 目前只是 import 前门控，下一步做权限
    审批 UI 或 worker 隔离。
-4. **Portal / Dynamic / Toast / Tooltip**：补齐 OpenTUI 已有的通用组件接口。
-5. **Timeline / tween / spring**：建立在现有 `AnimationScheduler` 上。
-6. **自定义 renderable / component catalogue**：保持 Bun/TS 的 tag→节点映射，
+3. **Portal / Dynamic / Toast / Tooltip**：补齐 OpenTUI 已有的通用组件接口。
+4. **Timeline / tween / spring**：建立在现有 `AnimationScheduler` 上。
+5. **自定义 renderable / component catalogue**：保持 Bun/TS 的 tag→节点映射，
    不照搬 OpenTUI 的 Zig Renderable 类层次。
-7. **WebUI diff**：等 WebUI 重新成为优先级再做。
+6. **WebUI diff**：等 WebUI 重新成为优先级再做。
+7. **水平 ScrollBar**：暂无明确使用场景，暂不优先。
 
 ## 12. 协作约定
 

@@ -556,7 +556,7 @@ keymap.bindCommand(
   `default`。`mousePointer: false` 可关闭，终端不支持时忽略。
 - `<Input>` / `<Textarea>` 默认 `cursor="text"`。
 - 文本选择默认接管左键拖拽；控件用 `selectable={false}` 退出竞争。
-- 当前没有 pointerId / 多指针 / 惯性。
+- 当前没有 pointerId / 多指针；惯性只接 ScrollBar / Slider。
 
 ### 4.22 Slider：`createSlider` / `<Slider>`
 
