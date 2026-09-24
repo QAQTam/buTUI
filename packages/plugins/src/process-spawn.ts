@@ -1,0 +1,137 @@
+import { attachProcessRpc } from "./process-rpc.ts";
+import type {
+  NdjsonRpcEndpoint,
+  ProcessRpcSubprocess,
+} from "./process-rpc.ts";
+
+export interface ProcessRpcResourcePolicy {
+  /** Bun.spawn timeout；到点后按 killSignal 终止。 */
+  timeoutMs?: number;
+  /** stdout + stderr 总输出上限，映射到 Bun.spawn maxBuffer。 */
+  maxOutputBytes?: number;
+  /** stdout 单帧上限，映射到 NDJSON endpoint。 */
+  maxFrameBytes?: number;
+  /** stdout bytes/s token bucket 上限，由 host 侧强制。 */
+  maxBytesPerSecond?: number;
+  killSignal?: string | number;
+  /**
+   * 已有 cgroup 目录或 fd。
+   *
+   * memory.max / cpu.max / pids.max 等硬限制由外部创建和配置；Bun 只负责让子进程
+   * 在启动时加入该 cgroup。
+   */
+  cgroup?: string | number;
+}
+
+export interface SpawnProcessRpcOptions {
+  cmd: readonly string[];
+  cwd?: string;
+  env?: Record<string, string | undefined>;
+  resources?: ProcessRpcResourcePolicy;
+  onStderr?: (chunk: string) => void;
+}
+
+export interface SpawnedProcessRpcProcess extends ProcessRpcSubprocess {
+  readonly pid: number;
+  resourceUsage(): unknown;
+}
+
+export interface SpawnedProcessRpc {
+  process: SpawnedProcessRpcProcess;
+  endpoint: NdjsonRpcEndpoint;
+}
+
+/**
+ * 创建带资源策略的 Bun 子进程 RPC。
+ *
+ * timeout / maxBuffer 由 Bun 直接执行；maxBytesPerSecond 由 host 侧监控并 kill。
+ * heap / CPU / pids 的硬上限依赖外部 cgroup 配置，本函数只负责传递 cgroup。
+ */
+export function spawnProcessRpc(
+  options: SpawnProcessRpcOptions
+): SpawnedProcessRpc {
+  const resources = options.resources ?? {};
+  const child = Bun.spawn({
+    cmd: [...options.cmd],
+    ...(options.cwd ? { cwd: options.cwd } : {}),
+    ...(options.env ? { env: options.env } : {}),
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+    ...(resources.timeoutMs !== undefined
+      ? { timeout: normalizePositive(resources.timeoutMs, "timeoutMs") }
+      : {}),
+    ...(resources.maxOutputBytes !== undefined
+      ? {
+          maxBuffer: normalizePositive(
+            resources.maxOutputBytes,
+            "maxOutputBytes"
+          ),
+        }
+      : {}),
+    ...(resources.killSignal !== undefined
+      ? { killSignal: resources.killSignal }
+      : {}),
+    ...(resources.cgroup !== undefined
+      ? { cgroup: resources.cgroup }
+      : {}),
+  });
+  if (!child.stdin || !child.stdout) {
+    throw new Error("[butui] spawnProcessRpc requires pipe stdio");
+  }
+
+  const endpoint = attachProcessRpc(child, {
+    ...(resources.maxFrameBytes !== undefined
+      ? { maxFrameBytes: resources.maxFrameBytes }
+      : {}),
+    ...(resources.maxOutputBytes !== undefined
+      ? { maxTotalBytes: resources.maxOutputBytes }
+      : {}),
+    ...(resources.maxBytesPerSecond !== undefined
+      ? {
+          maxBytesPerSecond: normalizePositive(
+            resources.maxBytesPerSecond,
+            "maxBytesPerSecond"
+          ),
+        }
+      : {}),
+  });
+
+  if (child.stderr) {
+    void pumpStderr(child.stderr, options.onStderr);
+  }
+
+  return {
+    process: child,
+    endpoint,
+  };
+}
+
+async function pumpStderr(
+  stream: ReadableStream<Uint8Array>,
+  onChunk?: (chunk: string) => void
+): Promise<void> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const text = decoder.decode(value, { stream: true });
+      if (text && onChunk) onChunk(text);
+    }
+    const tail = decoder.decode();
+    if (tail && onChunk) onChunk(tail);
+  } catch {
+    // stderr 是诊断通道；读取失败不能覆盖 RPC 的主状态。
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+function normalizePositive(value: number, name: string): number {
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(`[butui] ${name} must be a positive finite number`);
+  }
+  return Math.floor(value);
+}

@@ -20,6 +20,12 @@ export interface NdjsonRpcEndpointOptions {
   output: NdjsonRpcOutput;
   /** 超过该长度的单行会被视为协议错误；默认 8 MiB。 */
   maxFrameBytes?: number;
+  /** 整个 endpoint 生命周期允许读取的最大字节数。 */
+  maxTotalBytes?: number;
+  /** bytes/s token bucket；默认 burst 等于该值。 */
+  maxBytesPerSecond?: number;
+  /** 测试 / 自定义时钟注入。 */
+  now?: () => number;
   close?(): void | Promise<void>;
 }
 
@@ -53,15 +59,22 @@ export function createNdjsonRpcEndpoint(
   options: NdjsonRpcEndpointOptions
 ): NdjsonRpcEndpoint {
   const maxFrameBytes = normalizeFrameLimit(options.maxFrameBytes);
+  const maxTotalBytes = normalizeOptionalLimit(options.maxTotalBytes);
+  const maxBytesPerSecond = normalizeOptionalLimit(options.maxBytesPerSecond);
+  const now = options.now ?? (() => performance.now());
   const listeners = new Map<
     WorkerRpcEndpointEvent,
     Set<(event: Event) => void>
   >();
   const decoder = new TextDecoder();
+  let rateTokens = maxBytesPerSecond ?? 0;
+  let rateUpdatedAt = now();
+  let totalBytes = 0;
   let buffer = "";
   let closed = false;
   let disposed = false;
   let disposePromise: Promise<void> | undefined;
+  let closePromise: Promise<void> | undefined;
   let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
 
   const dispatch = (type: WorkerRpcEndpointEvent, event: Event): void => {
@@ -82,6 +95,52 @@ export function createNdjsonRpcEndpoint(
       error,
       message: error.message,
     } as ErrorEvent);
+  };
+
+  const closeTarget = (): Promise<void> => {
+    if (!closePromise) {
+      closePromise = Promise.resolve()
+        .then(() => options.close?.())
+        .then(() => undefined)
+        .catch(() => undefined);
+    }
+    return closePromise;
+  };
+
+  const enforceByteLimits = (bytes: number): boolean => {
+    totalBytes += bytes;
+    if (maxTotalBytes !== undefined && totalBytes > maxTotalBytes) {
+      fail(
+        new Error(
+          `[butui] process RPC total output exceeds ${maxTotalBytes} bytes`
+        ),
+        "error"
+      );
+      void closeTarget();
+      return false;
+    }
+
+    if (maxBytesPerSecond !== undefined) {
+      const timestamp = now();
+      const elapsed = Math.max(0, timestamp - rateUpdatedAt);
+      rateUpdatedAt = timestamp;
+      rateTokens = Math.min(
+        maxBytesPerSecond,
+        rateTokens + (elapsed / 1_000) * maxBytesPerSecond
+      );
+      if (bytes > rateTokens) {
+        fail(
+          new Error(
+            `[butui] process RPC output rate exceeds ${maxBytesPerSecond} bytes/s`
+          ),
+          "error"
+        );
+        void closeTarget();
+        return false;
+      }
+      rateTokens -= bytes;
+    }
+    return true;
   };
 
   const handleLine = (line: string): boolean => {
@@ -106,6 +165,7 @@ export function createNdjsonRpcEndpoint(
   };
 
   const consume = (chunk: Uint8Array): boolean => {
+    if (!enforceByteLimits(chunk.byteLength)) return false;
     buffer += decoder.decode(chunk, { stream: true });
     for (;;) {
       const newline = buffer.indexOf("\n");
@@ -203,7 +263,7 @@ export function createNdjsonRpcEndpoint(
         } catch {
           // 输入可能已自然结束。
         }
-        await options.close?.();
+        await closeTarget();
       })();
       return disposePromise;
     },
@@ -263,6 +323,12 @@ export function serveProcessRpc(
 
 function normalizeFrameLimit(value: number | undefined): number {
   if (value === undefined || !Number.isFinite(value)) return 8 * 1024 * 1024;
+  return Math.max(1, Math.floor(value));
+}
+
+function normalizeOptionalLimit(value: number | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  if (!Number.isFinite(value)) return undefined;
   return Math.max(1, Math.floor(value));
 }
 

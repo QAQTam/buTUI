@@ -11,6 +11,7 @@ export * from "./capability-policy.ts";
 export * from "./approval.ts";
 export * from "./capability-proxy.ts";
 export * from "./process-rpc.ts";
+export * from "./process-spawn.ts";
 export * from "./rpc-handshake.ts";
 export * from "./worker-rpc.ts";
 export * from "./worker-supervisor.ts";
