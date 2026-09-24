@@ -174,6 +174,8 @@ export interface RawLeaseContext {
   lease: TerminalLease;
   /** raw owner 直接写终端；返回 false 表示底层 backpressure。 */
   write(bytes: string | Uint8Array): boolean;
+  /** raw 期间直接订阅 stdin 字节，不再经过 UI InputDecoder。 */
+  onInput(listener: (chunk: Uint8Array) => void): () => void;
 }
 
 export class TerminalSession {
@@ -192,6 +194,7 @@ export class TerminalSession {
   private listeners = new Set<(event: ButuiEvent) => void>();
   private resizeListeners = new Set<(size: TerminalSize) => void>();
   private drainListeners = new Set<() => void>();
+  private rawInputListeners = new Set<(chunk: Uint8Array) => void>();
   private escapeTimer: ReturnType<typeof setTimeout> | undefined;
   private started = false;
   private disposers: Array<() => void> = [];
@@ -273,6 +276,7 @@ export class TerminalSession {
     const shouldResume = this.lease !== undefined;
     await this.suspend(reason);
     let raw: TerminalLease | undefined;
+    const rawInputs = new Set<(chunk: Uint8Array) => void>();
     try {
       raw = await this.arbiter.acquire({
         owner,
@@ -289,8 +293,18 @@ export class TerminalSession {
           });
           return receipt.accepted && !receipt.blocked;
         },
+        onInput: listener => {
+          const wrapped = (chunk: Uint8Array) => listener(chunk);
+          rawInputs.add(wrapped);
+          this.rawInputListeners.add(wrapped);
+          return () => {
+            rawInputs.delete(wrapped);
+            this.rawInputListeners.delete(wrapped);
+          };
+        },
       });
     } finally {
+      for (const listener of rawInputs) this.rawInputListeners.delete(listener);
       if (raw) await this.arbiter.release(raw);
       if (shouldResume) await this.resume();
     }
@@ -322,7 +336,12 @@ export class TerminalSession {
     this.setRawMode(true);
 
     const onData = (chunk: Buffer | Uint8Array) => {
-      const events = this.decoder.push(chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk));
+      const bytes = chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk);
+      if (this.rawInputListeners.size > 0) {
+        for (const listener of [...this.rawInputListeners]) listener(bytes);
+        return;
+      }
+      const events = this.decoder.push(bytes);
       for (const event of events) this.emit(event);
       this.scheduleEscapeFlush();
     };
@@ -468,4 +487,58 @@ export class TerminalSession {
     }
     if (enabled) stdin.resume?.();
   }
+}
+
+export interface PtyRunOptions {
+  cmd: string[];
+  cwd?: string;
+  env?: Record<string, string>;
+  cols?: number;
+  rows?: number;
+  name?: string;
+  /** PTY 与子进程建立后、等待退出前的钩子。 */
+  onReady?: (terminal: Bun.Terminal) => void;
+}
+
+/**
+ * 在 raw lease 内运行一个 Bun PTY 子进程。
+ *
+ * 子进程输出直接写回宿主终端；raw 期间的宿主 stdin 字节直接转发给 PTY，
+ * 不再经过 InputDecoder / UI 事件层。
+ */
+export async function runPtyWithRawLease(
+  session: TerminalSession,
+  owner: string,
+  reason: string,
+  options: PtyRunOptions
+): Promise<number> {
+  if (typeof Bun.Terminal !== "function") {
+    throw new Error("[butui] 当前 Bun 不支持 Bun.Terminal");
+  }
+
+  return session.withRawLease(owner, reason, async context => {
+    const terminal = new Bun.Terminal({
+      cols: options.cols ?? session.size.columns,
+      rows: options.rows ?? session.size.rows,
+      ...(options.name ? { name: options.name } : {}),
+      data(_terminal, chunk) {
+        context.write(chunk);
+      },
+    });
+    let unsubscribeInput: (() => void) | undefined;
+    try {
+      const process = Bun.spawn({
+        cmd: options.cmd,
+        ...(options.cwd ? { cwd: options.cwd } : {}),
+        ...(options.env ? { env: options.env } : {}),
+        terminal,
+      });
+      unsubscribeInput = context.onInput(chunk => terminal.write(chunk));
+      options.onReady?.(terminal);
+      return await process.exited;
+    } finally {
+      unsubscribeInput?.();
+      terminal.close();
+    }
+  });
 }

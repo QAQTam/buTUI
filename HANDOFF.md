@@ -425,7 +425,8 @@ const bar = createScrollBar({
 
 - FrameClock：critical / reveal / decorative / maintenance lane、coalesceKey、
   budget、backpressure 和 fake-clock 确定性。
-- TerminalArbiter：frame / append / raw lease、supersede、suspend / resume。
+- TerminalArbiter：frame / append / raw lease、supersede、suspend / resume；
+  `withRawLease` 支持原始 stdin 路由，`runPtyWithRawLease` 已接入 Bun.Terminal。
 - Presented-frame hit test：慢 stdout 下仍按用户看到的 frame 路由输入。
 - StreamLedger：append / replace-tail / finish / cancel、gap / duplicate /
   conflict、revision 和 replay。
@@ -636,6 +637,8 @@ git diff --check
   `appliedStorePath` 后可磁盘换出，10M 实测 heap 增量约 0.19MB。
 - `<StreamWindow>` 已有 runtime 集成测试，但尚未接入真实 agent transcript 页面；
   FrameClock 滚动合并已通过 FakeTerminal，端到端真实 PTY 数据仍待采集。
+- `runPtyWithRawLease` 已有 Bun.Terminal 生命周期测试；具体工具调用、PTY resize
+  转发和真实 bugent 工具集成仍待接入。
 
 ## 11. 推荐下一步
 

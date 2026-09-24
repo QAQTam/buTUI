@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { EventEmitter } from "node:events";
 import { createElement } from "@butui/core";
 import { createTuiApp } from "@butui/runtime";
-import { TerminalSession } from "@butui/terminal";
+import { TerminalSession, runPtyWithRawLease } from "@butui/terminal";
 
 function streams(writeResult: boolean) {
   const stdin = new EventEmitter() as unknown as NodeJS.ReadStream;
@@ -150,6 +150,69 @@ describe("TerminalSession backpressure", () => {
     expect(session.requiresFullDamage()).toBe(true);
     session.stop();
   });
+
+  test("raw lease 原始输入绕过 UI InputDecoder", async () => {
+    const { stdin, stdout } = streams(true);
+    const session = new TerminalSession({
+      stdin,
+      stdout,
+      altScreen: false,
+      mouse: false,
+      bracketedPaste: false,
+      focusEvents: false,
+    });
+    const events: unknown[] = [];
+    session.onEvent(event => events.push(event));
+    session.start();
+
+    let received = "";
+    const result = await session.withRawLease("child", "pty", async context => {
+      const off = context.onInput(chunk => {
+        received += new TextDecoder().decode(chunk);
+      });
+      (stdin as unknown as EventEmitter).emit("data", Buffer.from("raw-input"));
+      off();
+      return 7;
+    });
+
+    expect(result).toBe(7);
+    expect(received).toBe("raw-input");
+    expect(events).toEqual([]);
+    expect(session.frameLease?.state).toBe("active");
+    session.stop();
+  });
+
+  test.skipIf(process.platform === "win32")(
+    "runPtyWithRawLease 运行子进程并恢复 frame lease",
+    async () => {
+      const { stdin, stdout } = streams(true);
+      const session = new TerminalSession({
+        stdin,
+        stdout,
+        altScreen: false,
+        mouse: false,
+        bracketedPaste: false,
+        focusEvents: false,
+      });
+      session.start();
+
+      const exitCode = await runPtyWithRawLease(session, "child", "tool", {
+        cmd: [
+          process.execPath,
+          "-e",
+          "process.stdout.write('PTY_OK'); process.exit(0)",
+        ],
+        cols: 80,
+        rows: 24,
+      });
+
+      expect(exitCode).toBe(0);
+      expect(session.frameLease?.state).toBe("active");
+      expect(session.outputArbiter.current()).toBe(session.frameLease);
+      expect(session.requiresFullDamage()).toBe(true);
+      session.stop();
+    }
+  );
 
   test("runtime withRawLease 自动恢复 frame 并请求 full damage", async () => {
     const { stdin, stdout } = streams(true);
