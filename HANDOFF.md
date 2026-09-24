@@ -2,8 +2,8 @@
 
 > 交接时间：2026-09-24  
 > 仓库：`/home/qaqtamsy/项目/buTUI`  
-> 功能基线提交：`e625f5e feat(keymap): 命令注册与作用域快捷键`
-> 工作区状态：Keymap / Command Registry 提交处干净
+> 功能基线提交：`2ac85a7 feat(mouse): hover、双击与指针捕获`
+> 工作区状态：鼠标交互增强提交处干净
 > 本轮能力：鼠标 hover / 双击 / 右键 / pointer capture
 > 当前回归：`543 pass / 0 fail`，`tsc --noEmit` 通过
 
