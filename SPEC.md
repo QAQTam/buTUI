@@ -1214,6 +1214,19 @@ const [mount, setMount] = createSignal<Node>();
 
 ---
 
+### 5.31 Dynamic（v0.1 实现）
+
+```tsx
+<Dynamic component={component()} title={title()} />
+```
+
+- `component` 支持函数组件和 intrinsic tag 字符串。
+- 函数组件直接调用；字符串走 `createElement + spread + insert`。
+- props / children 保持响应式；切换组件类型时重建节点。
+- `undefined` 安全渲染为空，适合按状态选择组件。
+
+---
+
 ### 5.17 应用上下文（v0.1 实现）
 
 组件要能问「现在多宽 / 什么色深 / 我想订一个全局键」，但既不该认识 runtime，
@@ -1724,6 +1737,7 @@ P1：
 - `Tooltip`：`createTooltipController` / `tooltipPosition` / `<Tooltip>`，
   延迟、四向定位与根 layer（见 §5.29）
 - `Portal`：`<Portal mount>` 显式挂载 children，默认 app root（见 §5.30）
+- `Dynamic`：`createDynamic` / `<Dynamic>` 函数组件与 intrinsic tag 切换（见 §5.31）
 - `Select` / `Tabs`：`<Select>`（↑↓ + Enter）与 `<Tabs>`（←→ 立即切换）
 - `Table`：列宽显式给或按内容算，支持左 / 中 / 右对齐
 - `Tree`：受控展开（`expanded` + `onToggle`），←→ 展开收起、→ 进子节点

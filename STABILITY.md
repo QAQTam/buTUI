@@ -36,7 +36,7 @@ const app = createTuiApp({
 | 布局 | `@butui/layout` | **稳定**（`Cell` / `Line` / `Frame` / `layout`） |
 | 渲染 | `@butui/renderer` | **稳定**（`Renderer` / `plainText` / `paintLine`） |
 | 终端 | `@butui/terminal` | **稳定**（`TerminalSession` / 输入解码 / 能力探测 / `osc22` / `osc52`） |
-| 基础组件 | `@butui/components` | **稳定**（编辑器 / 选择 / 列表 / 滚动 / ScrollBar / Slider / SplitPane / CommandPalette / Toast / Tooltip / Portal / Diff / 弹窗 / 展示组件） |
+| 基础组件 | `@butui/components` | **稳定**（编辑器 / 选择 / 列表 / 滚动 / ScrollBar / Slider / SplitPane / CommandPalette / Toast / Tooltip / Portal / Dynamic / Diff / 弹窗 / 展示组件） |
 | 插件 / Slot | `@butui/plugins` | **稳定**（`Plugin` / `SlotRegistry`；Solid 适配在 `@butui/plugins/solid`；loader 在 `@butui/plugins/loader`） |
 | 命令 / Keymap | `@butui/keymap` | **稳定**（`CommandRegistry` / `Keymap`；Solid 适配在 `@butui/keymap/solid`） |
 | 流式文本 | `@butui/stream` | **稳定**（`StreamSource` / `DiffStream` / `<stream>`） |
@@ -745,6 +745,17 @@ const tip = createTooltipController({ delayMs: 400 });
 - 原位置只保留零宽 sentinel，不改变布局。
 - children 响应式更新；mount 变化 / 卸载会移除挂载容器。
 - Portal 只负责挂载，不提供焦点 trap、遮罩或 z-index 策略。
+
+### 4.29 Dynamic：`createDynamic` / `<Dynamic>`
+
+```tsx
+<Dynamic component={component()} title={title()} />
+```
+
+- `component` 支持函数组件和 intrinsic tag 字符串。
+- 切换组件类型时重建目标节点；props / children 保持响应式。
+- `undefined` 渲染为空。
+- `createDynamic()` 可让库在不创建包装组件的情况下动态渲染。
 
 ## 5. 已知缺口（不要依赖，也不建议自己绕）
 

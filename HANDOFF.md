@@ -3,9 +3,9 @@
 > 交接时间：2026-09-24
 > 仓库：`/home/qaqtamsy/项目/buTUI-v0.2-frontier`
 > 功能基线提交：`61d889b feat(components): add capability approval dialog`
-> 工作区状态：本文件与 Portal 组件一并提交
-> 本轮能力：explicit mount + root fallback + cleanup
-> 当前回归：`765 pass / 0 fail`，89 个测试文件，`tsc --noEmit` 通过
+> 工作区状态：本文件与 Dynamic 组件一并提交
+> 本轮能力：dynamic component + intrinsic switching
+> 当前回归：`767 pass / 0 fail`，90 个测试文件，`tsc --noEmit` 通过
 
 ## 1. 项目定位
 
@@ -109,7 +109,7 @@ bun --conditions=browser run scripts/plugin-isolation-bench.ts --calls=5000 --wa
 | `@butui/layout` | flex 子集、增量合成、视口窗口、文本选区提取 |
 | `@butui/renderer` | cell → ANSI、逐行差分、SGR / 选区状态机 |
 | `@butui/terminal` | raw mode、resize、输入解码、能力探测、OSC 52 |
-| `@butui/components` | 编辑器、Input、Textarea、List、Diff、ScrollBar、Slider、SplitPane、Toast、Tooltip、Portal、弹窗等 |
+| `@butui/components` | 编辑器、Input、Textarea、List、Diff、ScrollBar、Slider、SplitPane、Toast、Tooltip、Portal、Dynamic、弹窗等 |
 | `@butui/plugins` | 通用 SlotRegistry / Plugin / 错误隔离；Solid `<Slot>` 适配 |
 | `@butui/keymap` | CommandRegistry / 作用域 keymap / 冲突检测 / help；Solid `useKeymap` |
 | `@butui/stream` | `LineBuffer`、MarkdownStream、DiffStream |
@@ -160,6 +160,8 @@ bun --conditions=browser run scripts/plugin-isolation-bench.ts --calls=5000 --wa
   四向定位、延迟显示、hover 生命周期与视口夹取。
 - Portal：`<Portal mount>` 将 children 渲染到指定节点；不传 mount 时挂到 app root，
   原位置保留零宽 sentinel，卸载自动清理。
+- Dynamic：`createDynamic` / `<Dynamic component>` 支持函数组件与 intrinsic tag
+  动态切换，props / children 保持响应式。
 - 展示：`ProgressBar` / `Spinner` / `Badge` / `Divider` / `KeyHint`。
 
 ### 5.4 鼠标文本选择 + OSC 52
@@ -415,6 +417,14 @@ const bar = createScrollBar({
 - children 保持 Solid 响应式；mount 变化或组件卸载自动移除容器。
 - 已有 `tests/portal.test.tsx`。
 
+### 5.14.4 Dynamic
+
+- `createDynamic(component, props)`：函数组件直接调用，intrinsic tag 使用
+  `createElement + spread + insert`。
+- `<Dynamic component={...}>`：切换组件类型时重建目标节点。
+- props / children 保持响应式；`undefined` 渲染为空。
+- 已有 `tests/dynamic.test.tsx`。
+
 ### 5.15 高频渲染合帧
 
 - `RenderScheduler`：microtask 与 frame 两种模式；默认行为不变。
@@ -638,8 +648,8 @@ bridge、真实 tool event 对接或 bugent 快捷键迁移。
 当前：
 
 ```text
-765 pass / 0 fail
-89 test files
+767 pass / 0 fail
+90 test files
 tsc --noEmit pass
 ```
 
@@ -671,6 +681,7 @@ tsc --noEmit pass
 - `tests/toast.test.tsx`
 - `tests/tooltip.test.tsx`
 - `tests/portal.test.tsx`
+- `tests/dynamic.test.tsx`
 - `tests/mouse-interaction.test.tsx`
 - `tests/mouse-pointer.test.tsx`
 - `tests/inertia.test.ts`
@@ -742,7 +753,7 @@ git diff --check
    limits、cgroup v2 lifecycle 与 NDJSON audit rotation / remote sink / hash chain /
    HMAC / batch retry / dedupe / explicit ack / source ordering / pending recovery /
    cleanup 已完成；下一步做自动 cgroup 委派与 OS 权限 sandbox。
-5. **Dynamic**：补齐 OpenTUI 已有的剩余通用组件接口。
+5. **Popover / Form / MultiSelect**：补齐剩余通用交互组件。
 6. **动画编排增强**：更复杂的 stagger、滚动回弹和动画调试工具。
 7. **WebUI diff / 水平 ScrollBar**：等真实需求出现后再做。
 
