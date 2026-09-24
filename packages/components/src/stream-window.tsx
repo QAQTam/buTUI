@@ -11,7 +11,7 @@ import {
   type StreamId,
   type StreamLedger,
 } from "@butui/stream";
-import { useFocusScope } from "@butui/solid";
+import { useAppScope, useFocusScope } from "@butui/solid";
 import { createEffect, Show } from "solid-js";
 import { ScrollBar } from "./scrollbar.tsx";
 import {
@@ -38,10 +38,12 @@ export interface StreamWindowProps {
 
 export function StreamWindow(props: StreamWindowProps) {
   const height = (): number => Math.max(0, Math.floor(props.height));
+  const scope = useAppScope();
   const controller = createStreamWindowController({
     ledger: props.ledger,
     streamId: props.streamId,
     height: height(),
+    ...(scope?.frameClock ? { clock: scope.frameClock } : {}),
     ...(props.prefetchPages !== undefined
       ? { prefetchPages: props.prefetchPages }
       : {}),

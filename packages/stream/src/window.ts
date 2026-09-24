@@ -7,6 +7,10 @@
  */
 import { createSignal } from "solid-js";
 import type {
+  FrameClock,
+  FrameRequestHandle,
+} from "@butui/core";
+import type {
   StreamId,
   StreamLedger,
   StreamLineRecord,
@@ -38,6 +42,8 @@ export interface StreamWindowControllerOptions extends StreamWindowOptions {
   height?: number;
   /** 上下各预取多少页；默认 1。 */
   prefetchPages?: number;
+  /** 注入后把连续滚动合并到帧；不传时请求立即排队执行。 */
+  clock?: FrameClock;
 }
 
 export interface StreamWindowController {
@@ -52,6 +58,11 @@ export interface StreamWindowController {
   scrollTo(offset: number): Promise<StreamLineWindow>;
   scrollBy(delta: number): Promise<StreamLineWindow>;
   pageBy(pages: number): Promise<StreamLineWindow>;
+  /** 请求滚动；注入 FrameClock 时同一帧只提交最新 offset。 */
+  requestScrollTo(offset: number): void;
+  requestScrollBy(delta: number): void;
+  /** 等待最近一次已提交的 requestScroll* 完成。 */
+  flushRequestedScroll(): Promise<void>;
   flushPrefetch(): Promise<void>;
 }
 
@@ -235,9 +246,26 @@ export function createStreamWindowController(
   options: StreamWindowControllerOptions
 ): StreamWindowController {
   const source = createStreamWindow(options);
+  const clock = options.clock;
   let height = Math.max(0, Math.floor(options.height ?? 20));
   const prefetchPages = Math.max(0, Math.floor(options.prefetchPages ?? 1));
   let pendingPrefetch: Promise<void> = Promise.resolve();
+  let pendingScroll: Promise<void> = Promise.resolve();
+  let requestedOffset: number | undefined;
+  let requestHandle: FrameRequestHandle | undefined;
+  let requestRevision = 0;
+
+  const maxOffset = (): number => Math.max(0, source.totalLines() - height);
+  const clampOffset = (offset: number): number =>
+    Math.min(maxOffset(), Math.max(0, Math.floor(offset)));
+  const cancelRequestedScroll = (): void => {
+    requestHandle?.cancel();
+    requestHandle = undefined;
+    requestedOffset = undefined;
+  };
+  const enqueueScroll = (target: number): void => {
+    pendingScroll = pendingScroll.then(() => scrollTo(target)).then(() => undefined);
+  };
 
   const schedulePrefetch = (window: StreamLineWindow): void => {
     if (height === 0 || prefetchPages === 0) return;
@@ -254,19 +282,41 @@ export function createStreamWindowController(
   };
 
   const loadVisible = async (): Promise<StreamLineWindow> => {
-    const maxOffset = Math.max(0, source.totalLines() - height);
-    const offset = Math.min(maxOffset, Math.max(0, source.offset()));
+    cancelRequestedScroll();
+    const offset = clampOffset(source.offset());
     const window = await source.load(offset, height);
     schedulePrefetch(window);
     return window;
   };
 
   const scrollTo = async (offset: number): Promise<StreamLineWindow> => {
-    const maxOffset = Math.max(0, source.totalLines() - height);
-    const target = Math.min(maxOffset, Math.max(0, Math.floor(offset)));
+    const target = clampOffset(offset);
     const window = await source.load(target, height);
     schedulePrefetch(window);
     return window;
+  };
+
+  const requestScrollTo = (offset: number): void => {
+    requestedOffset = clampOffset(offset);
+    if (!clock) {
+      const target = requestedOffset;
+      requestedOffset = undefined;
+      enqueueScroll(target);
+      return;
+    }
+
+    requestHandle = clock.request({
+      lane: "critical",
+      reason: "stream-window-scroll",
+      sessionRevision: ++requestRevision,
+      coalesceKey: `stream-window:${options.streamId}`,
+      work: () => {
+        requestHandle = undefined;
+        const target = requestedOffset;
+        requestedOffset = undefined;
+        if (target !== undefined) enqueueScroll(target);
+      },
+    });
   };
 
   return {
@@ -279,12 +329,34 @@ export function createStreamWindowController(
     offset: () => source.offset(),
     totalLines: () => source.totalLines(),
     atTop: () => source.offset() === 0,
-    atBottom: () =>
-      source.offset() >= Math.max(0, source.totalLines() - height),
+    atBottom: () => source.offset() >= maxOffset(),
     load: loadVisible,
-    scrollTo,
-    scrollBy: delta => scrollTo(source.offset() + delta),
-    pageBy: pages => scrollTo(source.offset() + pages * height),
+    scrollTo: async offset => {
+      cancelRequestedScroll();
+      return scrollTo(offset);
+    },
+    scrollBy: async delta => {
+      cancelRequestedScroll();
+      return scrollTo(source.offset() + delta);
+    },
+    pageBy: async pages => {
+      cancelRequestedScroll();
+      return scrollTo(source.offset() + pages * height);
+    },
+    requestScrollTo,
+    requestScrollBy(delta) {
+      requestScrollTo((requestedOffset ?? source.offset()) + delta);
+    },
+    async flushRequestedScroll() {
+      if (requestHandle) {
+        requestHandle.cancel();
+        requestHandle = undefined;
+        const target = requestedOffset;
+        requestedOffset = undefined;
+        if (target !== undefined) enqueueScroll(target);
+      }
+      await pendingScroll;
+    },
     async flushPrefetch() {
       await pendingPrefetch;
     },

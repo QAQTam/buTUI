@@ -29,11 +29,6 @@ export function createStreamWindowInput(
   const wheelStep = Math.max(1, Math.floor(options.wheelStep ?? 1));
   const pageOverlap = Math.max(0, Math.floor(options.pageOverlap ?? 1));
   const pageStep = (): number => Math.max(1, controller.height() - pageOverlap);
-  let pending: Promise<void> = Promise.resolve();
-
-  const run = (operation: Promise<unknown>): void => {
-    pending = pending.then(() => operation).then(() => undefined);
-  };
 
   return {
     handleKey(event) {
@@ -42,22 +37,22 @@ export function createStreamWindowInput(
 
       switch (name) {
         case "up":
-          run(controller.scrollBy(-1));
+          controller.requestScrollBy(-1);
           return true;
         case "down":
-          run(controller.scrollBy(1));
+          controller.requestScrollBy(1);
           return true;
         case "pageup":
-          run(controller.scrollBy(-pageStep()));
+          controller.requestScrollBy(-pageStep());
           return true;
         case "pagedown":
-          run(controller.scrollBy(pageStep()));
+          controller.requestScrollBy(pageStep());
           return true;
         case "home":
-          run(controller.scrollTo(0));
+          controller.requestScrollTo(0);
           return true;
         case "end":
-          run(controller.scrollTo(Number.MAX_SAFE_INTEGER));
+          controller.requestScrollTo(Number.MAX_SAFE_INTEGER);
           return true;
         default:
           return false;
@@ -67,12 +62,12 @@ export function createStreamWindowInput(
     handleWheel(event) {
       if (event.action !== "wheel") return false;
       if (event.wheel !== "up" && event.wheel !== "down") return false;
-      run(controller.scrollBy(event.wheel === "down" ? wheelStep : -wheelStep));
+      controller.requestScrollBy(event.wheel === "down" ? wheelStep : -wheelStep);
       return true;
     },
 
     async flush() {
-      await pending;
+      await controller.flushRequestedScroll();
     },
   };
 }

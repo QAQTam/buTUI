@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { createModifiers, MemoryLedger, type KeyEvent, type MouseEvent } from "@butui/core";
+import {
+  createModifiers,
+  FrameClock,
+  MemoryLedger,
+  type KeyEvent,
+  type MouseEvent,
+} from "@butui/core";
 import {
   createScrollBarForStreamWindow,
   createStreamWindowInput,
@@ -87,6 +93,28 @@ function wheel(direction: "up" | "down"): MouseEvent {
     preventDefault() {},
     get defaultPrevented() {
       return false;
+    },
+  };
+}
+
+function manualFrameClock() {
+  const microtasks: Array<() => void> = [];
+  const clock = new FrameClock(
+    { fps: 120 },
+    {
+      now: () => 0,
+      queueMicrotask: callback => {
+        microtasks.push(callback);
+      },
+      setTimeout: () => 0 as unknown as ReturnType<typeof setTimeout>,
+      clearTimeout: () => {},
+    }
+  );
+  return {
+    clock,
+    microtasks,
+    runMicrotasks() {
+      for (const callback of microtasks.splice(0)) callback();
     },
   };
 }
@@ -283,6 +311,32 @@ describe("createStreamWindow", () => {
       viewport: 10,
       overflow: true,
     });
+  });
+
+  test("FrameClock 合并同一帧内的连续滚动请求", async () => {
+    const store = new DelayedSpillStore();
+    const ledger = await createSpilledLedger(1_500, store);
+    const frame = manualFrameClock();
+    const controller = createStreamWindowController({
+      ledger,
+      streamId: "stream-1",
+      height: 10,
+      prefetchPages: 0,
+      clock: frame.clock,
+    });
+    await controller.load();
+    store.readManyCalls = 0;
+
+    const input = createStreamWindowInput(controller);
+    for (let index = 0; index < 5; index++) input.handleKey(key("down"));
+
+    expect(frame.microtasks).toHaveLength(1);
+    frame.runMicrotasks();
+    await input.flush();
+
+    expect(controller.offset()).toBe(5);
+    expect(store.readManyCalls).toBe(1);
+    frame.clock.dispose();
   });
 
   test("<StreamWindow> 挂载窗口并响应高度 / 键盘 / 滚轮", async () => {
