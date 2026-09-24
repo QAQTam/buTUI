@@ -38,6 +38,8 @@ export * from "./portal.tsx";
 export * from "./dynamic.tsx";
 export * from "./capability-approval.tsx";
 export * from "./select.tsx";
+export * from "./autocomplete.ts";
+export * from "./autocomplete.tsx";
 export * from "./multi-select.ts";
 export * from "./multi-select.tsx";
 export * from "./form.ts";

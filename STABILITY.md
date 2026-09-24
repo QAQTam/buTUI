@@ -36,7 +36,7 @@ const app = createTuiApp({
 | 布局 | `@butui/layout` | **稳定**（`Cell` / `Line` / `Frame` / `layout`） |
 | 渲染 | `@butui/renderer` | **稳定**（`Renderer` / `plainText` / `paintLine`） |
 | 终端 | `@butui/terminal` | **稳定**（`TerminalSession` / 输入解码 / 能力探测 / `osc22` / `osc52`） |
-| 基础组件 | `@butui/components` | **稳定**（编辑器 / 选择 / 列表 / 滚动 / ScrollBar / Slider / SplitPane / CommandPalette / Toast / Tooltip / Popover / Portal / Dynamic / MultiSelect / Form / Diff / 弹窗 / 展示组件） |
+| 基础组件 | `@butui/components` | **稳定**（编辑器 / 选择 / 列表 / 滚动 / ScrollBar / Slider / SplitPane / CommandPalette / Toast / Tooltip / Popover / Portal / Dynamic / MultiSelect / Form / Autocomplete / Diff / 弹窗 / 展示组件） |
 | 插件 / Slot | `@butui/plugins` | **稳定**（`Plugin` / `SlotRegistry`；Solid 适配在 `@butui/plugins/solid`；loader 在 `@butui/plugins/loader`） |
 | 命令 / Keymap | `@butui/keymap` | **稳定**（`CommandRegistry` / `Keymap`；Solid 适配在 `@butui/keymap/solid`） |
 | 流式文本 | `@butui/stream` | **稳定**（`StreamSource` / `DiffStream` / `<stream>`） |
@@ -811,6 +811,21 @@ const form = createForm({
 - validate 支持同步 / 异步；失败时 onSubmit 不执行。
 - `<Form>` 提供 `useForm()` context，Enter 默认提交。
 - `<FormField>` 展示 label / required / touched error；字段值仍由应用控制。
+
+### 4.33 Autocomplete：`filterAutocompleteOptions` / `<Autocomplete>`
+
+```tsx
+<Autocomplete
+  options={branches}
+  autoFocus
+  onSelect={(value, option) => choose(value, option)}
+/>
+```
+
+- 纯函数对 label / value / description 做 exact / prefix / substring / subsequence 评分。
+- 组件组合 Input / List / Selection，不复制编辑或滚动逻辑。
+- ↑↓ / PageUp/PageDown / Home/End 导航，Enter 选择，Esc 清空。
+- disabled 项展示但不可选择；点击结果直接选择。
 
 ## 5. 已知缺口（不要依赖，也不建议自己绕）
 

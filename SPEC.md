@@ -1291,6 +1291,24 @@ const form = createForm({
 
 ---
 
+### 5.35 Autocomplete（v0.1 实现）
+
+```tsx
+<Autocomplete
+  options={branches}
+  autoFocus
+  onSelect={(value, option) => choose(value, option)}
+/>
+```
+
+- `filterAutocompleteOptions()` 对 label / value / description 做 exact、prefix、
+  substring、subsequence 评分，过滤 disabled。
+- 组件组合 Input / List / Selection；↑↓ / PageUp/PageDown / Home/End 导航。
+- Enter 选择，Esc 清空，点击结果选择。
+- query 可由外部控制，也可使用内部编辑器状态。
+
+---
+
 ### 5.17 应用上下文（v0.1 实现）
 
 组件要能问「现在多宽 / 什么色深 / 我想订一个全局键」，但既不该认识 runtime，
@@ -1805,6 +1823,7 @@ P1：
 - `MultiSelect`：`createMultiSelect` / `<MultiSelect>` 受控多选与全选 / 反选（见 §5.32）
 - `Popover`：`createPopoverController` / `<Popover>` 交互式 overlay（见 §5.33）
 - `Form`：`createForm` / `<Form>` / `useForm` / `<FormField>`（见 §5.34）
+- `Autocomplete`：`filterAutocompleteOptions` / `<Autocomplete>`（见 §5.35）
 - `Select` / `Tabs`：`<Select>`（↑↓ + Enter）与 `<Tabs>`（←→ 立即切换）
 - `Table`：列宽显式给或按内容算，支持左 / 中 / 右对齐
 - `Tree`：受控展开（`expanded` + `onToggle`），←→ 展开收起、→ 进子节点

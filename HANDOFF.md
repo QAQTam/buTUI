@@ -3,9 +3,9 @@
 > 交接时间：2026-09-24
 > 仓库：`/home/qaqtamsy/项目/buTUI-v0.2-frontier`
 > 功能基线提交：`61d889b feat(components): add capability approval dialog`
-> 工作区状态：本文件与 Form 组件一并提交
-> 本轮能力：form state + validation + async submit
-> 当前回归：`775 pass / 0 fail`，93 个测试文件，`tsc --noEmit` 通过
+> 工作区状态：本文件与 Autocomplete 组件一并提交
+> 本轮能力：input filtering + list selection
+> 当前回归：`778 pass / 0 fail`，94 个测试文件，`tsc --noEmit` 通过
 
 ## 1. 项目定位
 
@@ -109,7 +109,7 @@ bun --conditions=browser run scripts/plugin-isolation-bench.ts --calls=5000 --wa
 | `@butui/layout` | flex 子集、增量合成、视口窗口、文本选区提取 |
 | `@butui/renderer` | cell → ANSI、逐行差分、SGR / 选区状态机 |
 | `@butui/terminal` | raw mode、resize、输入解码、能力探测、OSC 52 |
-| `@butui/components` | 编辑器、Input、Textarea、List、Diff、ScrollBar、Slider、SplitPane、Toast、Tooltip、Popover、Portal、Dynamic、MultiSelect、Form、弹窗等 |
+| `@butui/components` | 编辑器、Input、Textarea、List、Diff、ScrollBar、Slider、SplitPane、Toast、Tooltip、Popover、Portal、Dynamic、MultiSelect、Form、Autocomplete、弹窗等 |
 | `@butui/plugins` | 通用 SlotRegistry / Plugin / 错误隔离；Solid `<Slot>` 适配 |
 | `@butui/keymap` | CommandRegistry / 作用域 keymap / 冲突检测 / help；Solid `useKeymap` |
 | `@butui/stream` | `LineBuffer`、MarkdownStream、DiffStream |
@@ -166,6 +166,8 @@ bun --conditions=browser run scripts/plugin-isolation-bench.ts --calls=5000 --wa
   交互内容与 Esc dismiss。
 - Form：`createForm` / `<Form>` / `useForm` / `<FormField>` 提供 dirty、touched、
   同步 / 异步校验、submit 状态与 Enter 提交。
+- Autocomplete：`filterAutocompleteOptions` / `<Autocomplete>` 组合 Input / List /
+  Selection，支持 prefix / substring / subsequence 过滤与键盘选择。
 - 展示：`ProgressBar` / `Spinner` / `Badge` / `Divider` / `KeyHint`。
 
 ### 5.4 鼠标文本选择 + OSC 52
@@ -452,6 +454,14 @@ const bar = createScrollBar({
 - `<FormField>`：label / required / touched error 展示。
 - 已有 `tests/form.test.tsx`。
 
+### 5.14.8 Autocomplete
+
+- `filterAutocompleteOptions()`：label / value / description 的 exact、prefix、
+  substring、subsequence 评分，过滤 disabled。
+- `<Autocomplete>`：Input + List + Selection；↑↓ / PageUp/PageDown / Home/End 导航，
+  Enter 选择，Esc 清空，点击结果选择。
+- 已有 `tests/autocomplete.test.tsx`。
+
 ### 5.15 高频渲染合帧
 
 - `RenderScheduler`：microtask 与 frame 两种模式；默认行为不变。
@@ -675,8 +685,8 @@ bridge、真实 tool event 对接或 bugent 快捷键迁移。
 当前：
 
 ```text
-775 pass / 0 fail
-93 test files
+778 pass / 0 fail
+94 test files
 tsc --noEmit pass
 ```
 
@@ -712,6 +722,7 @@ tsc --noEmit pass
 - `tests/multi-select.test.tsx`
 - `tests/popover.test.tsx`
 - `tests/form.test.tsx`
+- `tests/autocomplete.test.tsx`
 - `tests/mouse-interaction.test.tsx`
 - `tests/mouse-pointer.test.tsx`
 - `tests/inertia.test.ts`
@@ -783,7 +794,7 @@ git diff --check
    limits、cgroup v2 lifecycle 与 NDJSON audit rotation / remote sink / hash chain /
    HMAC / batch retry / dedupe / explicit ack / source ordering / pending recovery /
    cleanup 已完成；下一步做自动 cgroup 委派与 OS 权限 sandbox。
-5. **Autocomplete / FormField composition**：补齐剩余通用交互组件。
+5. **Command Menu / advanced field composition**：补齐剩余通用交互组件。
 6. **动画编排增强**：更复杂的 stagger、滚动回弹和动画调试工具。
 7. **WebUI diff / 水平 ScrollBar**：等真实需求出现后再做。
 
