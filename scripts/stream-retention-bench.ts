@@ -6,6 +6,7 @@
  *   bun --conditions=browser run scripts/stream-retention-bench.ts --lines=1000000 --batch=500
  *   bun --conditions=browser run scripts/stream-retention-bench.ts --lines=1000000 --reopen
  *   bun --conditions=browser run scripts/stream-retention-bench.ts --lines=1000000 --hydrate
+ *   bun --conditions=browser run scripts/stream-retention-bench.ts --lines=1000000 --cold-read=1000
  */
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -30,6 +31,7 @@ const totalLines = option("lines", 100_000);
 const batchLines = Math.min(totalLines, option("batch", 100));
 const memoryBudget = option("memory", 64 * 1024);
 const retainedBytes = Math.min(memoryBudget, option("retain", 32 * 1024));
+const coldReadCount = option("cold-read", 0);
 const dir = mkdtempSync(join(tmpdir(), "butui-retention-"));
 const path = join(dir, "cold.ndjson");
 const memory = new MemoryLedger({ totalBytes: memoryBudget });
@@ -102,6 +104,31 @@ function reopenStore() {
   };
 }
 
+async function coldReadStore() {
+  const spilledLines = streams.stats().spilledLines;
+  const count = Math.min(coldReadCount, spilledLines);
+  const lineIds = Array.from({ length: count }, (_, index) => {
+    const at =
+      count <= 1 ? 0 : Math.floor((index * (spilledLines - 1)) / (count - 1));
+    return `line-${at + 1}`;
+  });
+  (Bun as typeof Bun & { gc?: (force?: boolean) => void }).gc?.(true);
+  const before = process.memoryUsage();
+  const started = performance.now();
+  const records = await streams.readCold(streamId, lineIds);
+  const elapsedMs = performance.now() - started;
+  const usage = process.memoryUsage();
+  return {
+    requested: lineIds.length,
+    restored: records.length,
+    elapsedMs,
+    heapBefore: before.heapUsed,
+    heapAfter: usage.heapUsed,
+    first: records[0]?.text.trim(),
+    last: records[records.length - 1]?.text.trim(),
+  };
+}
+
 async function hydrateStore() {
   (Bun as typeof Bun & { gc?: (force?: boolean) => void }).gc?.(true);
   const before = process.memoryUsage();
@@ -149,6 +176,7 @@ try {
 
   const final = snapshot(totalLines);
   const elapsedMs = performance.now() - startedAt;
+  const coldRead = coldReadCount > 0 ? await coldReadStore() : undefined;
   const hydrate = process.argv.includes("--hydrate")
     ? await hydrateStore()
     : undefined;
@@ -162,6 +190,7 @@ try {
         retainedBytes,
         elapsedMs,
         final,
+        ...(coldRead ? { coldRead } : {}),
         ...(hydrate ? { hydrate } : {}),
         ...(reopen ? { reopen } : {}),
         samples,

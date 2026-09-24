@@ -292,6 +292,82 @@ describe("StreamLedger", () => {
     );
   });
 
+  test("多 stream 交错 LineId 后仍可完整 hydrate", async () => {
+    const memory = new MemoryLedger({ totalBytes: 128 });
+    const store = new MemorySpillStore();
+    const streams = new StreamLedger({
+      memory,
+      memoryOwner: "test-stream",
+      spill: { store, policy: { maxBytes: 0 } },
+    });
+    streams.open({
+      streamId: "stream-a",
+      kind: "text",
+      priority: 1,
+      createdAt: 0,
+    });
+    streams.open({
+      streamId: "stream-b",
+      kind: "text",
+      priority: 1,
+      createdAt: 0,
+    });
+
+    for (let seq = 1; seq <= 200; seq++) {
+      await streams.applyWithSpill(
+        envelope(seq, { type: "append", delta: "a\n" }, { streamId: "stream-a" })
+      );
+      await streams.applyWithSpill(
+        envelope(seq, { type: "append", delta: "b\n" }, { streamId: "stream-b" })
+      );
+    }
+
+    const aBefore = streams.project("stream-a");
+    const bBefore = streams.project("stream-b");
+    expect(aBefore.spilledSegments.length).toBeGreaterThan(0);
+    expect(bBefore.spilledSegments.length).toBeGreaterThan(0);
+
+    const coldA = await streams.readCold("stream-a", ["line-1", "line-3"]);
+    const coldB = await streams.readCold("stream-b", ["line-2", "line-4"]);
+    expect(coldA.map(line => line.text)).toEqual(["a", "a"]);
+    expect(coldB.map(line => line.text)).toEqual(["b", "b"]);
+    expect(streams.project("stream-a").stableLines).toHaveLength(
+      aBefore.stableLines.length
+    );
+    expect(streams.project("stream-b").stableLines).toHaveLength(
+      bBefore.stableLines.length
+    );
+    await expect(streams.readCold("stream-a", ["line-400"])).rejects.toThrow(
+      "line-not-cold: stream-a/line-400"
+    );
+
+    const aRestored = await streams.hydrate("stream-a");
+    const bRestored = await streams.hydrate("stream-b");
+    expect(aRestored).toBe(aBefore.spilledSegments.reduce(
+      (sum, segment) => sum + segment.count,
+      0
+    ));
+    expect(bRestored).toBe(bBefore.spilledSegments.reduce(
+      (sum, segment) => sum + segment.count,
+      0
+    ));
+
+    const aLines = streams.project("stream-a").stableLines;
+    const bLines = streams.project("stream-b").stableLines;
+    expect(aLines.map(line => line.text)).toEqual(
+      Array.from({ length: 200 }, () => "a")
+    );
+    expect(bLines.map(line => line.text)).toEqual(
+      Array.from({ length: 200 }, () => "b")
+    );
+    expect(aLines.map(line => line.id)).toEqual(
+      Array.from({ length: 200 }, (_, index) => `line-${index * 2 + 1}`)
+    );
+    expect(bLines.map(line => line.id)).toEqual(
+      Array.from({ length: 200 }, (_, index) => `line-${index * 2 + 2}`)
+    );
+  });
+
   test("stats 汇总 streams / lines / tombstones", () => {
     const streams = ledger();
     streams.apply(envelope(1, { type: "append", delta: "a\nb" }));

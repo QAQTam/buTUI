@@ -94,7 +94,10 @@ export interface StreamProjection {
   stableLines: readonly StreamLineRecord[];
   volatileTail: readonly StreamTailLine[];
   tombstones: readonly StreamTombstone[];
-  /** 已离开内存的连续 stable line 范围；不含逐行 LineId 数组。 */
+  /**
+   * 已离开内存的 stable line segment。连续 ID 只存范围；多 stream 交错时
+   * segment 会携带显式 lineIds。
+   */
   spilledSegments: readonly SpilledSegment[];
 }
 
@@ -104,6 +107,11 @@ export interface SpilledSegment {
   lastLineId: LineId;
   count: number;
   bytes: number;
+  /**
+   * LineId 不连续时保留显式顺序；连续 segment 省略该字段并使用范围推导。
+   * 多 stream 交错分配全局 LineId 时会出现这种情况。
+   */
+  lineIds?: readonly LineId[];
 }
 
 export interface StreamLedgerStats {
@@ -143,10 +151,19 @@ interface StreamState {
   lastSeq: number;
   stableLines: StreamLineRecord[];
   tailLines: StreamTailLine[];
-  spilledSegments: SpilledSegment[];
+  spilledSegments: SpilledSegmentState[];
   tombstones: StreamTombstone[];
   applied: Map<number, string>;
   memoryReservations: MemoryReservation[];
+}
+
+interface SpilledSegmentState {
+  streamId: StreamId;
+  firstLineId: LineId;
+  lastLineId: LineId;
+  count: number;
+  bytes: number;
+  lineIds?: LineId[];
 }
 
 export class StreamLedger {
@@ -332,13 +349,16 @@ export class StreamLedger {
 
     const restored: StreamLineRecord[] = [];
     for (const segment of stream.spilledSegments) {
-      const range = spilledSegmentRange(segment);
+      const explicitLineIds = segment.lineIds;
+      const range = explicitLineIds ? undefined : spilledSegmentRange(segment);
       for (let start = 0; start < segment.count; start += HYDRATE_READ_BATCH) {
         const count = Math.min(HYDRATE_READ_BATCH, segment.count - start);
-        const ids = Array.from(
-          { length: count },
-          (_, index) => `${range.prefix}${range.start + start + index}`
-        );
+        const ids = explicitLineIds
+          ? explicitLineIds.slice(start, start + count)
+          : Array.from(
+              { length: count },
+              (_, index) => `${range!.prefix}${range!.start + start + index}`
+            );
         const records = await readSpillRecords(this.spillStore, streamId, ids);
         for (let index = 0; index < ids.length; index++) {
           const record = records[index]!;
@@ -354,6 +374,51 @@ export class StreamLedger {
     stream.stableLines = [...restored, ...stream.stableLines];
     stream.spilledSegments = [];
     return hydrated + restored.length;
+  }
+
+  /**
+   * 只读取指定 cold lines，不改变 ledger 状态。
+   *
+   * 这是 viewport / replay 的推荐路径；需要修改内存状态时使用 hydrate()。
+   */
+  async readCold(
+    streamId: StreamId,
+    lineIds: readonly LineId[]
+  ): Promise<readonly StreamLineRecord[]> {
+    if (!this.spillStore) {
+      throw new Error("[butui] stream 未配置 spill store");
+    }
+    const stream = this.streams.get(streamId);
+    if (!stream) throw new Error(`[butui] unknown stream: ${streamId}`);
+    if (lineIds.length === 0) return [];
+
+    const explicitSets = new Map<SpilledSegmentState, Set<LineId>>();
+    for (const lineId of lineIds) {
+      const segment = stream.spilledSegments.find(candidate => {
+        if (!candidate.lineIds) return rangeContainsLineId(candidate, lineId);
+        let ids = explicitSets.get(candidate);
+        if (!ids) {
+          ids = new Set(candidate.lineIds);
+          explicitSets.set(candidate, ids);
+        }
+        return ids.has(lineId);
+      });
+      if (!segment) {
+        throw new Error(`[butui] line-not-cold: ${streamId}/${lineId}`);
+      }
+    }
+
+    const records = await readSpillRecordsInBatches(
+      this.spillStore,
+      streamId,
+      lineIds
+    );
+    return records.map(record => ({
+      id: record.lineId,
+      text: record.text,
+      stableAtRevision: record.stableAtRevision,
+      digest: record.digest,
+    }));
   }
 
   private async spillOldest(
@@ -473,18 +538,29 @@ function spilledSegmentRange(segment: SpilledSegment): {
   prefix: string;
   start: number;
 } {
-  const match = /(\d+)$/.exec(segment.firstLineId);
-  if (!match) {
+  const first = parseSequentialLineId(segment.firstLineId);
+  if (!first) {
     throw new Error(
       `[butui] spilled segment 缺少可推导的 LineId: ${segment.firstLineId}`
     );
   }
-  const start = Number(match[1]);
-  const prefix = segment.firstLineId.slice(0, match.index);
-  if (`${prefix}${start + segment.count - 1}` !== segment.lastLineId) {
+  if (
+    `${first.prefix}${first.number + segment.count - 1}` !== segment.lastLineId
+  ) {
     throw new Error(`[butui] spilled segment 不连续: ${segment.streamId}`);
   }
-  return { prefix, start };
+  return { prefix: first.prefix, start: first.number };
+}
+
+function rangeContainsLineId(segment: SpilledSegment, lineId: LineId): boolean {
+  const range = spilledSegmentRange(segment);
+  const parsed = parseSequentialLineId(lineId);
+  return (
+    parsed !== undefined &&
+    parsed.prefix === range.prefix &&
+    parsed.number >= range.start &&
+    parsed.number < range.start + segment.count
+  );
 }
 
 async function readSpillRecordsInBatches(
@@ -536,20 +612,85 @@ function appendSpilledSegment(
   manifest: SpillManifest
 ): void {
   if (manifest.count === 0 || !manifest.firstLineId || !manifest.lastLineId) return;
+  if (manifest.lineIds.length !== manifest.count) {
+    throw new Error(`[butui] spill manifest count 不一致: ${manifest.streamId}`);
+  }
+
   const previous = stream.spilledSegments[stream.spilledSegments.length - 1];
-  if (previous && previous.streamId === manifest.streamId) {
+  if (!previous || previous.streamId !== manifest.streamId) {
+    stream.spilledSegments.push({
+      streamId: manifest.streamId,
+      firstLineId: manifest.firstLineId,
+      lastLineId: manifest.lastLineId,
+      count: manifest.count,
+      bytes: manifest.bytes,
+      ...(lineIdsAreContiguous(manifest.lineIds)
+        ? {}
+        : { lineIds: [...manifest.lineIds] }),
+    });
+    return;
+  }
+
+  if (
+    !previous.lineIds &&
+    lineIdsAreContiguous(manifest.lineIds) &&
+    rangesAreAdjacent(previous, manifest)
+  ) {
     previous.lastLineId = manifest.lastLineId;
     previous.count += manifest.count;
     previous.bytes += manifest.bytes;
     return;
   }
-  stream.spilledSegments.push({
-    streamId: manifest.streamId,
-    firstLineId: manifest.firstLineId,
-    lastLineId: manifest.lastLineId,
-    count: manifest.count,
-    bytes: manifest.bytes,
-  });
+
+  if (!previous.lineIds) previous.lineIds = materializeSegmentLineIds(previous);
+  for (const lineId of manifest.lineIds) previous.lineIds.push(lineId);
+  previous.lastLineId = manifest.lastLineId;
+  previous.count += manifest.count;
+  previous.bytes += manifest.bytes;
+}
+
+function materializeSegmentLineIds(segment: SpilledSegmentState): LineId[] {
+  const range = spilledSegmentRange(segment);
+  return Array.from(
+    { length: segment.count },
+    (_, index) => `${range.prefix}${range.start + index}`
+  );
+}
+
+function rangesAreAdjacent(
+  previous: SpilledSegmentState,
+  manifest: SpillManifest
+): boolean {
+  const previousEnd = parseSequentialLineId(previous.lastLineId);
+  const nextStart = parseSequentialLineId(manifest.firstLineId!);
+  return (
+    previousEnd !== undefined &&
+    nextStart !== undefined &&
+    previousEnd.prefix === nextStart.prefix &&
+    previousEnd.number + 1 === nextStart.number
+  );
+}
+
+function lineIdsAreContiguous(lineIds: readonly LineId[]): boolean {
+  if (lineIds.length <= 1) return true;
+  const first = parseSequentialLineId(lineIds[0]!);
+  if (!first) return false;
+  for (let index = 1; index < lineIds.length; index++) {
+    if (lineIds[index] !== `${first.prefix}${first.number + index}`) return false;
+  }
+  return true;
+}
+
+function parseSequentialLineId(
+  lineId: LineId
+): { prefix: string; number: number } | undefined {
+  const match = /^(.*?)(\d+)$/.exec(lineId);
+  if (!match) return undefined;
+  const digits = match[2]!;
+  const number = Number(digits);
+  if (!Number.isSafeInteger(number) || number < 0) return undefined;
+  if (digits !== String(number)) return undefined;
+  return { prefix: match[1] ?? "", number };
 }
 
 function appendTailText(
