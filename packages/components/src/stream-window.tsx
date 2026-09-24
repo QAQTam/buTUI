@@ -10,6 +10,7 @@ import {
   type SmoothStreamOptions,
   type StreamId,
   type StreamLedger,
+  type StreamWindowController,
 } from "@butui/stream";
 import { useAppScope, useFocusScope } from "@butui/solid";
 import type { FrameClock } from "@butui/core";
@@ -39,6 +40,8 @@ export interface StreamWindowProps {
   semantic?: string;
   /** 覆盖 runtime 共享 FrameClock；测试 / 嵌入方使用。 */
   clock?: FrameClock;
+  /** 暴露 controller，供应用级键盘 / 命令路由控制同一视口。 */
+  onController?: (controller: StreamWindowController) => void;
   /** 点击窗口时自动聚焦；默认 true。 */
   focusOnClick?: boolean;
 }
@@ -62,6 +65,7 @@ export function StreamWindow(props: StreamWindowProps) {
     ...(props.wheelStep !== undefined ? { wheelStep: props.wheelStep } : {}),
     ...(props.pageOverlap !== undefined ? { pageOverlap: props.pageOverlap } : {}),
   });
+  props.onController?.(controller);
   const scrollBar = createScrollBarForStreamWindow(controller);
   const focus = useFocusScope();
 

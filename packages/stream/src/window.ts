@@ -251,7 +251,7 @@ export function createStreamWindowController(
 ): StreamWindowController {
   const source = createStreamWindow(options);
   const clock = options.clock;
-  const follow = options.follow ?? false;
+  let following = options.follow ?? false;
   let height = Math.max(0, Math.floor(options.height ?? 20));
   const prefetchPages = Math.max(0, Math.floor(options.prefetchPages ?? 1));
   let pendingPrefetch: Promise<void> = Promise.resolve();
@@ -286,31 +286,32 @@ export function createStreamWindowController(
     pendingPrefetch = pendingPrefetch.then(() => run);
   };
 
-  const loadVisible = async (): Promise<StreamLineWindow> => {
-    cancelRequestedScroll();
-    const offset = clampOffset(source.offset());
-    const window = await source.load(offset, height);
-    schedulePrefetch(window);
-    return window;
-  };
-
-  const scrollTo = async (offset: number): Promise<StreamLineWindow> => {
-    const target = clampOffset(offset);
+  const loadAt = async (offset: number): Promise<StreamLineWindow> => {
+    const target = Math.max(0, Math.floor(offset));
     const window = await source.load(target, height);
     schedulePrefetch(window);
     return window;
   };
 
+  const loadVisible = async (): Promise<StreamLineWindow> => {
+    cancelRequestedScroll();
+    return loadAt(following ? maxOffset() : source.offset());
+  };
+
+  const scrollTo = async (offset: number): Promise<StreamLineWindow> => {
+    const target = clampOffset(offset);
+    following = target >= maxOffset();
+    return loadAt(target);
+  };
+
   const refresh = async (): Promise<StreamLineWindow | undefined> => {
-    if (!follow) {
+    if (!following) {
       const window = await source.refresh();
       if (window) schedulePrefetch(window);
       return window;
     }
     const total = lineCount(options.ledger.project(options.streamId));
-    const window = await source.load(Math.max(0, total - height), height);
-    schedulePrefetch(window);
-    return window;
+    return loadAt(Math.max(0, total - height));
   };
 
   const requestScrollTo = (offset: number): void => {

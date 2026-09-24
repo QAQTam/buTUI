@@ -223,6 +223,7 @@ describe("createStreamWindow", () => {
     });
 
     await controller.load();
+    expect(controller.offset()).toBe(0);
     expect(controller.source.lines.map(line => line.text)).toEqual(["a", "b"]);
 
     ledger.apply(envelope(2, "c"));
@@ -274,6 +275,38 @@ describe("createStreamWindow", () => {
 
     await source.refresh();
     expect(store.readManyCalls).toBeGreaterThan(afterFirstLoad);
+  });
+
+  test("follow 初始贴底，滚动后暂停跟随，End 后恢复", async () => {
+    const ledger = await createSpilledLedger(100);
+    const controller = createStreamWindowController({
+      ledger,
+      streamId: "stream-1",
+      height: 10,
+      follow: true,
+      prefetchPages: 0,
+    });
+
+    await controller.load();
+    expect(controller.offset()).toBe(90);
+    expect(controller.source.lines.at(-1)?.text).toBe("value-100");
+
+    await ledger.applyWithSpill(envelope(101, "value-101\n"));
+    await controller.refresh();
+    expect(controller.offset()).toBe(91);
+
+    await controller.scrollTo(0);
+    await ledger.applyWithSpill(envelope(102, "value-102\n"));
+    await controller.refresh();
+    expect(controller.offset()).toBe(0);
+
+    await controller.scrollTo(Number.MAX_SAFE_INTEGER);
+    await ledger.applyWithSpill(envelope(103, "value-103\n"));
+    await controller.refresh();
+    expect(controller.offset()).toBe(93);
+
+    await controller.setHeight(5);
+    expect(controller.offset()).toBe(98);
   });
 
   test("controller 管理 offset / height，并利用 prefetch 窗口", async () => {
@@ -389,6 +422,39 @@ describe("createStreamWindow", () => {
     expect(controller.offset()).toBe(5);
     expect(store.readManyCalls).toBe(1);
     frame.clock.dispose();
+  });
+
+  test("<StreamWindow> revision 到达后无需 resize 即可贴底重绘", async () => {
+    const ledger = await createSpilledLedger(20);
+    const [revision, setRevision] = createSignal(0);
+    const app = mount(
+      () => (
+        <StreamWindow
+          ledger={ledger}
+          streamId="stream-1"
+          height={5}
+          width={40}
+          follow
+          revision={revision}
+        />
+      ),
+      { width: 40, height: 6 }
+    );
+
+    await new Promise(resolve => setTimeout(resolve, 0));
+    app.flush();
+    expect(app.text()).toContain("value-16");
+    expect(app.text()).toContain("value-20");
+
+    const applied = await ledger.applyWithSpill(envelope(21, "value-21\n"));
+    expect(applied.status).toBe("applied");
+    setRevision(value => value + 1);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    app.flush();
+
+    expect(app.text()).toContain("value-17");
+    expect(app.text()).toContain("value-21");
+    app.unmount();
   });
 
   test("<StreamWindow> 挂载窗口并响应高度 / 键盘 / 滚轮", async () => {
