@@ -219,6 +219,50 @@ describe("audit log", () => {
     await audit.dispose();
   });
 
+  test("partial ack 只重试未确认尾部，并尊重 retryAfterMs", async () => {
+    const calls: number[][] = [];
+    const delays: number[] = [];
+    const sink = {
+      async write(events: readonly { seq: number }[]) {
+        calls.push(events.map(event => event.seq));
+        if (calls.length === 1) {
+          return {
+            committedSeq: events[0]!.seq,
+            accepted: 1,
+            retry: true,
+            retryAfterMs: 7,
+          };
+        }
+        return {
+          committedSeq: events[events.length - 1]!.seq,
+          accepted: events.length,
+        };
+      },
+    };
+    const audit = withAuditSinks(
+      createMemoryAuditLog({ now: () => 1 }),
+      [sink],
+      {
+        maxRetries: 1,
+        retryDelayMs: 100,
+        async sleep(delay) {
+          delays.push(delay);
+        },
+      }
+    );
+    audit.record({ type: "a" });
+    audit.record({ type: "b" });
+    audit.record({ type: "c" });
+
+    await audit.flush();
+    expect(calls).toEqual([
+      [1, 2, 3],
+      [2, 3],
+    ]);
+    expect(delays).toEqual([7]);
+    await audit.dispose();
+  });
+
   test("deduper 按 seq + hash 丢弃重复批次", () => {
     const audit = createMemoryAuditLog({
       now: () => 1,

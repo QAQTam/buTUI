@@ -90,6 +90,26 @@ export interface AuditRotationSummary {
   at: number;
 }
 
+export interface AuditAckRange {
+  from: number;
+  to: number;
+}
+
+export interface AuditAck {
+  /** 已持久化的最高 seq；可确认 batch 前缀。 */
+  committedSeq?: number;
+  /** 已持久化的最高 hash。 */
+  committedHead?: string;
+  /** 接收数量；与 committedSeq/head 冲突时取最小值。 */
+  accepted?: number;
+  /** 显式要求重试。 */
+  retry?: boolean;
+  /** 接收端确认缺失的 seq 范围。 */
+  missing?: readonly AuditAckRange[];
+  /** 服务端建议的退避时间。 */
+  retryAfterMs?: number;
+}
+
 export interface AuditSinkContext {
   /** 确定性 batch id；远端可按此幂等去重。 */
   batchId: string;
@@ -101,7 +121,7 @@ export interface AuditSink {
   write(
     events: readonly AuditEvent[],
     context?: AuditSinkContext
-  ): void | Promise<void>;
+  ): void | AuditAck | Promise<void | AuditAck>;
   close?(): void | Promise<void>;
 }
 
@@ -389,27 +409,55 @@ export function withAuditSinks(
   const performFlush = async (): Promise<void> => {
     const errors: Error[] = [];
     for (const [sink, queue] of queues) {
-      if (queue.length === 0) continue;
-      const batch = [...queue];
-      const batchId = createAuditBatchId(batch);
-      let delivered = false;
+      let attempt = 0;
       let lastError: Error | undefined;
-      for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      while (queue.length > 0) {
+        const batch = [...queue];
+        let ack: AuditAck | void;
         try {
-          await sink.write(batch, { batchId, attempt });
-          delivered = true;
-          break;
+          ack = await sink.write(batch, {
+            batchId: createAuditBatchId(batch),
+            attempt,
+          });
         } catch (error) {
           lastError = asError(error);
           if (attempt < maxRetries) {
-            await sleep(
-              Math.min(maxRetryDelayMs, retryDelayMs * 2 ** attempt)
-            );
+            await sleep(backoffDelay(retryDelayMs, maxRetryDelayMs, attempt));
+            attempt++;
+            continue;
           }
+          break;
         }
+
+        const committed =
+          ack?.retry && !hasAckCommit(ack)
+            ? 0
+            : resolveAckCount(ack, batch);
+        if (committed > 0) queue.splice(0, committed);
+        if (
+          queue.length === 0 &&
+          !ack?.retry &&
+          !(ack?.missing && ack.missing.length > 0)
+        ) {
+          lastError = undefined;
+          break;
+        }
+        lastError = new Error(
+          `[butui] audit sink acknowledged ${committed}/${batch.length} events`
+        );
+        if (attempt < maxRetries) {
+          await sleep(
+            ack?.retryAfterMs ??
+              backoffDelay(retryDelayMs, maxRetryDelayMs, attempt)
+          );
+          attempt++;
+          continue;
+        }
+        break;
       }
-      if (delivered) queue.splice(0, batch.length);
-      else errors.push(lastError ?? new Error("audit sink failed"));
+      if (queue.length > 0) {
+        errors.push(lastError ?? new Error("audit sink failed"));
+      }
     }
     if (errors.length > 0) {
       throw new AggregateError(errors, "[butui] audit sink flush failed");
@@ -513,6 +561,19 @@ export function createHttpAuditSink(
             `[butui] audit sink returned ${response.status} ${response.statusText}`
           );
         }
+        const text = await response.text();
+        if (!text.trim()) {
+          return {
+            accepted: events.length,
+            committedSeq: last.seq,
+            ...(last.hash ? { committedHead: last.hash } : {}),
+          };
+        }
+        const value: unknown = JSON.parse(text);
+        if (!isAuditAck(value)) {
+          throw new Error("[butui] audit sink returned invalid ack");
+        }
+        return value;
       } finally {
         clearTimeout(timer);
       }
@@ -705,6 +766,116 @@ function auditDedupeKey(event: AuditEvent): string {
       .update(stableStringify(withoutIntegrityFields(event)))
       .digest("hex");
   return `${event.seq}:${identity}`;
+}
+
+function backoffDelay(
+  baseMs: number,
+  maxMs: number,
+  attempt: number
+): number {
+  return Math.min(maxMs, baseMs * 2 ** attempt);
+}
+
+function hasAckCommit(ack: AuditAck): boolean {
+  return (
+    ack.accepted !== undefined ||
+    ack.committedSeq !== undefined ||
+    ack.committedHead !== undefined
+  );
+}
+
+function resolveAckCount(
+  ack: AuditAck | void,
+  batch: readonly AuditEvent[]
+): number {  if (!ack) return batch.length;
+  let committed = batch.length;
+  if (ack.accepted !== undefined) {
+    committed = Math.min(committed, ack.accepted);
+  }
+  if (ack.committedSeq !== undefined) {
+    const count = batch.filter(event => event.seq <= ack.committedSeq!).length;
+    committed = Math.min(committed, count);
+  }
+  if (ack.committedHead !== undefined) {
+    let count = 0;
+    for (const event of batch) {
+      if (event.hash === ack.committedHead) {
+        count = batch.indexOf(event) + 1;
+        break;
+      }
+    }
+    committed = Math.min(committed, count);
+  }
+  if (ack.missing) {
+    const firstMissing = batch.findIndex(event =>
+      ack.missing!.some(range => event.seq >= range.from && event.seq <= range.to)
+    );
+    if (firstMissing >= 0) committed = Math.min(committed, firstMissing);
+  }
+  return Math.max(0, committed);
+}
+
+function isAuditAck(value: unknown): value is AuditAck {
+  if (!isRecord(value)) return false;
+  const committedSeq = value.committedSeq;
+  if (
+    committedSeq !== undefined &&
+    (typeof committedSeq !== "number" ||
+      !Number.isSafeInteger(committedSeq) ||
+      committedSeq < 0)
+  ) {
+    return false;
+  }
+  if (
+    value.committedHead !== undefined &&
+    typeof value.committedHead !== "string"
+  ) {
+    return false;
+  }
+  const accepted = value.accepted;
+  if (
+    accepted !== undefined &&
+    (typeof accepted !== "number" ||
+      !Number.isSafeInteger(accepted) ||
+      accepted < 0)
+  ) {
+    return false;
+  }
+  if (value.retry !== undefined && typeof value.retry !== "boolean") {
+    return false;
+  }
+  const retryAfterMs = value.retryAfterMs;
+  if (
+    retryAfterMs !== undefined &&
+    (typeof retryAfterMs !== "number" ||
+      !Number.isFinite(retryAfterMs) ||
+      retryAfterMs < 0)
+  ) {
+    return false;
+  }
+  if (value.missing !== undefined) {
+    if (!Array.isArray(value.missing)) return false;
+    for (const range of value.missing) {
+      if (!isRecord(range)) return false;
+      const from = range.from;
+      const to = range.to;
+      if (
+        typeof from !== "number" ||
+        typeof to !== "number" ||
+        !Number.isSafeInteger(from) ||
+        !Number.isSafeInteger(to) ||
+        from < 0 ||
+        to < from
+      ) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
 function normalizeOptionalLimit(value: number | undefined): number | undefined {
