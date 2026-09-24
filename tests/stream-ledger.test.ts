@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { MemoryLedger } from "@butui/core";
 import {
   MemorySpillStore,
@@ -94,6 +97,78 @@ describe("StreamLedger", () => {
     expect(
       streams.apply(envelope(1, { type: "append", delta: "different\n" }))
     ).toEqual({ status: "rejected", reason: "conflict" });
+  });
+
+  test("applied digest 可磁盘换出并保持精确 duplicate / conflict", () => {
+    const dir = mkdtempSync(join(tmpdir(), "butui-applied-"));
+    const path = join(dir, "applied.bin");
+    try {
+      const streams = new StreamLedger({
+        appliedStorePath: path,
+        appliedCacheChunks: 1,
+      });
+      streams.open({
+        streamId: "stream-1",
+        kind: "text",
+        priority: 1,
+        createdAt: 0,
+      });
+
+      for (let seq = 1; seq <= 5_000; seq++) {
+        streams.apply(envelope(seq, { type: "append", delta: "" }));
+      }
+
+      const first = envelope(1, { type: "append", delta: "" });
+      expect(streams.apply(first)).toEqual({ status: "duplicate", seq: 1 });
+      expect(
+        streams.apply(envelope(1, { type: "append", delta: "conflict" }))
+      ).toEqual({ status: "rejected", reason: "conflict" });
+      streams.dispose();
+      expect(existsSync(`${path}.stream-1`)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("appliedStorePath 为每个 stream 使用独立 sidecar", () => {
+    const dir = mkdtempSync(join(tmpdir(), "butui-applied-multi-"));
+    const path = join(dir, "applied.bin");
+    try {
+      const streams = new StreamLedger({
+        appliedStorePath: path,
+        appliedCacheChunks: 1,
+      });
+      for (const streamId of ["stream-a", "stream-b"]) {
+        streams.open({ streamId, kind: "text", priority: 1, createdAt: 0 });
+      }
+
+      for (let seq = 1; seq <= 2_000; seq++) {
+        streams.apply(
+          envelope(seq, { type: "append", delta: "" }, { streamId: "stream-a" })
+        );
+        streams.apply(
+          envelope(seq, { type: "append", delta: "" }, { streamId: "stream-b" })
+        );
+      }
+
+      expect(
+        streams.apply(
+          envelope(1, { type: "append", delta: "" }, { streamId: "stream-a" })
+        )
+      ).toEqual({ status: "duplicate", seq: 1 });
+      expect(
+        streams.apply(
+          envelope(1, { type: "append", delta: "conflict" }, {
+            streamId: "stream-b",
+          })
+        )
+      ).toEqual({ status: "rejected", reason: "conflict" });
+      streams.dispose();
+      expect(existsSync(`${path}.stream-a`)).toBe(true);
+      expect(existsSync(`${path}.stream-b`)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   test("replace-tail 可替换 volatile tail，但不能越过 stable line", () => {

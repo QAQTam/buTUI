@@ -6,7 +6,11 @@
  *
  * 用法：
  *   bun --conditions=browser run scripts/stream-apply-bench.ts --events=1000000
+ *   bun --conditions=browser run scripts/stream-apply-bench.ts --events=5000000 --cache-chunks=1
  */
+import { mkdtempSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { StreamLedger, type StreamEnvelope } from "@butui/stream";
 
 function option(name: string, fallback: number): number {
@@ -18,8 +22,18 @@ function option(name: string, fallback: number): number {
 }
 
 const events = option("events", 1_000_000);
-const ledger = new StreamLedger();
+const cacheChunks = option("cache-chunks", 0);
+const dir =
+  cacheChunks > 0 ? mkdtempSync(join(tmpdir(), "butui-applied-bench-")) : undefined;
+const appliedStorePath = dir ? join(dir, "applied.bin") : undefined;
+const ledger = new StreamLedger({
+  ...(appliedStorePath ? { appliedStorePath } : {}),
+  ...(cacheChunks > 0 ? { appliedCacheChunks: cacheChunks } : {}),
+});
 const streamId = "bench";
+const appliedStoreFile = appliedStorePath
+  ? `${appliedStorePath}.${encodeURIComponent(streamId)}`
+  : undefined;
 ledger.open({ streamId, kind: "text", priority: 1, createdAt: 0 });
 
 function envelope(seq: number): StreamEnvelope {
@@ -51,11 +65,14 @@ const duplicate = ledger.apply(envelope(1));
 (Bun as typeof Bun & { gc?: (force?: boolean) => void }).gc?.(true);
 const after = process.memoryUsage();
 const stats = ledger.stats();
+ledger.dispose();
+const appliedFileBytes = appliedStoreFile ? statSync(appliedStoreFile).size : 0;
 
 console.log(
   JSON.stringify(
     {
       events,
+      cacheChunks,
       elapsedMs,
       eventsPerSecond: events / (elapsedMs / 1000),
       heapBefore: before.heapUsed,
@@ -63,6 +80,7 @@ console.log(
       heapDelta: after.heapUsed - before.heapUsed,
       heapBytesPerEvent: (after.heapUsed - before.heapUsed) / events,
       rssAfter: after.rss,
+      appliedFileBytes,
       stats,
       duplicate,
     },
@@ -71,4 +89,4 @@ console.log(
   )
 );
 
-ledger.dispose();
+if (dir) rmSync(dir, { recursive: true, force: true });

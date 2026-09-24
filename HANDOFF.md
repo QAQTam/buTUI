@@ -453,6 +453,7 @@ const bar = createScrollBar({
 | 跨冷热边界 1,000 lines | 2.2ms |
 | 20k 滚动事件 / 1,000 帧 | frame p95 0.78ms / cold calls 500 |
 | 5M apply metadata | 2.16M events/s / 5.28 bytes/event |
+| 10M apply + disk sidecar | heap +0.18MB / index 50MB / 1.90M events/s |
 
 相关文件：
 
@@ -630,7 +631,8 @@ git diff --check
 - Kitty keyboard protocol 发送侧未实现。
 - v0.2 cold metadata 仍保留约 9 bytes/line 的直接寻址索引；极不规则多 stream
   交错仍可能回退显式 `lineIds`。
-- applied digest 仍保留完整历史；5M 事件约 26MB，10M 级需要 checkpoint / ring。
+- applied digest 默认仍保留完整内存历史（5M 约 26MB）；配置
+  `appliedStorePath` 后可磁盘换出，10M 实测 heap 增量约 0.19MB。
 - `<StreamWindow>` 已有 runtime 集成测试，但尚未接入真实 agent transcript 页面；
   FrameClock 滚动合并已通过 FakeTerminal，端到端真实 PTY 数据仍待采集。
 
@@ -640,8 +642,8 @@ git diff --check
 
 1. **真实 transcript 接入**：让 bugent / agent-demo 消费 `<StreamWindow>`，
    采集真实 PTY 下输入到 presented frame 的 p95、cold-read 和 cache hit。
-2. **10M replay 策略**：applied digest checkpoint / ring，或磁盘索引；
-   当前 typed array 约 5.28 bytes/event。
+2. **applied sidecar 生命周期**：10M 磁盘换出原型已完成；下一步由 bugent
+   决定默认策略、文件清理和崩溃恢复语义。
 3. **cold metadata 进一步压缩**：评估 sparse checkpoint + file scan，
    替换约 9 bytes/line 的直接寻址索引。
 4. **插件运行时约束 / 审批**：capability 目前只是 import 前门控，下一步做权限

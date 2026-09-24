@@ -12,6 +12,15 @@
  */
 import type { MemoryLedger, MemoryReservation } from "@butui/core";
 import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readSync,
+  writeSync,
+} from "node:fs";
+import { dirname } from "node:path";
+import {
   StreamRetention,
   type RetentionPolicy,
   type SpillManifest,
@@ -160,6 +169,10 @@ export interface StreamLedgerOptions {
     store: SpillStore;
     policy?: RetentionPolicy;
   };
+  /** 可选：把 applied digest 的旧 chunk 换出到该文件。 */
+  appliedStorePath?: string;
+  /** applied 内存缓存 chunk 数；仅在 appliedStorePath 下生效，默认 64。 */
+  appliedCacheChunks?: number;
 }
 
 interface StreamState {
@@ -188,39 +201,159 @@ interface SpilledSegmentState {
 const APPLIED_CHUNK_BITS = 10;
 const APPLIED_CHUNK_SIZE = 1 << APPLIED_CHUNK_BITS;
 const APPLIED_CHUNK_MASK = APPLIED_CHUNK_SIZE - 1;
+const APPLIED_CHUNK_BYTES =
+  APPLIED_CHUNK_SIZE * Uint32Array.BYTES_PER_ELEMENT + APPLIED_CHUNK_SIZE;
 
 interface AppliedDigestChunk {
   values: Uint32Array;
   present: Uint8Array;
+  dirty: boolean;
+}
+
+interface AppliedDigestIndexOptions {
+  path?: string;
+  maxChunks?: number;
 }
 
 class AppliedDigestIndex {
   private readonly chunks = new Map<number, AppliedDigestChunk>();
+  private readonly path?: string;
+  private readonly maxChunks: number;
+
+  constructor(options: AppliedDigestIndexOptions = {}) {
+    this.path = options.path;
+    this.maxChunks = this.path
+      ? Math.max(1, Math.floor(options.maxChunks ?? 64))
+      : Number.POSITIVE_INFINITY;
+  }
 
   set(seq: number, digest: string): void {
     if (!Number.isSafeInteger(seq) || seq < 1) return;
     const zeroBased = seq - 1;
-    const chunkIndex = Math.floor(zeroBased / APPLIED_CHUNK_SIZE);
-    let chunk = this.chunks.get(chunkIndex);
-    if (!chunk) {
-      chunk = {
-        values: new Uint32Array(APPLIED_CHUNK_SIZE),
-        present: new Uint8Array(APPLIED_CHUNK_SIZE),
-      };
-      this.chunks.set(chunkIndex, chunk);
-    }
+    const chunk = this.chunkFor(
+      Math.floor(zeroBased / APPLIED_CHUNK_SIZE),
+      true
+    )!;
     const at = zeroBased & APPLIED_CHUNK_MASK;
     chunk.values[at] = Number.parseInt(digest, 16) >>> 0;
     chunk.present[at] = 1;
+    chunk.dirty = true;
   }
 
   get(seq: number): string | undefined {
     if (!Number.isSafeInteger(seq) || seq < 1) return undefined;
     const zeroBased = seq - 1;
-    const chunk = this.chunks.get(Math.floor(zeroBased / APPLIED_CHUNK_SIZE));
+    const chunk = this.chunkFor(
+      Math.floor(zeroBased / APPLIED_CHUNK_SIZE),
+      false
+    );
     const at = zeroBased & APPLIED_CHUNK_MASK;
     if (!chunk || chunk.present[at] === 0) return undefined;
     return chunk.values[at]!.toString(16).padStart(8, "0");
+  }
+
+  dispose(): void {
+    for (const [index, chunk] of this.chunks) {
+      if (chunk.dirty) this.writeChunk(index, chunk);
+    }
+    this.chunks.clear();
+  }
+
+  private chunkFor(
+    index: number,
+    create: boolean
+  ): AppliedDigestChunk | undefined {
+    const existing = this.chunks.get(index);
+    if (existing) {
+      this.chunks.delete(index);
+      this.chunks.set(index, existing);
+      return existing;
+    }
+
+    const loaded = this.readChunk(index);
+    if (loaded) {
+      this.chunks.set(index, loaded);
+      this.evictIfNeeded();
+      return loaded;
+    }
+    if (!create) return undefined;
+
+    const created: AppliedDigestChunk = {
+      values: new Uint32Array(APPLIED_CHUNK_SIZE),
+      present: new Uint8Array(APPLIED_CHUNK_SIZE),
+      dirty: false,
+    };
+    this.chunks.set(index, created);
+    this.evictIfNeeded();
+    return this.chunks.get(index)!;
+  }
+
+  private evictIfNeeded(): void {
+    while (this.chunks.size > this.maxChunks) {
+      const oldest = this.chunks.entries().next().value as
+        | [number, AppliedDigestChunk]
+        | undefined;
+      if (!oldest) return;
+      const [index, chunk] = oldest;
+      if (chunk.dirty) this.writeChunk(index, chunk);
+      this.chunks.delete(index);
+    }
+  }
+
+  private readChunk(index: number): AppliedDigestChunk | undefined {
+    if (!this.path || !existsSync(this.path)) return undefined;
+    const fd = openSync(this.path, "r");
+    try {
+      const buffer = Buffer.alloc(APPLIED_CHUNK_BYTES);
+      const bytesRead = readSync(
+        fd,
+        buffer,
+        0,
+        APPLIED_CHUNK_BYTES,
+        index * APPLIED_CHUNK_BYTES
+      );
+      if (bytesRead === 0) return undefined;
+
+      const values = new Uint32Array(APPLIED_CHUNK_SIZE);
+      for (let at = 0; at < APPLIED_CHUNK_SIZE; at++) {
+        values[at] = buffer.readUInt32LE(at * Uint32Array.BYTES_PER_ELEMENT);
+      }
+      const present = new Uint8Array(
+        buffer.subarray(
+          APPLIED_CHUNK_SIZE * Uint32Array.BYTES_PER_ELEMENT,
+          APPLIED_CHUNK_BYTES
+        )
+      );
+      return { values, present, dirty: false };
+    } finally {
+      closeSync(fd);
+    }
+  }
+
+  private writeChunk(index: number, chunk: AppliedDigestChunk): void {
+    if (!this.path) return;
+    mkdirSync(dirname(this.path), { recursive: true });
+    const fd = openSync(this.path, existsSync(this.path) ? "r+" : "w+");
+    try {
+      const buffer = Buffer.alloc(APPLIED_CHUNK_BYTES);
+      for (let at = 0; at < APPLIED_CHUNK_SIZE; at++) {
+        buffer.writeUInt32LE(chunk.values[at]!, at * Uint32Array.BYTES_PER_ELEMENT);
+      }
+      buffer.set(
+        chunk.present,
+        APPLIED_CHUNK_SIZE * Uint32Array.BYTES_PER_ELEMENT
+      );
+      writeSync(
+        fd,
+        buffer,
+        0,
+        APPLIED_CHUNK_BYTES,
+        index * APPLIED_CHUNK_BYTES
+      );
+      chunk.dirty = false;
+    } finally {
+      closeSync(fd);
+    }
   }
 }
 
@@ -230,6 +363,8 @@ export class StreamLedger {
   private readonly memoryOwner: string;
   private readonly spillStore?: SpillStore;
   private readonly spillPolicy?: RetentionPolicy;
+  private readonly appliedStorePath?: string;
+  private readonly appliedCacheChunks?: number;
   private nextLineId = 1;
 
   constructor(options: StreamLedgerOptions = {}) {
@@ -237,6 +372,8 @@ export class StreamLedger {
     this.memoryOwner = options.memoryOwner ?? "butui-stream";
     this.spillStore = options.spill?.store;
     this.spillPolicy = options.spill?.policy;
+    this.appliedStorePath = options.appliedStorePath;
+    this.appliedCacheChunks = options.appliedCacheChunks;
   }
 
   open(meta: OpenStreamMeta): void {
@@ -250,7 +387,14 @@ export class StreamLedger {
       tailLines: [],
       spilledSegments: [],
       tombstones: [],
-      applied: new AppliedDigestIndex(),
+      applied: new AppliedDigestIndex({
+        ...(this.appliedStorePath
+          ? { path: appliedStorePathFor(this.appliedStorePath, meta.streamId) }
+          : {}),
+        ...(this.appliedCacheChunks !== undefined
+          ? { maxChunks: this.appliedCacheChunks }
+          : {}),
+      }),
       memoryReservations: [],
     });
   }
@@ -671,6 +815,7 @@ export class StreamLedger {
     for (const stream of this.streams.values()) {
       for (const reservation of stream.memoryReservations) reservation.release();
       stream.memoryReservations = [];
+      stream.applied.dispose();
     }
     this.streams.clear();
   }
@@ -995,6 +1140,10 @@ function runsContainLineId(
 function clampIndex(value: number, total: number): number {
   if (!Number.isFinite(value)) return 0;
   return Math.min(total, Math.max(0, Math.floor(value)));
+}
+
+function appliedStorePathFor(basePath: string, streamId: StreamId): string {
+  return `${basePath}.${encodeURIComponent(streamId)}`;
 }
 
 function parseSequentialLineId(
