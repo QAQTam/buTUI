@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { MemoryLedger } from "@butui/core";
+import { createModifiers, MemoryLedger, type KeyEvent, type MouseEvent } from "@butui/core";
+import {
+  createScrollBarForStreamWindow,
+  createStreamWindowInput,
+} from "@butui/components";
 import {
   MemorySpillStore,
   StreamLedger,
@@ -52,6 +56,36 @@ function envelope(seq: number, delta: string): StreamEnvelope {
     priority: 1,
     op: { type: "append", delta },
     createdAt: seq,
+  };
+}
+
+function key(name: string): KeyEvent {
+  return {
+    type: "key",
+    name,
+    modifiers: createModifiers(),
+    stopPropagation() {},
+    preventDefault() {},
+    get defaultPrevented() {
+      return false;
+    },
+  };
+}
+
+function wheel(direction: "up" | "down"): MouseEvent {
+  return {
+    type: "mouse",
+    action: "wheel",
+    button: "none",
+    wheel: direction,
+    x: 0,
+    y: 0,
+    modifiers: createModifiers(),
+    stopPropagation() {},
+    preventDefault() {},
+    get defaultPrevented() {
+      return false;
+    },
   };
 }
 
@@ -205,5 +239,47 @@ describe("createStreamWindow", () => {
 
     await controller.scrollTo(0);
     expect(controller.atTop()).toBe(true);
+  });
+
+  test("input / scrollbar adapter 驱动同一 controller", async () => {
+    const ledger = await createSpilledLedger(1_500);
+    const controller = createStreamWindowController({
+      ledger,
+      streamId: "stream-1",
+      height: 10,
+      prefetchPages: 0,
+    });
+    const input = createStreamWindowInput(controller, {
+      wheelStep: 2,
+      pageOverlap: 1,
+    });
+
+    expect(input.handleKey(key("down"))).toBe(true);
+    await input.flush();
+    expect(controller.offset()).toBe(1);
+
+    expect(input.handleKey(key("pagedown"))).toBe(true);
+    await input.flush();
+    expect(controller.offset()).toBe(10);
+
+    expect(input.handleKey(key("end"))).toBe(true);
+    await input.flush();
+    expect(controller.offset()).toBe(1_490);
+
+    expect(input.handleWheel(wheel("up"))).toBe(true);
+    await input.flush();
+    expect(controller.offset()).toBe(1_488);
+
+    expect(input.handleKey(key("home"))).toBe(true);
+    await input.flush();
+    expect(controller.offset()).toBe(0);
+
+    await controller.scrollTo(500);
+    const bar = createScrollBarForStreamWindow(controller);
+    expect(bar.geometry()).toMatchObject({
+      total: 1_500,
+      viewport: 10,
+      overflow: true,
+    });
   });
 });
