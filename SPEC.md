@@ -1196,6 +1196,24 @@ const tip = createTooltipController({ delayMs: 400 });
 
 ---
 
+### 5.30 Portal（v0.1 实现）
+
+```tsx
+const [mount, setMount] = createSignal<Node>();
+
+<box ref={setMount}>挂载目标</box>
+<Portal mount={mount()}>
+  <text>渲染到 mount 的内容</text>
+</Portal>
+```
+
+- 不传 `mount` 时使用 app root。
+- 原位置返回零宽 sentinel，不影响当前布局。
+- children 保持响应式；mount 变化或组件卸载时自动移除容器。
+- 为 Modal / Tooltip / Toast 之外的任意 overlay 提供显式挂载点。
+
+---
+
 ### 5.17 应用上下文（v0.1 实现）
 
 组件要能问「现在多宽 / 什么色深 / 我想订一个全局键」，但既不该认识 runtime，
@@ -1705,6 +1723,7 @@ P1：
   action / pause-resume（见 §5.28）
 - `Tooltip`：`createTooltipController` / `tooltipPosition` / `<Tooltip>`，
   延迟、四向定位与根 layer（见 §5.29）
+- `Portal`：`<Portal mount>` 显式挂载 children，默认 app root（见 §5.30）
 - `Select` / `Tabs`：`<Select>`（↑↓ + Enter）与 `<Tabs>`（←→ 立即切换）
 - `Table`：列宽显式给或按内容算，支持左 / 中 / 右对齐
 - `Tree`：受控展开（`expanded` + `onToggle`），←→ 展开收起、→ 进子节点

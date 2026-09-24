@@ -92,6 +92,7 @@ export function mount(component: () => unknown, options: MountOptions = {}): Mou
             keyListeners.add(listener);
             return () => keyListeners.delete(listener);
           },
+          rootNode: () => root,
         },
         () =>
           provideFocusScope(

@@ -36,7 +36,7 @@ const app = createTuiApp({
 | 布局 | `@butui/layout` | **稳定**（`Cell` / `Line` / `Frame` / `layout`） |
 | 渲染 | `@butui/renderer` | **稳定**（`Renderer` / `plainText` / `paintLine`） |
 | 终端 | `@butui/terminal` | **稳定**（`TerminalSession` / 输入解码 / 能力探测 / `osc22` / `osc52`） |
-| 基础组件 | `@butui/components` | **稳定**（编辑器 / 选择 / 列表 / 滚动 / ScrollBar / Slider / SplitPane / CommandPalette / Toast / Tooltip / Diff / 弹窗 / 展示组件） |
+| 基础组件 | `@butui/components` | **稳定**（编辑器 / 选择 / 列表 / 滚动 / ScrollBar / Slider / SplitPane / CommandPalette / Toast / Tooltip / Portal / Diff / 弹窗 / 展示组件） |
 | 插件 / Slot | `@butui/plugins` | **稳定**（`Plugin` / `SlotRegistry`；Solid 适配在 `@butui/plugins/solid`；loader 在 `@butui/plugins/loader`） |
 | 命令 / Keymap | `@butui/keymap` | **稳定**（`CommandRegistry` / `Keymap`；Solid 适配在 `@butui/keymap/solid`） |
 | 流式文本 | `@butui/stream` | **稳定**（`StreamSource` / `DiffStream` / `<stream>`） |
@@ -732,6 +732,19 @@ const tip = createTooltipController({ delayMs: 400 });
 - `tooltipPosition()` 支持 top / bottom / left / right，并按视口尺寸夹取。
 - show / hide 延迟可独立配置；tooltip 自身 hover 会保持显示。
 - `<Tooltip>` 使用根 `<layer>`，应挂在与 `<Modal>` 相同的视图根部。
+
+### 4.28 Portal：`<Portal>`
+
+```tsx
+<Portal mount={overlayRoot}>
+  <box>overlay</box>
+</Portal>
+```
+
+- `mount` 省略时挂到当前 app root。
+- 原位置只保留零宽 sentinel，不改变布局。
+- children 响应式更新；mount 变化 / 卸载会移除挂载容器。
+- Portal 只负责挂载，不提供焦点 trap、遮罩或 z-index 策略。
 
 ## 5. 已知缺口（不要依赖，也不建议自己绕）
 

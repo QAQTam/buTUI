@@ -48,6 +48,8 @@ export interface AppScope {
   frameClock?: FrameClock;
   /** runtime 注入的动画调度器；useAnimationFrame 会优先使用它。 */
   animationScheduler?: AnimationScheduler;
+  /** 当前视图根节点；Portal 默认挂载到这里。 */
+  rootNode?(): Node | undefined;
 }
 
 const AppContext = createContext<AppScope | null>(null);
@@ -82,6 +84,13 @@ export function useColorDepth(): () => ColorDepth {
   const scope = useContext(AppContext);
   if (!scope) return () => "truecolor";
   return () => scope.colorDepth();
+}
+
+/** 当前视图根节点；没有 runtime context 时返回 undefined。 */
+export function useRootNode(): () => Node | undefined {
+  const scope = useContext(AppContext);
+  if (!scope?.rootNode) return () => undefined;
+  return () => scope.rootNode!();
 }
 
 /**

@@ -32,6 +32,7 @@ export * from "./toast.ts";
 export * from "./toast.tsx";
 export * from "./tooltip.ts";
 export * from "./tooltip.tsx";
+export * from "./portal.tsx";
 export * from "./capability-approval.tsx";
 export * from "./select.tsx";
 export * from "./table.tsx";

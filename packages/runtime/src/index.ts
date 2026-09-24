@@ -1128,6 +1128,7 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
             captureMouse,
             releaseMouse,
             capturedMouse,
+            rootNode: () => root,
             frameClock: renderScheduler.frameClock,
             animationScheduler: appAnimationScheduler,
           },
