@@ -32,7 +32,7 @@ const app = createTuiApp({
 |---|---|---|
 | 应用运行时 | `@butui/runtime` | **稳定**（v0.1 冻结） |
 | 节点 / 事件 / 焦点 / 主题 | `@butui/core` | **稳定** |
-| JSX 与编译 | `@butui/solid` | **稳定**（含 `useAnimationFrame` / `AnimationScheduler`） |
+| JSX 与编译 | `@butui/solid` | **稳定**（含 `AnimationScheduler` / `useAnimationFrame` / tween / spring / timeline） |
 | 布局 | `@butui/layout` | **稳定**（`Cell` / `Line` / `Frame` / `layout`） |
 | 渲染 | `@butui/renderer` | **稳定**（`Renderer` / `plainText` / `paintLine`） |
 | 终端 | `@butui/terminal` | **稳定**（`TerminalSession` / 输入解码 / 能力探测 / `osc22` / `osc52`） |
@@ -411,10 +411,13 @@ session.dispatch({
 - 行更新使用逐行版本信号；改一行不会重新计算整个 diff 的文本 / token。
 - `highlight` 只对 context 行做轻量语法高亮；add / remove 始终保持红绿语义。
 
-### 4.17 动画：`AnimationScheduler` / `useAnimationFrame` / `startDragInertia`
+### 4.17 动画：`AnimationScheduler` / `useAnimationFrame` / tween / spring / timeline / inertia
 
 ```tsx
 const time = useAnimationFrame({ enabled: () => source.streaming() });
+const opacity = createTween({ from: 0, to: 1, duration: 240 });
+const position = createSpring({ from: 0, to: 10 });
+const timeline = createTimeline({ steps: staggerSteps(3, { interval: 80, duration: 240, onUpdate }) });
 const inertia = startDragInertia({
   velocityX: event.velocityX,
   velocityY: event.velocityY,
@@ -424,9 +427,12 @@ const inertia = startDragInertia({
 
 - 进程内共享调度器默认 30fps，只有存在订阅者时才启动；全部退订后停止。
 - `tick(time)` 可手动驱动，测试和未来的 runtime render clock 不依赖墙钟。
+- `createTween()` 支持数值 / 颜色；`createSpring()` 使用固定小步长积分。
+- `createTimeline()` 支持并行 step，`sequenceSteps()` / `staggerSteps()` 生成
+  串行 / 错峰布局。
 - `startDragInertia()` 做指数衰减，输出整数 cell 位移，自动在低速停止。
-- `TERM=dumb` 或 `BUTUI_REDUCED_MOTION=1|true` 时默认不启动惯性 / 动画；
-  `<Diff>`、`<ScrollBar>`、`<Slider>` 已按这个规则降级。
+- `TERM=dumb` 或 `BUTUI_REDUCED_MOTION=1|true` 时默认不启动动画；
+  `<Diff>`、`<Shimmer>`、`<ScrollBar>`、`<Slider>` 已按这个规则降级。
 - 动画只应更新仍在变化的少量行。不要把 shimmer 铺到完整 diff / markdown，
   否则每帧都会制造大量样式变化和重绘。
 
@@ -603,6 +609,24 @@ const split = createSplitPane({
   应传实际 cell 数；窗格本身用 `flexGrow` 跟随父容器。
 - 当前没有折叠、嵌套约束或双击复位。
 
+### 4.24 Shimmer：`<Shimmer>`
+
+```tsx
+<Shimmer
+  text="thinking..."
+  active={streaming()}
+  granularity="word"
+  highlightWidth={6}
+/>
+```
+
+- `granularity` 为 `line | word | cell`；默认 `word`，`cell` 仅用于窄状态行。
+- `phase` 是受控 0..1；不传时订阅共享动画时钟。
+- 只改颜色，不改变文本宽度、换行或布局。
+- `reducedMotion` / `BUTUI_REDUCED_MOTION=1|true` 时静态显示。
+- 不要把 Shimmer 铺到完整 Markdown / Diff；`ReasoningLine` 只在 streaming 时
+  动画前缀。
+
 ## 5. 已知缺口（不要依赖，也不建议自己绕）
 
 - **列表只有单列 + 固定行高**：`itemHeight` 是常数，变高行（折行文本、展开的
@@ -615,8 +639,9 @@ const split = createSplitPane({
 - **流式 Diff 不支持任意位置删除 / splice**：后端应把重算限制在尾部；需要完整
   重排时新建一个 `DiffStream`。目前也没有 word-level diff、折叠 hunk 和
   “视口外有新行”提示。
-- **动画只有共享时钟、Diff 游标与拖动惯性**：还没有通用 tween / spring /
-  timeline / stagger，也没有 shimmer 组件；不要假设 60fps。
+- **动画已有共享时钟、tween / spring / timeline、Diff 游标、拖动惯性和
+  Shimmer**：还缺更完整的 stagger 编排、滚动回弹策略和动画调试工具；不要假设
+  60fps。
 - **ScrollBar 目前只有垂直轴**：没有自动隐藏、hover 展开、水平轴或触控惯性。
 - **SplitPane 的拖动几何依赖 `size`**：根视图可省略并使用终端尺寸；嵌在
   padding / border / 兄弟节点容器里时必须传实际轴尺寸，否则 min/max 夹取会按

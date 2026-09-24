@@ -6,7 +6,7 @@
  * 而不是行号。
  */
 import { For, Show } from "solid-js";
-import { Diff } from "@butui/components";
+import { Diff, Shimmer } from "@butui/components";
 import { StreamMarkdown, type DiffStream } from "@butui/stream";
 import type {
   AgentMessage,
@@ -445,7 +445,12 @@ export function ReasoningLine(props: {
 }) {
   return (
     <row gap={1} semantic="reasoning:line">
-      <text color="reasoning">{props.streaming ? "✻ 思考中" : "✻ 思考"}</text>
+      <Shimmer
+        text={props.streaming ? "✻ 思考中" : "✻ 思考"}
+        active={props.streaming === true}
+        baseColor="reasoning"
+        highlightColor="accent"
+      />
       <Show
         when={props.expanded}
         fallback={

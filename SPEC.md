@@ -730,9 +730,10 @@ id** —— 前者在插入后漂移，后者会在每个 chunk 都变成新行�
   自动定稿。
 
 **动画边界。** 动画只允许落在仍在变化的行；新增共享 `AnimationScheduler`
-（30fps、有订阅者才启动、全部退订即停）和 `useAnimationFrame`。`<Diff>` 的
-游标只在 `stable:false` 时订阅，定稿后自动停止；拖动惯性也复用同一调度器。
-`TERM=dumb` 或 `BUTUI_REDUCED_MOTION=1|true` 不启动。不要把 shimmer 铺到整个 diff 或整条
+（30fps、有订阅者才启动、全部退订即停）、`useAnimationFrame`、tween / spring /
+timeline。`<Diff>` 的游标只在 `stable:false` 时订阅，定稿后自动停止；拖动惯性
+和 `<Shimmer>` 也复用同一调度器。`TERM=dumb` 或
+`BUTUI_REDUCED_MOTION=1|true` 不启动。不要把 shimmer 铺到整个 diff 或整条
 markdown —— 那会让每帧产生大面积样式变化，和 §17「流式输出不整屏闪烁」冲突。
 
 **已知边界：** 没有 word-level diff、任意位置删除、hunk 折叠或“滚开时有新行”
@@ -1036,6 +1037,35 @@ second    = available - first
 - `selectable={false}` 只声明在分隔条，两侧内容仍可参与全局文本选择。
 - `size` 默认取终端对应轴；组件不在终端全尺寸时，应用需传入实际 cell 数。
 - 当前没有折叠、嵌套拖动约束或双击复位。
+
+---
+
+### 5.26 动画原语与 Shimmer（v0.1 实现）
+
+动画层不引入 CSS 模型，统一建立在共享 `AnimationScheduler` 上：
+
+- `createTween()`：数值 / 颜色插值，duration、delay、easing。
+- `createSpring()`：阻尼弹簧，固定小步长积分，避免 30fps 下高刚度发散。
+- `createTimeline()`：并行 step；`sequenceSteps()` / `staggerSteps()` 生成串行 /
+  错峰布局。
+- 三者均支持注入 scheduler，完成 / cancel 后自动退订，并遵守 reduced-motion。
+
+`<Shimmer>` 只负责状态文本的高亮扫过，不改变文本宽度或行数：
+
+```tsx
+<Shimmer
+  text="thinking..."
+  active={streaming()}
+  granularity="word" // line | word | cell
+  highlightWidth={6}
+/>
+```
+
+- 默认 `word`；`cell` 只用于单行窄状态文本。
+- 高亮按到移动中心的距离计算 intensity，再插值 base / highlight 颜色。
+- `stable:false` 当前行可动画；稳定后应停止订阅并冻结。
+- Diff / Markdown 不整段 shimmer；`ReasoningLine` 只在 streaming 时动画前缀。
+- `reducedMotion` / `BUTUI_REDUCED_MOTION=1|true` 下静态显示。
 
 ---
 
@@ -1542,7 +1572,7 @@ P1：
 - `Overlay` / `Portal` / `Dialog`：`<Modal>` / `<Dialog>`（根 layer + 焦点
   trap，见 §5.15）
 - `Button`：`<Button>`（Enter / 空格 / 点击，焦点态自亮）
-- `ProgressBar` / `Spinner` / `Badge` / `Divider` / `KeyHint`：展示组件
+- `ProgressBar` / `Spinner` / `Badge` / `Divider` / `KeyHint` / `Shimmer`：展示组件
 - `Select` / `Tabs`：`<Select>`（↑↓ + Enter）与 `<Tabs>`（←→ 立即切换）
 - `Table`：列宽显式给或按内容算，支持左 / 中 / 右对齐
 - `Tree`：受控展开（`expanded` + `onToggle`），←→ 展开收起、→ 进子节点

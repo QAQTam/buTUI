@@ -7,8 +7,9 @@
 分支式 Undo + WebUI remote attach + 图片子系统（Kitty / iTerm2 / Sixel /
 半块 / 占位符）+ Artifact Canvas + 列表 / 虚拟列表 / 滚动视口 / 弹窗 / 表格 /
 树 + 鼠标选区 / OSC 52 + 流式 Diff / 共享动画时钟 / 精确 ScrollBar +
-通用插件 / Slot / Keymap / 鼠标交互 / OSC 22 指针 / 拖动惯性 / Slider /
-SplitPane 已跑通**，`bun test` 573 个用例全绿。
+通用插件 / Slot / Keymap / 鼠标交互 / OSC 22 指针 / 拖动惯性 / tween /
+spring / timeline / Shimmer / Slider / SplitPane 已跑通**，`bun test` 584 个
+用例全绿。
 
 ```
 应用（你的 agent / 工具 / TUI）
@@ -309,6 +310,52 @@ const slider = createSlider({
 - 释放时默认按 `dragend.velocityX` 继续移动；`inertia={false}` 可关闭。
 - 键盘：方向键、PageUp/PageDown、Home/End。
 - 终端宽度变化不会影响模型；组件只决定画多宽。
+
+## 动画原语与 Shimmer
+
+`@butui/solid` 在共享 `AnimationScheduler` 上提供三个原语：
+
+```tsx
+const opacity = createTween({
+  from: 0,
+  to: 1,
+  duration: 240,
+  easing: easeOutCubic,
+});
+
+const spring = createSpring({ from: 0, to: 10, stiffness: 170, damping: 26 });
+const timeline = createTimeline({
+  steps: staggerSteps(3, {
+    interval: 80,
+    duration: 240,
+    onUpdate: (index, progress) => update(index, progress),
+  }),
+});
+```
+
+- `createTween` 支持数值和颜色插值；颜色输出为 `rgba(...)`。
+- `createSpring` 使用固定小步长积分，避免高刚度在 30fps 下发散。
+- `createTimeline` 支持并行 step；`sequenceSteps()` / `staggerSteps()` 生成串行 /
+  错峰布局。
+- 三者都接受注入的 scheduler，并在完成 / cancel 后自动退订。
+
+```tsx
+<Shimmer
+  text="thinking..."
+  active={streaming()}
+  granularity="word" // line | word | cell
+  highlightWidth={6}
+  period={1400}
+/>
+```
+
+Shimmer 的粒度约束：
+
+- 默认 `word`；状态短句不要用 `cell` 全屏逐格扫。
+- `cell` 只适合单行、窄状态文本；高亮带宽默认 6 cell。
+- 只动画 `stable:false` 的当前行，稳定后冻结。
+- 只改颜色，不改变文本宽度和行高；不会触发布局重排。
+- `reducedMotion` / `BUTUI_REDUCED_MOTION=1|true` 下静态显示。
 
 ## SplitPane
 
@@ -831,6 +878,9 @@ bun --conditions=browser run scripts/mouse-demo.tsx
 # 可拖动 SplitPane
 bun --conditions=browser run scripts/split-pane-demo.tsx
 
+# 动画原语与 Shimmer
+bun --conditions=browser run scripts/shimmer-demo.tsx
+
 # 图片子系统自检（不需要真终端）
 bun --conditions=browser run scripts/image-demo.tsx
 
@@ -858,9 +908,9 @@ Demo 的工作区是**内存实现**，但走的是完全一样的 journal / dif
 | 包 | 职责 |
 |---|---|
 | `@butui/core` | 节点树、`rev` 失效传播、`childrenRevSum`、focus、事件冒泡、theme、ANSI 解析 |
-| `@butui/solid` | `@solidjs/universal` host ops、JSX 类型、Bun 编译插件、共享动画帧时钟 / 拖动惯性、`useMouseCapture` |
+| `@butui/solid` | `@solidjs/universal` host ops、JSX 类型、Bun 编译插件、共享动画时钟 / tween / spring / timeline / 拖动惯性、`useMouseCapture` |
 | `@butui/runtime` | `createTuiApp`：终端、合帧重绘、事件分发、鼠标选区 / OSC 52 / OSC 22 指针 —— 应用作者的唯一入口 |
-| `@butui/components` | `createTextEditor` / `<Input>` / `<Textarea>` / `<Markdown>` / `<Code>` / `<Diff>` / `<ScrollBar>` / `<Slider>` / `<SplitPane>`、`createSelection` / `<List>` / `<VirtualList>`、`createScrollView`、`<Select>` / `<Tabs>` / `<Table>` / `<Tree>`、`<Button>` / `<Dialog>` / `<Modal>`、`ProgressBar` / `Spinner` / `Badge` / `Divider` / `KeyHint` |
+| `@butui/components` | `createTextEditor` / `<Input>` / `<Textarea>` / `<Markdown>` / `<Code>` / `<Diff>` / `<ScrollBar>` / `<Slider>` / `<SplitPane>` / `<Shimmer>`、`createSelection` / `<List>` / `<VirtualList>`、`createScrollView`、`<Select>` / `<Tabs>` / `<Table>` / `<Tree>`、`<Button>` / `<Dialog>` / `<Modal>`、`ProgressBar` / `Spinner` / `Badge` / `Divider` / `KeyHint` |
 | `@butui/plugins` | 通用 `SlotRegistry` / `Plugin` / 错误隔离；`@butui/plugins/solid` 提供 `createSlot` / `<Slot>`；`@butui/plugins/loader` 提供 manifest / 配置 / 动态加载 / 自动发现 / capability 门控 |
 | `@butui/keymap` | `CommandRegistry` / `createKeymap`：scope、priority、when、冲突检测、help；Solid 适配 `useKeymap` |
 | `@butui/agent` | 事件协议（NDJSON）、Session reducer、流式 diff 事件、SPEC §10.2 组件、Artifact Canvas |
@@ -1044,6 +1094,7 @@ Bun.plugin(onLoad)
   列表只支持单列 + 固定行高
 - Artifact Canvas：artifact 的持久化（现在只在 Session 内存里）、WebUI 侧的服务端图片路由
 - 图片子系统：半块图的终端背景透出、Kitty 图片随滚动的位置缓存
-- 动画目前有共享时钟、Diff 流式游标和拖动惯性；shimmer / tween / timeline 还没做
+- 动画已有共享时钟、tween / spring / timeline、Diff 流式游标、拖动惯性和
+  Shimmer；还缺更完整的 stagger 编排、滚动回弹策略和动画调试工具
 - Kitty keyboard protocol 的发送侧
 - `flexShrink` 没实现：row 里只有显式 `truncate` / `wrap={false}` 的 text 会让位
