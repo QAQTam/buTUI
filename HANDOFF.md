@@ -3,8 +3,8 @@
 > 交接时间：2026-09-24
 > 仓库：`/home/qaqtamsy/项目/buTUI-v0.2-frontier`
 > 功能基线提交：`61d889b feat(components): add capability approval dialog`
-> 工作区状态：本文件与 audit order cleanup 一并提交
-> 本轮能力：pending TTL / caps / compact
+> 工作区状态：本文件与 isolation benchmark 一并提交
+> 本轮能力：worker / process startup + RPC + RSS benchmark
 > 当前回归：`756 pass / 0 fail`，86 个测试文件，`tsc --noEmit` 通过
 
 ## 1. 项目定位
@@ -29,6 +29,7 @@ buTUI 是基于 Bun + TypeScript 的通用 TUI Runtime。参考 OpenTUI 的接�
 - `V0.2_FRONTIER.md`：v0.2 会话运行时边界与原型进度。
 - `V0.2_CONTRACTS.md`：FrameClock / StreamLedger / MemoryLedger 接口。
 - `V0.2_RETENTION_REPORT.md`：cold spill、viewport、apply metadata 实测。
+- `V0.2_ISOLATION_REPORT.md`：Worker / process 启动、RPC 分位、吞吐和 RSS 实测。
 - 本文件：接手工作必须知道的上下文与下一步。
 
 ## 2. 环境与参考源码
@@ -78,6 +79,7 @@ bun --conditions=browser run scripts/smooth-bench.tsx
 bun --conditions=browser run scripts/stream-retention-bench.ts --lines=1000000 --batch=500
 bun --conditions=browser run scripts/stream-window-scroll-bench.ts --lines=1000000 --frames=1000 --events=20
 bun --conditions=browser run scripts/stream-apply-bench.ts --events=5000000
+bun --conditions=browser run scripts/plugin-isolation-bench.ts --calls=5000 --warmup=200 --concurrency=32
 ```
 
 真实 PTY 冒烟可参考之前的模式：
@@ -477,6 +479,9 @@ const bar = createScrollBar({
   按 sourceId + sourceSeq 维护水位并暂存缺口，`createFileAuditOrderStore` /
   `openPersistentAuditReceiver` 可原子恢复 watermark 与 pending；pending 支持 TTL /
   容量淘汰，完成 source 可 compact。审计失败不破坏原操作。
+- Isolation benchmark：`scripts/plugin-isolation-bench.ts` 对比 Worker / process
+  启动、顺序 RPC 分位、并发吞吐与 process maxRSS；5k 调用实测见
+  `V0.2_ISOLATION_REPORT.md`。
   Worker / process 只做崩溃和堆隔离，不是 capability 或 OS sandbox。
 
 关键实测：
