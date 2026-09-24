@@ -1,4 +1,10 @@
-import { serveWorkerRpc } from "../../packages/plugins/src/worker-rpc.ts";
+import {
+  createWorkerRpc,
+  serveWorkerRpc,
+} from "../../packages/plugins/src/worker-rpc.ts";
+import type { WorkerRpcEndpoint } from "../../packages/plugins/src/worker-rpc.ts";
+
+const host = createWorkerRpc(globalThis as unknown as WorkerRpcEndpoint);
 
 serveWorkerRpc({
   echo(value: unknown) {
@@ -16,5 +22,8 @@ serveWorkerRpc({
   },
   uncloneable() {
     return { callback() {} };
+  },
+  readViaHost(path: string) {
+    return host.call<string>("readFile", path);
   },
 });

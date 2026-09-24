@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { createWorkerRpc, serveWorkerRpc } from "@butui/plugins";
+import {
+  CapabilityBroker,
+  createWorkerRpc,
+  serveWorkerCapabilities,
+  serveWorkerRpc,
+} from "@butui/plugins";
 import type {
+  WorkerCapabilityDeniedEvent,
   WorkerRpcEndpoint,
   WorkerRpcEndpointEvent,
   WorkerRpcMessage,
@@ -103,6 +109,56 @@ describe("Worker RPC", () => {
       expect(rpc.pending).toBe(0);
     } finally {
       rpc.dispose();
+      child.terminate();
+    }
+  });
+
+  test("capability proxy 允许授权调用，revoke 后立即拒绝", async () => {
+    const child = worker();
+    const broker = new CapabilityBroker();
+    const lease = broker.grant("worker-plugin", "fs:read");
+    const denied: WorkerCapabilityDeniedEvent[] = [];
+    let reads = 0;
+    const cleanup = serveWorkerCapabilities(child, {
+      pluginId: "worker-plugin",
+      broker,
+      bindings: {
+        readFile: {
+          capability: "fs:read",
+          handler(path: string) {
+            reads++;
+            return `read:${path}`;
+          },
+        },
+      },
+      onDenied(event) {
+        denied.push(event);
+      },
+    });
+    const rpc = createWorkerRpc(child, { timeoutMs: 1_000 });
+
+    try {
+      expect(await rpc.call<string>("readViaHost", "a.txt")).toBe("read:a.txt");
+      expect(reads).toBe(1);
+
+      broker.revoke(lease, "test");
+      const failure = await captureRejection(
+        rpc.call("readViaHost", "b.txt")
+      );
+      expect(failure.message).toContain("worker capability denied");
+      expect(reads).toBe(1);
+      expect(denied).toEqual([
+        {
+          pluginId: "worker-plugin",
+          method: "readFile",
+          capability: "fs:read",
+          args: ["b.txt"],
+        },
+      ]);
+    } finally {
+      rpc.dispose();
+      cleanup();
+      broker.dispose();
       child.terminate();
     }
   });
