@@ -165,6 +165,11 @@ export interface TerminalSessionOptions {
   leaseOwner?: string;
 }
 
+export interface TerminalWriteOptions {
+  kind?: "frame" | "append" | "control";
+  frameId?: number;
+}
+
 export class TerminalSession {
   private readonly stdin: NodeJS.ReadStream;
   private readonly stdout: NodeJS.WriteStream;
@@ -234,6 +239,22 @@ export class TerminalSession {
     return this.lease;
   }
 
+  /** 暂停 frame lease，把终端交给 raw / 子进程。 */
+  async suspend(reason = "suspend"): Promise<void> {
+    if (!this.lease) return;
+    await this.arbiter.suspend(this.lease, reason);
+  }
+
+  /** 恢复 frame lease；恢复后调用方应强制 full damage。 */
+  async resume(): Promise<void> {
+    if (!this.lease) return;
+    await this.arbiter.resume(this.lease);
+  }
+
+  requiresFullDamage(): boolean {
+    return this.arbiter.requiresFullDamage();
+  }
+
   start(): void {
     if (this.started) return;
     this.started = true;
@@ -243,19 +264,19 @@ export class TerminalSession {
       reason: "terminal-session",
     });
 
-    if (this.options.altScreen) this.write(CONTROL.altScreenOn, "control");
-    this.write(CONTROL.cursorHide, "control");
+    if (this.options.altScreen) this.write(CONTROL.altScreenOn, { kind: "control" });
+    this.write(CONTROL.cursorHide, { kind: "control" });
     if (this.options.mouse) {
       this.write(
         this.options.mouseMotion === "hover"
           ? CONTROL.mouseHoverOn
           : CONTROL.mouseOn,
-        "control"
+        { kind: "control" }
       );
     }
-    if (this.options.bracketedPaste) this.write(CONTROL.pasteOn, "control");
-    if (this.options.focusEvents) this.write(CONTROL.focusOn, "control");
-    if (this.options.kittyKeyboard) this.write(CONTROL.kittyKeysOn, "control");
+    if (this.options.bracketedPaste) this.write(CONTROL.pasteOn, { kind: "control" });
+    if (this.options.focusEvents) this.write(CONTROL.focusOn, { kind: "control" });
+    if (this.options.kittyKeyboard) this.write(CONTROL.kittyKeysOn, { kind: "control" });
 
     this.setRawMode(true);
 
@@ -294,13 +315,13 @@ export class TerminalSession {
     for (const dispose of this.disposers.splice(0)) dispose();
     if (this.escapeTimer) clearTimeout(this.escapeTimer);
 
-    if (this.options.kittyKeyboard) this.write(CONTROL.kittyKeysOff, "control");
-    if (this.options.focusEvents) this.write(CONTROL.focusOff, "control");
-    if (this.options.bracketedPaste) this.write(CONTROL.pasteOff, "control");
-    if (this.options.mouse) this.write(CONTROL.mouseOff, "control");
+    if (this.options.kittyKeyboard) this.write(CONTROL.kittyKeysOff, { kind: "control" });
+    if (this.options.focusEvents) this.write(CONTROL.focusOff, { kind: "control" });
+    if (this.options.bracketedPaste) this.write(CONTROL.pasteOff, { kind: "control" });
+    if (this.options.mouse) this.write(CONTROL.mouseOff, { kind: "control" });
     if (this.mousePointerStyle !== undefined) this.setMousePointer("default");
-    this.write(CONTROL.cursorShow, "control");
-    if (this.options.altScreen) this.write(CONTROL.altScreenOff, "control");
+    this.write(CONTROL.cursorShow, { kind: "control" });
+    if (this.options.altScreen) this.write(CONTROL.altScreenOff, { kind: "control" });
     const lease = this.lease;
     this.lease = undefined;
     if (lease) void this.arbiter.release(lease);
@@ -315,10 +336,14 @@ export class TerminalSession {
    */
   write(
     chunk: string,
-    kind: "frame" | "append" | "control" = "frame"
+    options: TerminalWriteOptions = {}
   ): boolean | void {
     if (!this.lease) return this.stdout.write(chunk);
-    const receipt = this.arbiter.write(this.lease, { kind, bytes: chunk });
+    const receipt = this.arbiter.write(this.lease, {
+      kind: options.kind ?? "frame",
+      ...(options.frameId !== undefined ? { frameId: options.frameId } : {}),
+      bytes: chunk,
+    });
     return receipt.accepted && !receipt.blocked;
   }
 
@@ -328,7 +353,7 @@ export class TerminalSession {
     const normalized = style === "auto" ? "default" : style;
     if (this.mousePointerStyle === normalized) return;
     this.mousePointerStyle = normalized;
-    this.write(osc22(normalized, { multiplexer: "auto" }), "control");
+    this.write(osc22(normalized, { multiplexer: "auto" }), { kind: "control" });
   }
 
   /**
@@ -339,7 +364,7 @@ export class TerminalSession {
    */
   copy(text: string, options: Osc52Options = {}): boolean {
     if (text.length === 0) return false;
-    this.write(osc52(text, options), "control");
+    this.write(osc52(text, options), { kind: "control" });
     return true;
   }
 

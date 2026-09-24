@@ -43,10 +43,12 @@ export class PresentedFrameStore {
   present(
     layout: Frame,
     sessionRevision: number,
-    presentedAt = performance.now()
+    presentedAt = performance.now(),
+    frameId = this.nextFrameId
   ): PresentedFrame {
+    if (frameId >= this.nextFrameId) this.nextFrameId = frameId + 1;
     const frame: PresentedFrame = {
-      frameId: this.nextFrameId++,
+      frameId,
       sessionRevision,
       presentedAt,
       layout,

@@ -69,6 +69,11 @@ export interface TuiSize {
   rows: number;
 }
 
+export interface TuiWriteOptions {
+  kind?: "frame" | "append" | "control";
+  frameId?: number;
+}
+
 /**
  * 运行时需要的终端能力。`TerminalSession` 结构上满足它；
  * 测试可以塞一个假终端进来（不碰 TTY、不写 stdout）。
@@ -79,9 +84,14 @@ export interface TuiTerminal {
   start(): void;
   stop(): void;
   /** 返回 false 表示写缓冲已满；运行时会在 drain 前停止自动绘制。 */
-  write(chunk: string): boolean | void;
+  write(chunk: string, options?: TuiWriteOptions): boolean | void;
   /** 可选：stdout 写缓冲排空。 */
   onDrain?(listener: () => void): () => void;
+  /** 可选：suspend / resume terminal ownership。 */
+  suspend?(reason?: string): Promise<void>;
+  resume?(): Promise<void>;
+  /** 可选：恢复前是否必须整屏重画。 */
+  requiresFullDamage?(): boolean;
   /** 可选：终端层自行去重 / stop 时恢复 default */
   setMousePointer?(style: MousePointerStyle): void;
   onEvent(listener: (event: ButuiEvent) => void): () => void;
@@ -234,6 +244,10 @@ export interface TuiApp {
   start(): void;
   /** 停止并还原终端（幂等） */
   stop(): void;
+  /** 暂停 frame ownership，把终端交给 raw / 子进程。 */
+  suspend(reason?: string): Promise<void>;
+  /** 恢复 frame ownership，并强制下一帧 full damage。 */
+  resume(): Promise<void>;
   /** 立刻画一帧（一般不用调；变更会自动重绘） */
   paint(): RenderStats;
   /** 请求一帧（按 `render.mode` 合并；默认同一 tick 内只画一次） */
@@ -421,7 +435,14 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
     selectionHasText = selectionText(selectionFrame ?? computeFrame(), range) !== "";
   };
 
-  const renderer = new Renderer(chunk => terminal.write(chunk), {
+  let nextPaintFrameId = 1;
+  let paintFrameId: number | undefined;
+  const renderer = new Renderer(chunk => {
+    return terminal.write(chunk, {
+      kind: "frame",
+      ...(paintFrameId !== undefined ? { frameId: paintFrameId } : {}),
+    });
+  }, {
     ...(options.afterDraw !== undefined ? { afterDraw: options.afterDraw } : {}),
   });
 
@@ -454,15 +475,28 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
   let renderScheduler: RenderScheduler | undefined;
   let appAnimationScheduler: AnimationScheduler | undefined;
   let renderBlocked = false;
+  let suspended = false;
   let hoverAfterPresent: ((frame: Frame) => void) | undefined;
   const canDrain = typeof terminal.onDrain === "function";
   const paint = (): RenderStats => {
     const frame = computeFrame();
-    const stats = renderer.draw(frame);
+    const frameId = nextPaintFrameId++;
+    paintFrameId = frameId;
+    let stats: RenderStats;
+    try {
+      stats = renderer.draw(frame);
+    } finally {
+      paintFrameId = undefined;
+    }
     const blocked = canDrain && stats.blocked;
     renderBlocked = blocked;
     if (!blocked) {
-      presentedFrames.present(frame, sessionRevision, performance.now());
+      presentedFrames.present(
+        frame,
+        sessionRevision,
+        performance.now(),
+        frameId
+      );
       hasPresentedOnce = true;
       hoverAfterPresent?.(frame);
     }
@@ -476,7 +510,7 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
   let disposed = false;
 
   const runFrame = (): void => {
-    if (disposed) return;
+    if (disposed || suspended) return;
     // Solid 2 的写入延迟到 flush：先提交，再决定要不要画
     flush();
     if (!dirty || renderBlocked) return;
@@ -491,7 +525,7 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
     clock: renderScheduler.frameClock,
   });
   const requestPaint = (): void => {
-    if (disposed) return;
+    if (disposed || suspended) return;
     dirty = true;
     if (renderBlocked) return;
     renderScheduler?.request();
@@ -1105,6 +1139,7 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
       disposers.push(
         terminal.onDrain(() => {
           if (!renderBlocked) return;
+          if (terminal.requiresFullDamage?.()) renderer.invalidate();
           renderScheduler?.markDrained();
           renderBlocked = false;
           requestPaint();
@@ -1126,6 +1161,7 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
     renderScheduler?.cancel();
     appAnimationScheduler?.stop();
     renderBlocked = false;
+    suspended = false;
     pressedMouse = undefined;
     hoveredMouseNode = undefined;
     capturedMouseNode = undefined;
@@ -1134,6 +1170,25 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
     setMousePointer("default");
     for (const dispose of disposers.splice(0)) dispose();
     terminal.stop();
+  }
+
+  async function suspend(reason = "suspend"): Promise<void> {
+    if (disposed || suspended) return;
+    suspended = true;
+    if (selectionHasText || selecting) resetSelection(false);
+    renderScheduler?.cancel();
+    appAnimationScheduler?.stop();
+    presentedFrames.invalidate();
+    await terminal.suspend?.(reason);
+  }
+
+  async function resume(): Promise<void> {
+    if (disposed || !suspended) return;
+    await terminal.resume?.();
+    suspended = false;
+    renderer.invalidate();
+    presentedFrames.invalidate();
+    requestPaint();
   }
 
   const dispose = (): void => {
@@ -1152,6 +1207,8 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
     colorDepth: depth,
     start,
     stop,
+    suspend,
+    resume,
     paint,
     requestPaint,
     send,
