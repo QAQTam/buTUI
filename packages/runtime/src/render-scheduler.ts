@@ -12,7 +12,7 @@
  *   - 最后一次变更仍会触发尾帧，不会丢掉流式内容的尾巴。
  */
 
-import { FrameClock, type FrameRequestHandle } from "./frame-clock.ts";
+import { FrameClock, type FrameRequestHandle } from "@butui/core";
 
 export type RenderMode = "microtask" | "frame";
 

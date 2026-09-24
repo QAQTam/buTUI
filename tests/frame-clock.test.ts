@@ -3,7 +3,7 @@ import {
   FrameClock,
   type FrameClockOptions,
   type FrameRequest,
-} from "../packages/runtime/src/frame-clock.ts";
+} from "@butui/core";
 
 interface Scheduled {
   at: number;
