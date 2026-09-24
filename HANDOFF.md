@@ -288,6 +288,8 @@ const bar = createScrollBar({
   loader 在 factory 前签发 lease，插件 dispose 后自动回收。
 - `CapabilityApprovalQueue`：pending / resolve / dispose，配合
   `createCapabilityApprover()` 可直接挂审批 UI。
+- `<CapabilityApprovalDialog>`：显示 pending capability；Enter 批准，
+  Esc / 拒绝按钮 deny，并自动推进下一条。
 - 排序：`order` → 注册顺序 → `id`。
 - 模式：`append` / `replace` / `single_winner`。
 - 生命周期：`setup`（可返回 cleanup）→ `dispose`。
@@ -619,7 +621,7 @@ git diff --check
 ## 10. 已知缺口
 
 - 插件已有 manifest / 配置 / 直接依赖发现 / capability 白名单、运行时审批、
-  approval queue 和 lease / TTL / revoke；仍无审批 UI 组件和 worker / 跨进程隔离。
+  approval queue / dialog 和 lease / TTL / revoke；仍无 worker / 跨进程隔离。
 - 鼠标已有 hover / 双击 / 右键 / pointer capture / local 坐标 / drag 生命周期 /
   OSC 22 指针 / 拖动惯性；无 pointerId、多指针。惯性只接 ScrollBar / Slider。
 - Keymap 已有多键 chord / 前缀超时，Command Palette 已有基础 UI；无用户自定义
@@ -654,8 +656,8 @@ git diff --check
    决定默认策略、文件清理和崩溃恢复语义。
 3. **numeric index sidecar 生命周期**：1M 磁盘换出原型已完成；下一步由
    bugent 决定默认策略、目录清理和恢复语义。
-4. **插件 capability UI / 隔离**：审批队列 + lease / TTL / revoke 已完成；下一步
-   做审批 UI 组件、worker 隔离和跨进程 capability 代理。
+4. **插件 worker / 跨进程隔离**：审批队列、dialog 与 lease / TTL / revoke 已完成；
+   下一步做 worker 隔离和跨进程 capability 代理。
 5. **Portal / Dynamic / Toast / Tooltip**：补齐 OpenTUI 已有的通用组件接口。
 6. **动画编排增强**：更复杂的 stagger、滚动回弹和动画调试工具。
 7. **WebUI diff / 水平 ScrollBar**：等真实需求出现后再做。

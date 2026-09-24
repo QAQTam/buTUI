@@ -13,6 +13,7 @@
   "dependencies": {
     "@butui/core": "workspace:*",
     "@butui/keymap": "workspace:*",
+    "@butui/plugins": "workspace:*",
     "@butui/solid": "workspace:*",
     "solid-js": "2.0.0-rc.9",
     "@butui/stream": "workspace:*"
