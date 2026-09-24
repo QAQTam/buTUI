@@ -7,7 +7,7 @@
 分支式 Undo + WebUI remote attach + 图片子系统（Kitty / iTerm2 / Sixel /
 半块 / 占位符）+ Artifact Canvas + 列表 / 虚拟列表 / 滚动视口 / 弹窗 / 表格 /
 树 + 鼠标选区 / OSC 52 + 流式 Diff / 共享动画时钟 / 精确 ScrollBar +
-通用插件 / Slot 已跑通**，`bun test` 526 个用例全绿。
+通用插件 / Slot / Keymap 已跑通**，`bun test` 539 个用例全绿。
 
 ```
 应用（你的 agent / 工具 / TUI）
@@ -22,6 +22,7 @@
 按需叠加：
   @butui/components  编辑器 / Input / List / Tree / Table / Tabs / 滚动 / 弹窗 / 展示组件
   @butui/plugins  通用 SlotRegistry + Solid <Slot> 插件扩展
+  @butui/keymap  命令注册表 + 作用域快捷键 + 冲突检测 / help
   @butui/stream  增量折行 + 增量 markdown（O(delta) 定稿）
   @butui/image   Kitty / iTerm2 / Sixel / 半块 / 占位符 + 安全加载
   @butui/agent   事件协议 + Session + SPEC §10.2 组件 + Artifact Canvas
@@ -326,6 +327,57 @@ manifest 可以声明能力：`"capabilities": ["slots", "fs:read"]`。loader �
   `includeAllInstalled` 才扫描全部 node_modules。
 
 `bun --conditions=browser run scripts/plugin-demo.tsx` 可运行最小示例。
+
+## 命令与 Keymap
+
+命令和快捷键分离：命令负责“做什么”，keymap 负责“当前 scope 下哪个键触发
+哪个命令”。runtime 的按键顺序是：
+
+```text
+onKey → keymap → useKeyboard → 内建 ctrl+c / tab → 焦点节点
+```
+
+```tsx
+import { createKeymap } from "@butui/keymap";
+
+const keymap = createKeymap();
+
+keymap.bindCommand(
+  {
+    id: "dialog.close",
+    title: "关闭对话框",
+    run: () => closeDialog(),
+  },
+  "escape",
+  { scope: "dialog", priority: 100 }
+);
+
+keymap.bindCommand(
+  {
+    id: "save",
+    title: "保存",
+    run: () => save(),
+  },
+  ["ctrl+s", "ctrl+shift+s"]
+);
+
+createTuiApp({
+  keymap,
+  view: () => <App />,
+});
+```
+
+保证：
+
+- 同一按键按 `scope 深度 → priority → 注册顺序` 分派。
+- `when()` 为 false 时继续尝试下一条绑定。
+- `conflicts()` 静态检测同一 sequence + scope 的多条无条件绑定。
+- `help()` 返回按键、scope、命令标题 / 描述，可直接喂给帮助面板。
+- 命令执行错误进入 `onError`，不会炸掉按键分发。
+- `@butui/keymap/solid` 的 `useKeymap()` 可让组件 / 插件临时挂载一层 keymap。
+- 当前只支持单键，多键 chord 会明确抛错。
+
+`bun --conditions=browser run scripts/keymap-demo.tsx` 可试 F1 / Ctrl+O / Esc。
 
 ## 流式渲染 O(1)
 
@@ -659,6 +711,9 @@ bun --conditions=browser run scripts/scrollbar-demo.tsx
 # 通用插件 / Slot
 bun --conditions=browser run scripts/plugin-demo.tsx
 
+# 命令 / Keymap / scope
+bun --conditions=browser run scripts/keymap-demo.tsx
+
 # 图片子系统自检（不需要真终端）
 bun --conditions=browser run scripts/image-demo.tsx
 
@@ -690,6 +745,7 @@ Demo 的工作区是**内存实现**，但走的是完全一样的 journal / dif
 | `@butui/runtime` | `createTuiApp`：终端、合帧重绘、事件分发、鼠标选区 / OSC 52 —— 应用作者的唯一入口 |
 | `@butui/components` | `createTextEditor` / `<Input>` / `<Textarea>` / `<Markdown>` / `<Code>` / `<Diff>` / `<ScrollBar>`、`createSelection` / `<List>` / `<VirtualList>`、`createScrollView`、`<Select>` / `<Tabs>` / `<Table>` / `<Tree>`、`<Button>` / `<Dialog>` / `<Modal>`、`ProgressBar` / `Spinner` / `Badge` / `Divider` / `KeyHint` |
 | `@butui/plugins` | 通用 `SlotRegistry` / `Plugin` / 错误隔离；`@butui/plugins/solid` 提供 `createSlot` / `<Slot>`；`@butui/plugins/loader` 提供 manifest / 配置 / 动态加载 / 自动发现 / capability 门控 |
+| `@butui/keymap` | `CommandRegistry` / `createKeymap`：scope、priority、when、冲突检测、help；Solid 适配 `useKeymap` |
 | `@butui/agent` | 事件协议（NDJSON）、Session reducer、流式 diff 事件、SPEC §10.2 组件、Artifact Canvas |
 | `@butui/undo` | 工作区变更日志、行级 patch、undo 预览与执行（SPEC §8） |
 | `@butui/web` | WebUI：ANSI→HTML、DOM 组件、`mountWebUI`（复用同一个 Session） |
@@ -861,6 +917,7 @@ Bun.plugin(onLoad)
 
 ## 还没做
 
+- Keymap 只有单键，多键 chord / 超时状态机未做；Command Palette UI 也还没包
 - 插件已有 manifest / 配置 / 直接依赖自动发现 / 加载前 capability 门控；
   还缺运行时沙箱、权限审批 UI 与跨进程隔离
 - `@butui/components` 继续长：Slider / ASCIIFont / LineNumberRenderable、

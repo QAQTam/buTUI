@@ -37,7 +37,8 @@ const app = createTuiApp({
 | 渲染 | `@butui/renderer` | **稳定**（`Renderer` / `plainText` / `paintLine`） |
 | 终端 | `@butui/terminal` | **稳定**（`TerminalSession` / 输入解码 / 能力探测） |
 | 基础组件 | `@butui/components` | **稳定**（编辑器 / 选择 / 列表 / 滚动 / ScrollBar / Diff / 弹窗 / 展示组件） |
-| 插件 / Slot | `@butui/plugins` | **稳定**（`Plugin` / `SlotRegistry`；Solid 适配在 `@butui/plugins/solid`） |
+| 插件 / Slot | `@butui/plugins` | **稳定**（`Plugin` / `SlotRegistry`；Solid 适配在 `@butui/plugins/solid`；loader 在 `@butui/plugins/loader`） |
+| 命令 / Keymap | `@butui/keymap` | **稳定**（`CommandRegistry` / `Keymap`；Solid 适配在 `@butui/keymap/solid`） |
 | 流式文本 | `@butui/stream` | **稳定**（`StreamSource` / `DiffStream` / `<stream>`） |
 | 图片 | `@butui/image` | **稳定**（`createImage` / `ImageLayer` / `renderImage`） |
 | Agent 协议与组件 | `@butui/agent` | **稳定**（`AgentEvent` / `UiCommand` / `Session` / `tool.diff`） |
@@ -78,8 +79,8 @@ interface TuiApp {
 
 1. **自动重绘。** 任何 `touch()`（= 任何节点变更）都会合并到下一帧，同一 tick
    内多次变更只画一次。异步变更不需要任何手动通知。
-2. **事件顺序固定**：`onKey`（应用级，返回 `true` 即消费）→ 内建（ctrl+c、
-   tab/shift+tab）→ 焦点节点（向上冒泡）。
+2. **事件顺序固定**：`onKey`（应用级，返回 `true` 即消费）→ `keymap` →
+   `useKeyboard` → 内建（ctrl+c、tab/shift+tab）→ 焦点节点（向上冒泡）。
    鼠标：hit test 命中节点 → 冒泡；**没有节点处理**才走 `onMouse`。
 3. **resize 一定会整屏重画**（不是差分），`size()` 在重排前更新。
 4. **`dispose()` 之后不再写终端**，所有订阅解除。
@@ -230,8 +231,8 @@ useKeyboard(event => {         // 全局按键；返回 true 即消费；卸载�
 }, { enabled: () => isOpen() });
 ```
 
-按键顺序是契约：**应用 `onKey` → 组件 `useKeyboard` → 内建（ctrl+c / tab）→
-焦点节点**。应用永远第一优先级。
+按键顺序是契约：**应用 `onKey` → `keymap` → 组件 `useKeyboard` → 内建
+（ctrl+c / tab）→ 焦点节点**。应用永远第一优先级。
 
 ### 4.10 内容渲染：`<Markdown>` / `<Code>`
 
@@ -485,6 +486,28 @@ registry.register({
   加载的插件。
 - 当前没有运行时沙箱、权限审批或跨进程隔离；应用必须提供配置 / 条目。
 
+### 4.20 命令与 Keymap：`CommandRegistry` / `Keymap`
+
+```ts
+const keymap = createKeymap();
+keymap.bindCommand(
+  { id: "save", title: "保存", run: () => save() },
+  "ctrl+s",
+  { scope: "editor", priority: 10 }
+);
+```
+
+- `CommandRegistry.register()` 返回 disposer；重复 id 抛错。
+- `CommandRegistry.execute()` 找不到或 `when()` 为 false 时返回 false；同步
+  抛错 / 异步 rejection 进入 `onError`。
+- `Keymap` 分派顺序：scope 深度 → priority → 注册顺序。
+- `pushScope()` / `popScope()` 管理作用域；binding / command 都有 `when()`。
+- 命中后调用 `event.preventDefault()` 并返回 true。
+- `conflicts()` 只报告同一 sequence + scope 的多条无条件绑定。
+- `help()` 返回按键、scope、命令 id / title / description。
+- `@butui/keymap/solid` 的 `useKeymap()` 把 keymap 接到组件级全局按键。
+- 当前只支持单键；多键 chord 会抛错，不会静默误解。
+
 ## 5. 已知缺口（不要依赖，也不建议自己绕）
 
 - **列表只有单列 + 固定行高**：`itemHeight` 是常数，变高行（折行文本、展开的
@@ -509,6 +532,8 @@ registry.register({
 - **没有布局调试工具**（类似 flexbox inspector）。
 - **焦点不会自动清理**：被移除的节点如果还是焦点，`focusedId()` 会保留它的
   id（下一次 tab 会自动跳到活着的节点）。组件里用 `isFocused` 不受影响。
+- **Keymap 只有单键**：多键 chord、超时前缀状态机和 Command Palette UI 还没做；
+  当前 keymap 也不持久化用户自定义绑定。
 - **插件 capability 不是沙箱**：它只在动态 import 前做同意门控，没有运行时
   权限拦截、审批 UI 或跨进程隔离；插件在应用进程内执行，只应加载可信代码。
 - **`@butui/web` 是实验层**：接口可能变。

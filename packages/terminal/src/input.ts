@@ -157,6 +157,13 @@ export class InputDecoder {
           const mods = modifiersOf(code < 0x20 ? 5 : 1); // ctrl+letter
           if (code < 0x20 && name.length === 1) mods.ctrl = true;
           events.push(this.key(name, undefined, mods));
+        } else if (code >= 0x01 && code <= 0x1a) {
+          // Ctrl+A..Ctrl+Z。保留 enter/tab/backspace 等特殊控制字符的原有
+          // 语义，其余按 ctrl+letter 交给 keymap 层处理。
+          const letter = String.fromCharCode(0x60 + code);
+          const mods = modifiersOf(5);
+          mods.ctrl = true;
+          events.push(this.key(letter, undefined, mods));
         }
         continue;
       }

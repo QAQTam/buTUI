@@ -427,7 +427,7 @@ signal / 定时器 / 异步图片加载
 **事件顺序是契约的一部分**（固定下来，不随实现漂）：
 
 ```text
-键   onKey(应用级，返回 true 即消费) → ctrl+c / tab 焦点 → 焦点节点(冒泡)
+键   onKey(应用级) → keymap → useKeyboard → ctrl+c / tab 焦点 → 焦点节点(冒泡)
 鼠标 hit test 命中节点 → 冒泡；没有节点处理才走 onMouse
 ```
 
@@ -879,6 +879,42 @@ rewrite —— buTUI 默认零 native core，不需要替换 Zig ABI 模块。
 
 ---
 
+### 5.22 Keymap / Command Registry（v0.1 实现）
+
+命令和快捷键分离：`CommandRegistry` 只负责命令生命周期与执行，`Keymap` 只
+负责当前 scope 下哪个按键触发哪个 command。
+
+```ts
+const keymap = createKeymap();
+keymap.bindCommand(
+  { id: "save", title: "保存", run: () => save() },
+  ["ctrl+s", "ctrl+shift+s"]
+);
+```
+
+runtime 的按键顺序扩展为：
+
+```text
+onKey → keymap → useKeyboard → 内建 ctrl+c / tab → 焦点节点
+```
+
+分派规则：
+
+- binding 先按 scope 深度，再按 `priority`，最后按注册顺序；
+- `scope` 通过 `pushScope()` / `popScope()` 管理；
+- binding / command 的 `when()` 返回 false 时继续尝试下一条；
+- 命中并成功执行命令后调用 `preventDefault()` 并返回 true；
+- 命令同步抛错或异步 rejection 进入 `onError`，不炸按键分发；
+- `conflicts()` 检测同一 sequence + scope 的多条无条件绑定；
+- `help()` 返回可直接渲染的快捷键帮助列表。
+
+按键解析支持 `ctrl/alt/shift/meta` 和 `esc/return/space/pgup/pgdn/del/ins`
+别名。**当前只支持单键**；多键 chord 明确抛错，不静默误解。
+
+`@butui/keymap/solid` 提供 `useKeymap()`，用于组件或插件临时挂载 keymap。
+
+---
+
 ### 5.17 应用上下文（v0.1 实现）
 
 组件要能问「现在多宽 / 什么色深 / 我想订一个全局键」，但既不该认识 runtime，
@@ -891,8 +927,9 @@ runtime   provideAppScope({ size, colorDepth, requestPaint, onKey })
 ```
 
 `useSize()` 是响应式的（resize 后自动更新），`useKeyboard` 返回 `true` 就消费
-这个键。**按键顺序固定**：应用 `onKey` → 组件 `useKeyboard` → 内建（ctrl+c /
-tab）→ 焦点节点 —— 应用永远第一优先级，组件只能在应用没要的前提下抢键。
+这个键。**按键顺序固定**：应用 `onKey` → `keymap` → 组件 `useKeyboard` →
+内建（ctrl+c / tab）→ 焦点节点 —— 应用永远第一优先级，组件只能在应用没要的
+前提下抢键。
 
 没有 runtime 上下文时两个 hook 都安全退化（`0x0` / `truecolor` / 不订阅），
 所以组件单独渲染、写文档示例都不会炸。
@@ -1017,6 +1054,12 @@ createEffect(() => dep(), () => {
 
 @butui/components
   createTextEditor / <Input>（v0.1）；Select / List / ScrollBox / Table 待做
+
+@butui/plugins
+  通用 SlotRegistry / Plugin / manifest / 配置 / 动态加载 / capability 门控
+
+@butui/keymap
+  CommandRegistry / 作用域 keymap / 冲突检测 / help
 
 @butui/agent
   Message / ToolCard / TodoPanel / PermissionDialog / ArtifactCanvas
@@ -1788,6 +1831,15 @@ type UiCommand =
 - native runtime module rewrite；
 - 运行时沙箱、权限审批 UI；
 - 跨进程插件隔离。
+
+### 14.2 Keymap / Command Registry（v0.1 实现）
+
+- `CommandRegistry`：命令注册、when、同步 / 异步错误隔离、订阅。
+- `Keymap`：scope 栈、priority、binding/command `when`、冲突检测、help。
+- runtime 支持结构类型 `keymap` 选项，顺序在 `onKey` 之后、`useKeyboard`
+  之前。
+- `@butui/keymap/solid` 提供 `useKeymap()`。
+- 当前只支持单键，多键 chord 是下一步。
 
 不能把：
 

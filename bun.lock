@@ -10,6 +10,7 @@
         "@butui/core": "workspace:*",
         "@butui/example-web-demo": "workspace:*",
         "@butui/image": "workspace:*",
+        "@butui/keymap": "workspace:*",
         "@butui/layout": "workspace:*",
         "@butui/plugins": "workspace:*",
         "@butui/renderer": "workspace:*",
@@ -79,6 +80,15 @@
       "dependencies": {
         "@butui/core": "workspace:*",
         "@butui/layout": "workspace:*",
+        "@butui/solid": "workspace:*",
+        "solid-js": "2.0.0-rc.9",
+      },
+    },
+    "packages/keymap": {
+      "name": "@butui/keymap",
+      "version": "0.1.0",
+      "dependencies": {
+        "@butui/core": "workspace:*",
         "@butui/solid": "workspace:*",
         "solid-js": "2.0.0-rc.9",
       },
@@ -187,6 +197,8 @@
     "@butui/example-web-demo": ["@butui/example-web-demo@workspace:examples/web-demo"],
 
     "@butui/image": ["@butui/image@workspace:packages/image"],
+
+    "@butui/keymap": ["@butui/keymap@workspace:packages/keymap"],
 
     "@butui/layout": ["@butui/layout@workspace:packages/layout"],
 

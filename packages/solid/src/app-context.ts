@@ -12,9 +12,9 @@
  * });
  * ```
  *
- * 按键顺序（SPEC §5.11 的契约）：`createTuiApp({ onKey })` → 组件的
- * `useKeyboard` → 内建（ctrl+c / tab）→ 焦点节点冒泡。应用永远是第一优先级，
- * 组件只能在「应用没要」的前提下抢键。
+ * 按键顺序（SPEC §5.11 的契约）：`createTuiApp({ onKey })` →
+ * `createTuiApp({ keymap })` → 组件的 `useKeyboard` → 内建（ctrl+c / tab）→
+ * 焦点节点冒泡。应用永远是第一优先级，组件只能在「应用没要」的前提下抢键。
  */
 import type { ColorDepth, KeyEvent } from "@butui/core";
 import { createContext, onCleanup, useContext } from "solid-js";

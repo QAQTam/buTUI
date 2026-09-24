@@ -18,6 +18,7 @@
     "@butui/core": "workspace:*",
     "@butui/example-web-demo": "workspace:*",
     "@butui/image": "workspace:*",
+    "@butui/keymap": "workspace:*",
     "@butui/layout": "workspace:*",
     "@butui/plugins": "workspace:*",
     "@butui/renderer": "workspace:*",

@@ -4,8 +4,8 @@
 > 仓库：`/home/qaqtamsy/项目/buTUI`  
 > 功能基线提交：`6e9f285 feat(plugins): 自动发现与 capability 门控`
 > 工作区状态：插件自动发现 / capability 能力提交处干净
-> 本轮能力：插件自动发现 + capability 加载门控
-> 当前回归：`526 pass / 0 fail`，`tsc --noEmit` 通过
+> 本轮能力：Keymap / Command Registry + runtime 按键优先级接入
+> 当前回归：`539 pass / 0 fail`，`tsc --noEmit` 通过
 
 ## 1. 项目定位
 
@@ -92,6 +92,7 @@ bun --conditions=browser run scripts/stream-bench.tsx
 | `@butui/terminal` | raw mode、resize、输入解码、能力探测、OSC 52 |
 | `@butui/components` | 编辑器、Input、Textarea、List、Diff、ScrollBar、弹窗等 |
 | `@butui/plugins` | 通用 SlotRegistry / Plugin / 错误隔离；Solid `<Slot>` 适配 |
+| `@butui/keymap` | CommandRegistry / 作用域 keymap / 冲突检测 / help；Solid `useKeymap` |
 | `@butui/stream` | `LineBuffer`、MarkdownStream、DiffStream |
 | `@butui/agent` | AgentEvent / UiCommand、Session、agent 组件 |
 | `@butui/undo` | journal、行级 patch、undo 计划 |
@@ -107,7 +108,7 @@ bun --conditions=browser run scripts/stream-bench.tsx
 
 - `createTuiApp()`：备用屏、raw mode、鼠标、paste、focus、resize、退出还原。
 - 自动合帧：任何节点 `touch()` 都合并到下一帧，不需要应用调 `paint()`。
-- 键盘：应用 `onKey` → `useKeyboard` → 内建 tab / ctrl+c → 焦点节点。
+- 键盘：应用 `onKey` → `keymap` → `useKeyboard` → 内建 tab / ctrl+c → 焦点节点。
 - 鼠标：语义 hit test、事件冒泡、`onMouseDown/Move/Up`。
 - `stickyTop` / `stickyBottom` 和根 `<layer>` 覆盖。
 - `useSize` / `useKeyboard` / `useColorDepth`。
@@ -273,6 +274,20 @@ const bar = createScrollBar({
   `tests/plugins.test.ts` / `tests/plugin-slot.test.tsx` /
   `tests/plugin-loader.test.ts`。
 
+### 5.9 命令 / Keymap
+
+- `@butui/keymap`：`CommandRegistry` / `createKeymap`。
+- `@butui/keymap/solid`：`useKeymap`。
+- runtime `keymap` 选项顺序：`onKey` → `keymap` → `useKeyboard` → 内建 →
+  焦点节点。
+- scope 深度 → priority → 注册顺序。
+- `when()` 支持 binding 与 command 两级；失败继续下一条。
+- 冲突检测、help 列表、同步 / 异步命令错误隔离已实现。
+- 单键解析支持 `ctrl/alt/shift/meta` 和 `esc/return/space/pgup/pgdn/del/ins`。
+- 当前不支持多键 chord。
+- 已有 `scripts/keymap-demo.tsx`、`tests/keymap.test.ts` /
+  `tests/keymap-runtime.test.tsx`。
+
 ## 6. 稳定接口入口
 
 | 入口 | 文件 |
@@ -287,6 +302,8 @@ const bar = createScrollBar({
 | Plugin / SlotRegistry | `packages/plugins/src/{types,registry}.ts` |
 | Plugin loader / manifest / config / discovery | `packages/plugins/src/{loader,manifest,config,discovery}.ts` |
 | Solid `<Slot>` | `packages/plugins/src/solid.tsx` |
+| CommandRegistry / Keymap | `packages/keymap/src/{commands,keymap,keys}.ts` |
+| Solid `useKeymap` | `packages/keymap/src/solid.ts` |
 | 动画调度 | `packages/solid/src/animation.ts` |
 | 布局 / Frame / selectionText | `packages/layout/src/index.ts` |
 | 渲染器 | `packages/renderer/src/index.ts` |
@@ -343,8 +360,8 @@ bridge、真实 tool event 对接或 bugent 快捷键迁移。
 当前：
 
 ```text
-526 pass / 0 fail
-51 test files
+539 pass / 0 fail
+53 test files
 tsc --noEmit pass
 ```
 
@@ -360,6 +377,8 @@ tsc --noEmit pass
 - `tests/plugins.test.ts`
 - `tests/plugin-slot.test.tsx`
 - `tests/plugin-loader.test.ts`
+- `tests/keymap.test.ts`
+- `tests/keymap-runtime.test.tsx`
 - `tests/solid-cleanup-contract.test.tsx`
 
 提交前至少跑：
@@ -376,6 +395,7 @@ git diff --check
 
 - 插件已有 manifest / 配置 / 直接依赖发现 / capability 门控；无运行时沙箱 /
   权限审批 / 跨进程隔离。
+- Keymap 只有单键；无多键 chord、前缀超时、用户自定义绑定持久化。
 - Diff 没有 word-level diff、任意位置删除、hunk 折叠、“滚开后有新行”提示。
 - ScrollBar 只有垂直轴；无自动隐藏、hover 展开、水平轴、惯性。
 - 动画只有共享时钟和 Diff 游标；无 tween / spring / timeline / shimmer。
@@ -390,9 +410,9 @@ git diff --check
 
 按通用 TUI 收益排序：
 
-1. **插件运行时约束 / 审批**：capability 目前只是 import 前门控，下一步做权限
+1. **Keymap 扩展**：多键 chord、前缀超时、用户自定义绑定持久化、Command Palette。
+2. **插件运行时约束 / 审批**：capability 目前只是 import 前门控，下一步做权限
    审批 UI 或 worker 隔离。
-2. **Keymap / Command Registry**：通用快捷键、冲突检测、scope、帮助页。
 3. **Portal / Dynamic / Toast / Tooltip**：补齐 OpenTUI 已有的通用组件接口。
 4. **Timeline / tween / spring**：建立在现有 `AnimationScheduler` 上。
 5. **ScrollBar 扩展**：水平轴、自动隐藏或 hover，只有在真实 UI 需要时做。
@@ -431,6 +451,7 @@ git -c user.name=AnyBuddy -c user.email=anybuddy@local commit
 [ ] 修改鼠标时看 selection + scrollbar 回归
 [ ] 修改 agent 协议时看 agent-protocol + agent-replay
 [ ] 修改插件 / Slot 时看 plugins + plugin-slot + plugin-loader
+[ ] 修改命令 / Keymap 时看 keymap + keymap-runtime + input
 [ ] 完成后更新 README / SPEC / STABILITY
 ```
 

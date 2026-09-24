@@ -1,0 +1,23 @@
+{
+  "name": "@butui/keymap",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./solid": {
+      "types": "./src/solid.ts",
+      "default": "./src/solid.ts"
+    }
+  },
+  "dependencies": {
+    "@butui/core": "workspace:*",
+    "@butui/solid": "workspace:*",
+    "solid-js": "2.0.0-rc.9"
+  },
+  "sideEffects": false
+}

@@ -128,6 +128,13 @@ export interface TuiAppOptions {
    * 模态弹窗、全局快捷键（ctrl+u 之类）都写在这里。
    */
   onKey?: (event: KeyEvent) => boolean | void;
+  /**
+   * 结构化 keymap。
+   *
+   * 顺序：`onKey` → `keymap` → 组件 `useKeyboard` → 内建（ctrl+c / tab）→
+   * 焦点节点。用结构类型而不是直接依赖 `@butui/keymap`，runtime 保持可独立使用。
+   */
+  keymap?: { handle(event: KeyEvent): boolean };
   /** 应用级鼠标：**焦点节点没处理时**才会走到这里（比如语义动作分发） */
   onMouse?: (event: MouseEvent) => boolean | void;
   /**
@@ -337,8 +344,8 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
   /**
    * 组件级全局按键（`useKeyboard`）。
    *
-   * 顺序固定：应用的 `onKey` → 这里 → 内建（ctrl+c / tab）→ 焦点节点。
-   * 应用永远第一优先级；组件返回 true 就吃掉这个键。
+   * 顺序固定：应用的 `onKey` → `keymap` → 这里 → 内建（ctrl+c / tab）→
+   * 焦点节点。应用永远第一优先级；组件返回 true 就吃掉这个键。
    */
   const keyListeners = new Set<(event: KeyEvent) => boolean | void>();
 
@@ -431,11 +438,13 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
     if (event.type === "key") {
       // 1) 应用级键位优先：模态 / 全局快捷键
       if (options.onKey?.(event) === true) return 1;
-      // 2) 组件级全局按键（useKeyboard），按注册顺序
+      // 2) 结构化 keymap
+      if (options.keymap?.handle(event) === true) return 1;
+      // 3) 组件级全局按键（useKeyboard），按注册顺序
       for (const listener of [...keyListeners]) {
         if (listener(event) === true) return 1;
       }
-      // 3) 内建：退出与焦点循环
+      // 4) 内建：退出与焦点循环
       if ((options.quitOnCtrlC ?? true) && event.modifiers.ctrl && event.name === "c") {
         quit();
         return 1;
@@ -446,7 +455,7 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
         requestPaint();
         return 1;
       }
-      // 4) 派发给焦点节点（向上冒泡）
+      // 5) 派发给焦点节点（向上冒泡）
       return dispatchEvent(focusedNode(root) ?? root, event);
     }
 

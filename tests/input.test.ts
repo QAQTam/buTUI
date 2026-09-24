@@ -51,6 +51,19 @@ describe("终端输入解码（SPEC §9.3 / §9.4）", () => {
     expect(ctrlC.type === "key" && ctrlC.modifiers.ctrl).toBe(true);
   });
 
+  test("其余 ctrl+letter 不被吞掉", () => {
+    const decoder = new InputDecoder();
+    const events = feed(decoder, "\x01\x0f\x1a");
+    expect(events.map(e => (e.type === "key" ? e.name : e.type))).toEqual([
+      "a",
+      "o",
+      "z",
+    ]);
+    expect(
+      events.every(event => event.type === "key" && event.modifiers.ctrl)
+    ).toBe(true);
+  });
+
   test("alt+字符", () => {
     const decoder = new InputDecoder();
     const events = feed(decoder, "\x1bx");
