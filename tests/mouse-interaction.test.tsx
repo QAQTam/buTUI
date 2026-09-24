@@ -294,6 +294,55 @@ describe("mouse interaction", () => {
     app.dispose();
   });
 
+  test("presented routing 在新 frame presented 后重算静止指针 hover", async () => {
+    const terminal = new FakeTerminal();
+    const [showA, setShowA] = createSignal(true);
+    const calls: string[] = [];
+    const app = createTuiApp({
+      terminal,
+      size: { columns: 12, rows: 3 },
+      inputRouting: "presented",
+      mouseMotion: "hover",
+      selection: false,
+      onQuit: () => {},
+      view: () => (
+        <Show
+          when={showA()}
+          fallback={
+            <box
+              width={5}
+              height={3}
+              border="double"
+              onMouseEnter={() => calls.push("enter:B")}
+              onMouseLeave={() => calls.push("leave:B")}
+            />
+          }
+        >
+          <box
+            width={5}
+            height={3}
+            border="single"
+            onMouseEnter={() => calls.push("enter:A")}
+            onMouseLeave={() => calls.push("leave:A")}
+          />
+        </Show>
+      ),
+    });
+
+    app.send(mouse("move", 1, 1));
+    expect(calls).toEqual(["enter:A"]);
+
+    terminal.blockWrites = true;
+    setShowA(false);
+    await tick();
+    expect(calls).toEqual(["enter:A"]);
+
+    terminal.drain();
+    await tick();
+    expect(calls).toEqual(["enter:A", "leave:A", "enter:B"]);
+    app.dispose();
+  });
+
   test("presented routing 节点消失后按 semantic 回退并标记 stale", async () => {
     const terminal = new FakeTerminal();
     const [showOld, setShowOld] = createSignal(true);

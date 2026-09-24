@@ -60,7 +60,7 @@ import {
   RenderScheduler,
   type RenderOptions,
 } from "./render-scheduler.ts";
-import { PresentedFrameStore } from "./presented-frame.ts";
+import { PresentedFrameStore, type PresentedFrame } from "./presented-frame.ts";
 
 export type { RenderMode, RenderOptions } from "./render-scheduler.ts";
 
@@ -303,6 +303,9 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
   let capturedMouseNode: Node | undefined;
   let capturedMouseBounds: MouseBounds | undefined;
   let hoveredMouseNode: Node | undefined;
+  let lastPointer:
+    | { x: number; y: number; modifiers: MouseEvent["modifiers"] }
+    | undefined;
   let mousePointerStyle: MousePointerStyle | undefined;
   const mousePointerEnabled = options.mousePointer ?? true;
   let lastMousePress:
@@ -335,6 +338,29 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
       found = node;
     }
     return found;
+  };
+
+  const resolvePresentedHit = (
+    presented: PresentedFrame,
+    x: number,
+    y: number
+  ): { target?: Node; stale: boolean; bounds?: MouseBounds } => {
+    const hit = presented.index.hit(x, y);
+    let target = nodeById(root, hit?.nodeId);
+    if (target) return { target, stale: false };
+
+    if (!hit) return { stale: false };
+    if (hit.semantic) {
+      const fallback = uniqueNodeBySemantic(hit.semantic);
+      if (fallback) {
+        return {
+          target: fallback,
+          stale: true,
+          bounds: presented.index.semanticBounds(hit.semantic),
+        };
+      }
+    }
+    return { target: root, stale: true };
   };
 
   const selectionAllowed = (): boolean =>
@@ -416,6 +442,7 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
   let renderScheduler: RenderScheduler | undefined;
   let appAnimationScheduler: AnimationScheduler | undefined;
   let renderBlocked = false;
+  let hoverAfterPresent: ((frame: Frame) => void) | undefined;
   const canDrain = typeof terminal.onDrain === "function";
   const paint = (): RenderStats => {
     const frame = computeFrame();
@@ -425,6 +452,7 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
     if (!blocked) {
       presentedFrames.present(frame, sessionRevision, performance.now());
       hasPresentedOnce = true;
+      hoverAfterPresent?.(frame);
     }
     if (blocked) renderScheduler?.markBlocked();
     else renderScheduler?.markPainted();
@@ -704,6 +732,30 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
     requestPaint();
   };
 
+  hoverAfterPresent = frame => {
+    if (!lastPointer || capturedMouseNode) return;
+    if (options.mouseMotion !== "hover" && hoveredMouseNode === undefined) return;
+    const presented = presentedFrames.current();
+    if (!presented) return;
+
+    const resolved = resolvePresentedHit(
+      presented,
+      lastPointer.x,
+      lastPointer.y
+    );
+    const event = eventTarget({
+      type: "mouse" as const,
+      action: "move" as const,
+      button: "none" as const,
+      x: lastPointer.x,
+      y: lastPointer.y,
+      modifiers: lastPointer.modifiers,
+      ...(resolved.stale ? { stale: true } : {}),
+    }) as MouseEvent;
+    updateMouseHover(event, resolved.target, frame);
+    updateMousePointer(resolved.target);
+  };
+
   const recordMouseSample = (event: MouseEvent): void => {
     if (!pressedMouse) return;
     const time = mouseNow();
@@ -872,6 +924,11 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
     }
 
     if (event.type === "mouse") {
+      lastPointer = {
+        x: event.x,
+        y: event.y,
+        modifiers: event.modifiers,
+      };
       const presented =
         options.inputRouting === "presented" ? presentedFrames.current() : undefined;
       const logicalFrame =
@@ -879,29 +936,15 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
           ? computeFrame()
           : undefined;
       const hitFrame = presented?.layout ?? logicalFrame;
-      const hit = presented?.index.hit(event.x, event.y);
-      let hitTarget = presented
-        ? nodeById(root, hit?.nodeId)
-        : nodeById(root, hitFrame?.nodeAt(event.x, event.y));
-      let stale = false;
-      let boundsOverride: MouseBounds | undefined;
-
-      if (presented && !hitTarget && hit) {
-        if (hit.semantic) {
-          const fallback = uniqueNodeBySemantic(hit.semantic);
-          if (fallback) {
-            hitTarget = fallback;
-            stale = true;
-            boundsOverride = presented.index.semanticBounds(hit.semantic);
-          } else {
-            hitTarget = root;
-            stale = true;
-          }
-        } else {
-          hitTarget = root;
-          stale = true;
-        }
-      }
+      const resolved = presented
+        ? resolvePresentedHit(presented, event.x, event.y)
+        : {
+            target: nodeById(root, hitFrame?.nodeAt(event.x, event.y)),
+            stale: false,
+          };
+      const hitTarget = resolved.target;
+      const stale = resolved.stale;
+      const boundsOverride = resolved.bounds;
 
       if (stale) event.stale = true;
       else delete event.stale;
