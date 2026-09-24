@@ -49,6 +49,19 @@ const app = createTuiApp({
 「稳定」= 按 §3 的兼容规则演进。除此之外的 `packages/*/src/**` 内部模块、
 布局缓存策略、`Box.frozen` 的具体取值都不属于契约。
 
+### 1.1 v0.2 experimental API
+
+v0.2 新增的 FrameClock、Damage、StreamLedger、StreamWindow、TerminalArbiter、
+mode journal、retention defaults 和 `waitUntilFrameFlushed()` 目前属于
+**experimental**，不改变 v0.1 默认行为。完整边界、默认值和迁移规则见
+**[V0.2_API_FREEZE.md](./V0.2_API_FREEZE.md)**。
+
+运行时导出面由 `api-surface.json` 冻结，检查命令：
+
+```bash
+bun --conditions=browser run scripts/api-surface.ts --check
+```
+
 ## 2. 运行时契约
 
 `createTuiApp(options)` 返回 `TuiApp`：
@@ -74,6 +87,11 @@ interface TuiApp {
   dispose(): void;                  // stop + 解绑所有订阅
 }
 ```
+
+v0.2 experimental additions（不属于 v0.1 稳定保证）：
+`suspend()` / `resume()` / `withRawLease()` / `runPty()`、
+`waitUntilFrameFlushed()`、`paint()` 的 `frameId` / `accepted` 扩展字段、
+`inputRouting: "presented"`。
 
 高频流式输出可配置合帧模式：
 

@@ -11,7 +11,7 @@
 spring / timeline / Shimmer / Keymap chord / Command Palette / Command Menu /
 Slider / SplitPane / Toast / Tooltip / Popover / Portal / Dynamic / MultiSelect /
 Form / Autocomplete / Checkbox / RadioGroup / 高频 chunk 合帧 / smooth reveal 已跑通**，`bun test`
-810 个用例全绿。
+811 个用例全绿。
 
 ```
 应用（你的 agent / 工具 / TUI）
@@ -72,6 +72,7 @@ v0.2 开创性会话运行时设计见 **[V0.2_FRONTIER.md](./V0.2_FRONTIER.md)*
 **[V0.2_CONTRACTS.md](./V0.2_CONTRACTS.md)**；P0 细化见
 **[V0.2_P0_FRAME_CLOCK.md](./V0.2_P0_FRAME_CLOCK.md)** 与
 **[V0.2_P0_INPUT_ROUTING.md](./V0.2_P0_INPUT_ROUTING.md)**；
+stable / experimental 边界与默认值见 **[V0.2_API_FREEZE.md](./V0.2_API_FREEZE.md)**；
 retention 实测见 **[V0.2_RETENTION_REPORT.md](./V0.2_RETENTION_REPORT.md)**；
 上游对照与 Bun 沙箱可行性见 **[V0.2_REFERENCE.md](./V0.2_REFERENCE.md)**。
 

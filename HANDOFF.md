@@ -3,9 +3,9 @@
 > 交接时间：2026-09-24
 > 仓库：`/home/qaqtamsy/项目/buTUI-v0.2-frontier`
 > 功能基线提交：`61d889b feat(components): add capability approval dialog`
-> 工作区状态：本文件与 retention defaults 一并提交
-> 本轮能力：frozen retention policy + sidecar lifecycle
-> 当前回归：`810 pass / 0 fail`，102 个测试文件，`tsc --noEmit` 通过
+> 工作区状态：本文件与 API freeze 一并提交
+> 本轮能力：stable / experimental boundary + export snapshot
+> 当前回归：`811 pass / 0 fail`，103 个测试文件，`tsc --noEmit` 通过
 
 ## 1. 项目定位
 
@@ -28,6 +28,8 @@ buTUI 是基于 Bun + TypeScript 的通用 TUI Runtime。参考 OpenTUI 的接�
 - `BUGENT_V1.md`：bugent 第一版接入、验收和冻结边界。
 - `V0.2_FRONTIER.md`：v0.2 会话运行时边界与原型进度。
 - `V0.2_CONTRACTS.md`：FrameClock / StreamLedger / MemoryLedger 接口。
+- `V0.2_API_FREEZE.md`：stable / experimental 边界、默认值和迁移规则。
+- `api-surface.json`：运行时 value exports 冻结快照。
 - `V0.2_RETENTION_REPORT.md`：cold spill、viewport、apply metadata 实测。
 - `V0.2_PTY_REPORT.md`：agent transcript 在真实 PTY 下的帧率 / 输入延迟。
 - `V0.2_ISOLATION_REPORT.md`：Worker / process 启动、RPC 分位、吞吐和 RSS 实测。
@@ -562,6 +564,8 @@ const bar = createScrollBar({
 - Real PTY：`scripts/transcript-pty-bench.tsx` 在 100×32 PTY、2000 chunk/s
   下实测约 102fps、input→drained p95 9.85ms、blocked frame 0；span damage
   将输出量降至约 40%，见 `V0.2_PTY_REPORT.md`。
+- API freeze：`V0.2_API_FREEZE.md` 冻结 stable / experimental 边界和默认值；
+  `api-surface.json` + `tests/api-surface.test.ts` 锁定 396 个运行时 value exports。
 - Applied replay：`applied` digest 使用 chunked `Uint32Array + present bitmap`，
   保留精确 duplicate / conflict 历史。
 - Plugin Worker RPC：`createWorkerRpc` / `serveWorkerRpc` 提供 structured clone
