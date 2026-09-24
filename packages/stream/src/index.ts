@@ -5,6 +5,7 @@ export * from "./source.ts";
 export * from "./smooth.ts";
 export * from "./ledger.ts";
 export * from "./ledger-adapter.ts";
+export * from "./window.ts";
 export * from "./spill.ts";
 export * from "./spill-file.ts";
 export * from "./components.tsx";
