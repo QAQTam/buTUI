@@ -12,6 +12,8 @@
  *   - 最后一次变更仍会触发尾帧，不会丢掉流式内容的尾巴。
  */
 
+import { FrameClock, type FrameRequestHandle } from "./frame-clock.ts";
+
 export type RenderMode = "microtask" | "frame";
 
 export interface RenderOptions {
@@ -47,16 +49,11 @@ export class RenderScheduler {
   private readonly mode: RenderMode;
   private readonly intervalMs: number;
   private readonly now: () => number;
-  private readonly microtask: (callback: () => void) => void;
-  private readonly setTimer: (
-    callback: () => void,
-    delay: number
-  ) => ReturnType<typeof setTimeout>;
-  private readonly clearTimer: (handle: ReturnType<typeof setTimeout>) => void;
-
+  private readonly clock: FrameClock;
   private pending = false;
-  private timer: ReturnType<typeof setTimeout> | undefined;
+  private handle: FrameRequestHandle | undefined;
   private lastPaintAt = Number.NEGATIVE_INFINITY;
+  private revision = 0;
   private disposed = false;
 
   constructor(
@@ -68,9 +65,7 @@ export class RenderScheduler {
     const fps = clamp(options.fps ?? 120, MIN_FPS, MAX_FPS);
     this.intervalMs = 1000 / fps;
     this.now = dependencies.now ?? (() => performance.now());
-    this.microtask = dependencies.queueMicrotask ?? queueMicrotask;
-    this.setTimer = dependencies.setTimeout ?? setTimeout;
-    this.clearTimer = dependencies.clearTimeout ?? clearTimeout;
+    this.clock = new FrameClock({ fps }, dependencies);
   }
 
   get active(): boolean {
@@ -81,25 +76,39 @@ export class RenderScheduler {
     if (this.disposed || this.pending) return;
     this.pending = true;
     const now = this.now();
+    const immediate =
+      this.mode === "microtask" || now - this.lastPaintAt >= this.intervalMs;
+    const deadline = immediate ? now : this.lastPaintAt + this.intervalMs;
 
-    if (this.mode === "microtask" || now - this.lastPaintAt >= this.intervalMs) {
-      this.microtask(() => this.fire());
-      return;
-    }
-
-    const delay = Math.max(0, this.intervalMs - (now - this.lastPaintAt));
-    this.timer = this.setTimer(() => this.fire(), delay);
+    this.handle = this.clock.request({
+      lane: "critical",
+      reason: "render-scheduler",
+      sessionRevision: ++this.revision,
+      deadline,
+      coalesceKey: "render-scheduler",
+      work: () => {
+        this.handle = undefined;
+        this.pending = false;
+        if (!this.disposed) this.run();
+      },
+    });
   }
 
   /** 每次真正 draw 后调用；让下一帧从绘制完成时刻重新计预算。 */
   markPainted(): void {
-    this.lastPaintAt = this.now();
+    const at = this.now();
+    this.lastPaintAt = at;
+    this.clock.settle({
+      status: "presented",
+      frameId: this.clock.stats().frameId,
+      at,
+    });
   }
 
   /** 取消尚未触发的尾帧（dispose 用）。 */
   cancel(): void {
-    if (this.timer !== undefined) this.clearTimer(this.timer);
-    this.timer = undefined;
+    this.handle?.cancel();
+    this.handle = undefined;
     this.pending = false;
   }
 
@@ -107,13 +116,7 @@ export class RenderScheduler {
     if (this.disposed) return;
     this.disposed = true;
     this.cancel();
-  }
-
-  private fire(): void {
-    this.timer = undefined;
-    this.pending = false;
-    if (this.disposed) return;
-    this.run();
+    this.clock.dispose();
   }
 }
 
