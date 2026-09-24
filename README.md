@@ -65,7 +65,9 @@ useKeyboard(event => {                   // 返回 true 即消费
 bugent 第一版接入清单见 **[BUGENT_V1.md](./BUGENT_V1.md)**；
 v0.2 架构设计草案见 **[V0.2.md](./V0.2.md)**；
 v0.2 开创性会话运行时设计见 **[V0.2_FRONTIER.md](./V0.2_FRONTIER.md)** 与
-**[V0.2_CONTRACTS.md](./V0.2_CONTRACTS.md)**；
+**[V0.2_CONTRACTS.md](./V0.2_CONTRACTS.md)**；P0 细化见
+**[V0.2_P0_FRAME_CLOCK.md](./V0.2_P0_FRAME_CLOCK.md)** 与
+**[V0.2_P0_INPUT_ROUTING.md](./V0.2_P0_INPUT_ROUTING.md)**；
 上游对照与 Bun 沙箱可行性见 **[V0.2_REFERENCE.md](./V0.2_REFERENCE.md)**。
 
 ## 列表 / 虚拟列表
