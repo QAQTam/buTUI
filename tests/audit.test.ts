@@ -4,12 +4,14 @@ import {
   createAuditOrderBuffer,
   createAuditReceiver,
   createFileAuditLog,
+  createFileAuditOrderStore,
   createHttpAuditSink,
   createMemoryAuditLog,
+  openPersistentAuditReceiver,
   readAuditLog,
   verifyAuditEvents,
   withAuditSinks,
- } from "@butui/plugins";
+} from "@butui/plugins";
 import type { AuditEvent, AuditRotationSummary } from "@butui/plugins";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -321,6 +323,32 @@ describe("audit log", () => {
     expect(pending.pending).toHaveLength(1);
     expect(pending.gaps).toEqual([{ sourceId: "a", from: 2, to: 2 }]);
     expect(buffer.accept([sourceEvent("a", 3, 4)]).duplicates).toHaveLength(1);
+  });
+
+  test("persistent receiver 重启后恢复 watermark 与 pending 缺口", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "butui-order-"));
+    const file = path.join(dir, "order.json");
+    const store = createFileAuditOrderStore({ path: file });
+    try {
+      const first = await openPersistentAuditReceiver({ store });
+      expect(first.receive([sourceEvent("a", 2, 2)]).gaps).toEqual([
+        { sourceId: "a", from: 1, to: 1 },
+      ]);
+      await first.flush();
+
+      const second = await openPersistentAuditReceiver({ store });
+      const result = second.receive([sourceEvent("a", 1, 1)]);
+      expect(result.committed.map(event => event.sourceSeq)).toEqual([1, 2]);
+      expect(result.gaps).toEqual([]);
+      await second.flush();
+
+      expect(await store.load()).toEqual({
+        watermarks: { a: 2 },
+        pending: [],
+      });
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
   });
 
   test("memory 上限只保留最新事件，但 seq 不倒退", () => {

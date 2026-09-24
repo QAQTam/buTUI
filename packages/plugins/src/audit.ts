@@ -164,16 +164,25 @@ export interface AuditOrderResult {
   watermarks: Readonly<Record<string, number>>;
 }
 
+export interface AuditOrderState {
+  watermarks: Readonly<Record<string, number>>;
+  pending: readonly AuditEvent[];
+}
+
 export interface AuditOrderOptions {
   getSourceId?: (event: AuditEvent) => string;
   getSourceSeq?: (event: AuditEvent) => number;
   initialWatermarks?: Readonly<Record<string, number>>;
+  initialState?: AuditOrderState;
+  onState?: (state: AuditOrderState) => void | Promise<void>;
 }
 
 export interface AuditOrderBuffer {
   accept(events: readonly AuditEvent[]): AuditOrderResult;
   watermark(sourceId: string): number;
   snapshot(): Readonly<Record<string, number>>;
+  snapshotState(): AuditOrderState;
+  flush(): Promise<void>;
   reset(): void;
 }
 
@@ -184,6 +193,23 @@ export interface AuditReceiverResult extends AuditOrderResult {
 export interface AuditReceiver {
   readonly buffer: AuditOrderBuffer;
   receive(events: readonly AuditEvent[]): AuditReceiverResult;
+  flush(): Promise<void>;
+}
+
+export interface AuditOrderStore {
+  load(): Promise<AuditOrderState | undefined>;
+  save(state: AuditOrderState): Promise<void>;
+}
+
+export interface AuditOrderStoreFs {
+  readFile(path: string): Promise<string>;
+  writeFile(path: string, data: string): Promise<void>;
+  rename(from: string, to: string): Promise<void>;
+}
+
+export interface FileAuditOrderStoreOptions {
+  path: string;
+  fs?: AuditOrderStoreFs;
 }
 
 export interface MemoryAuditLogOptions extends AuditIntegrityOptions {
@@ -226,6 +252,18 @@ const defaultFs: AuditFs = {
   },
   async rm(path) {
     await fs.rm(path, { force: true });
+  },
+};
+
+const defaultOrderStoreFs: AuditOrderStoreFs = {
+  async readFile(path) {
+    return fs.readFile(path, "utf8");
+  },
+  async writeFile(path, data) {
+    await fs.writeFile(path, data, "utf8");
+  },
+  async rename(from, to) {
+    await fs.rename(from, to);
   },
 };
 
@@ -668,11 +706,45 @@ export function createAuditOrderBuffer(
   const getSourceId = options.getSourceId ?? defaultAuditSourceId;
   const getSourceSeq = options.getSourceSeq ?? defaultAuditSourceSeq;
   const initial = new Map<string, number>();
-  for (const [sourceId, seq] of Object.entries(options.initialWatermarks ?? {})) {
-    initial.set(sourceId, normalizeSourceSeq(seq));
+  for (const [sourceId, seq] of Object.entries(
+    options.initialState?.watermarks ?? options.initialWatermarks ?? {}
+  )) {
+    initial.set(sourceId, normalizeWatermark(seq));
   }
   const watermarks = new Map(initial);
   const pending = new Map<string, Map<number, AuditEvent>>();
+  let persistChain: Promise<void> = Promise.resolve();
+
+  for (const event of options.initialState?.pending ?? []) {
+    const sourceId = getSourceId(event);
+    const sourceSeq = normalizeSourceSeq(getSourceSeq(event));
+    if (sourceSeq <= (watermarks.get(sourceId) ?? 0)) continue;
+    let queue = pending.get(sourceId);
+    if (!queue) {
+      queue = new Map();
+      pending.set(sourceId, queue);
+    }
+    queue.set(sourceSeq, event);
+  }
+
+  const snapshotState = (): AuditOrderState => ({
+    watermarks: Object.fromEntries(watermarks),
+    pending: [...pending.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .flatMap(([, queue]) =>
+        [...queue.entries()]
+          .sort(([left], [right]) => left - right)
+          .map(([, event]) => event)
+      ),
+  });
+
+  const persist = (): void => {
+    if (!options.onState) return;
+    const state = snapshotState();
+    persistChain = persistChain
+      .catch(() => {})
+      .then(() => options.onState!(state));
+  };
 
   const accept = (events: readonly AuditEvent[]): AuditOrderResult => {
     const committed: AuditEvent[] = [];
@@ -717,13 +789,15 @@ export function createAuditOrderBuffer(
     const pendingEvents = [...pending.values()].flatMap(queue =>
       [...queue.values()]
     );
-    return {
+    const result: AuditOrderResult = {
       committed,
       pending: pendingEvents,
       duplicates,
       gaps,
       watermarks: Object.fromEntries(watermarks),
     };
+    persist();
+    return result;
   };
 
   return {
@@ -734,10 +808,15 @@ export function createAuditOrderBuffer(
     snapshot() {
       return Object.fromEntries(watermarks);
     },
+    snapshotState,
+    flush() {
+      return persistChain;
+    },
     reset() {
       watermarks.clear();
       for (const [sourceId, seq] of initial) watermarks.set(sourceId, seq);
       pending.clear();
+      persist();
     },
   };
 }
@@ -767,7 +846,52 @@ export function createAuditReceiver(
       };
       return { ...result, ack };
     },
+    flush() {
+      return buffer.flush();
+    },
   };
+}
+
+export function createFileAuditOrderStore(
+  options: FileAuditOrderStoreOptions
+): AuditOrderStore {
+  const io = options.fs ?? defaultOrderStoreFs;
+  let version = 0;
+  return {
+    async load() {
+      let text: string;
+      try {
+        text = await io.readFile(options.path);
+      } catch (error) {
+        if (isNotFound(error)) return undefined;
+        throw error;
+      }
+      const value: unknown = JSON.parse(text);
+      if (!isAuditOrderState(value)) {
+        throw new Error("[butui] invalid audit order state");
+      }
+      return value;
+    },
+    async save(state) {
+      const temporary = `${options.path}.tmp-${process.pid}-${++version}`;
+      await io.writeFile(temporary, JSON.stringify(state));
+      await io.rename(temporary, options.path);
+    },
+  };
+}
+
+export async function openPersistentAuditReceiver(
+  options: AuditOrderOptions & { store: AuditOrderStore }
+): Promise<AuditReceiver> {
+  const state = await options.store.load();
+  return createAuditReceiver({
+    ...options,
+    ...(state ? { initialState: state } : {}),
+    onState: async next => {
+      await options.store.save(next);
+      await options.onState?.(next);
+    },
+  });
 }
 
 export async function readAuditLog(
@@ -933,6 +1057,13 @@ function normalizeSourceSeq(value: number): number {
   return value;
 }
 
+function normalizeWatermark(value: number): number {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error("[butui] audit watermark must be a non-negative safe integer");
+  }
+  return value;
+}
+
 function backoffDelay(
   baseMs: number,
   maxMs: number,
@@ -1042,6 +1173,22 @@ function isAuditAck(value: unknown): value is AuditAck {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function isAuditOrderState(value: unknown): value is AuditOrderState {
+  if (!isRecord(value) || !isRecord(value.watermarks)) return false;
+  if (!Array.isArray(value.pending)) return false;
+  for (const seq of Object.values(value.watermarks)) {
+    if (!Number.isSafeInteger(seq) || (seq as number) < 0) return false;
+  }
+  return value.pending.every(isAuditEvent);
+}
+
+function isNotFound(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    (value.code === "ENOENT" || value.code === "ENOTDIR")
+  );
 }
 
 function normalizeOptionalLimit(value: number | undefined): number | undefined {
