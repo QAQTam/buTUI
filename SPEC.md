@@ -1,36 +1,25 @@
-# buTUI 0.1 Agent-First Spec
+# buTUI 0.1 TUI Runtime Spec
 
 状态：Draft  
-日期：2026-09-23  
-目标读者：buTUI 设计者、buTUI 实现者、bugent / buagent 维护者
+日期：2026-09-24
+目标读者：buTUI 设计者、buTUI 实现者、TUI 应用与 agent UI 维护者
 
 ---
 
 ## 1. 定位
 
-buTUI 不是一个通用 TUI 框架的复制品，也不是 OpenTUI 的替代品。
+buTUI 是 Bun + TypeScript 的通用 TUI Runtime。接口设计参考 OpenTUI，但不复制
+其 Zig / FFI 架构；默认零 native core，优先复用 Bun 与 SolidJS 2 RC。
 
-buTUI 的目标是：
+核心目标是提供可组合的终端 UI 基础能力：
 
-> **面向 coding agent 的 Agent UI Runtime。**
+- `createTuiApp` 应用入口与响应式渲染；
+- 布局、ANSI、鼠标、键盘、滚动、动画和文本选择；
+- 可复用组件、插件 / Slot、Keymap 等应用层接口；
+- 流式文本、Markdown、Diff 等长内容增量路径。
 
-它优先服务以下对象：
-
-- 对话消息
-- turn
-- reasoning
-- tool call
-- tool result
-- todo
-- checkpoint
-- undo / branch
-- permission
-- artifact
-- context / token
-- 多 agent
-
-终端布局、ANSI、鼠标、键盘、滚动和动画只是底层能力。  
-buTUI 的真正差异点在于：**agent 事件是一级 UI 对象。**
+Coding agent UI 是 buTUI 的上层用例，而不是核心边界。agent 事件协议、Session、
+undo、artifact 等仍由 `@butui/agent` 提供，应用也可以完全不使用这些层。
 
 ---
 
@@ -38,17 +27,16 @@ buTUI 的真正差异点在于：**agent 事件是一级 UI 对象。**
 
 ### 2.1 产品目标
 
-让 agent 的工作过程可以被：
+让 TUI 应用可以用一致的 Bun / TypeScript 接口构建交互：
 
-- 看见
-- 点击
-- 展开
-- 回放
-- 撤销
-- 分支
-- 比较
-- 审查
-- 分享给 WebUI / remote client
+- 稳定布局与合帧渲染
+- 鼠标、键盘、焦点与文本选择
+- 可复用组件、插件和命令系统
+- 流式长内容与可测试的 headless 渲染
+- 可选的 agent 工作流：消息、工具、撤销、分支、审查
+
+Agent UI 的完整工作过程应能被看见、点击、展开、回放、撤销、分支、比较并分享
+给 WebUI / remote client，但这些能力建立在通用 runtime 之上。
 
 ### 2.2 技术目标
 
@@ -79,9 +67,11 @@ v0.1 不做：
 
 ## 4. 设计原则
 
-### 4.1 Agent-first
+### 4.1 通用原语优先
 
-消息、工具、checkpoint、分支和权限必须是结构化节点，不是字符串行。
+布局、事件、焦点、滚动、鼠标和插件接口保持通用，不把 agent 概念写进核心。
+Agent 上层仍应把消息、工具、checkpoint、分支和权限建成结构化节点，而不是
+字符串行。
 
 ### 4.2 语义 hit test
 
@@ -2031,9 +2021,9 @@ ask_user
 
 ---
 
-## 18. 需要设计同事回答的问题
+## 18. 仍需回答的问题
 
-1. buTUI 是通用框架，还是 agent UI kit？
+1. ~~通用框架，还是 agent UI kit？~~ 已定：通用 TUI Runtime，agent UI 是上层用例。
 2. 第一版是否只做 Bun + TypeScript？
 3. 是否直接采用 SolidJS 2 RC？
 4. 是否使用 `@solidjs/compiler` 的 universal 模式？
@@ -2050,13 +2040,24 @@ ask_user
 
 ## 19. 推荐的第一版边界
 
-第一版不要试图做成“通用 OpenTUI 替代品”。
+第一版不追求 OpenTUI 的完整 feature parity，也不复制其 Zig renderable 层次。
 
 第一版应该做成：
 
-> **一个能让 bugent / buagent 写出 agent-first、可点击、可 undo、可分支、可回放、可测试的终端 UI Runtime。**
+> **一个稳定的 Bun + TypeScript 通用 TUI Runtime，agent UI 作为可组合的上层用例。**
 
-最小闭环：
+通用最小闭环：
+
+```text
+createTuiApp
+  + layout / renderer / terminal
+  + mouse / keyboard / focus / selection
+  + components / ScrollBar / Slider / SplitPane
+  + plugins / slots / keymap
+  + headless test
+```
+
+Agent 上层示例：
 
 ```text
 Message 语义节点

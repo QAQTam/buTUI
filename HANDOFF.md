@@ -2,21 +2,21 @@
 
 > 交接时间：2026-09-24  
 > 仓库：`/home/qaqtamsy/项目/buTUI`  
-> 功能基线提交：`ee61960 feat(components): Slider 与跨区域拖动`
-> 工作区状态：Slider / ScrollBar 跨区域拖动提交处干净
-> 本轮能力：ScrollBar 跨区域拖动 + Slider 组件
-> 当前回归：`550 pass / 0 fail`，`tsc --noEmit` 通过
+> 功能基线提交：`bde021a feat(components): SplitPane 与分隔条拖动`
+> 工作区状态：功能提交后干净，本文件为对应交接刷新
+> 本轮能力：SplitPane 纯几何模型 + 水平 / 垂直分栏 + 跨区域分隔条拖动
+> 当前回归：`558 pass / 0 fail`，56 个测试文件，`tsc --noEmit` 通过
 
 ## 1. 项目定位
 
-buTUI 是面向 coding agent 的 Bun + TypeScript 终端 UI Runtime。目标不是再写一套
-OpenTUI，而是提供：
+buTUI 是基于 Bun + TypeScript 的通用 TUI Runtime。参考 OpenTUI 的接口与组件
+边界，但不复制其 Zig / FFI 架构；agent UI 是上层用例，不是核心限制。
 
 - 稳定的 `createTuiApp` 应用入口；
 - SolidJS 2 RC 的细粒度响应式 host renderer；
 - 流式文本 / Markdown / Diff 的 O(1) 或 O(视口) 增量路径；
-- agent 事件协议、Session、undo、artifact、图片等可组合层；
-- 给 bugent 这类 Zig 后端复用的纯 TS 标准库接口。
+- 鼠标、滚动、Slider、SplitPane、插件 / Slot、Keymap 等通用交互能力；
+- agent 事件协议、Session、undo、artifact、图片等可组合上层。
 
 设计文档：
 
@@ -60,6 +60,7 @@ bun --conditions=browser run scripts/scrollbar-demo.tsx
 bun --conditions=browser run scripts/plugin-demo.tsx
 bun --conditions=browser run scripts/keymap-demo.tsx
 bun --conditions=browser run scripts/mouse-demo.tsx
+bun --conditions=browser run scripts/split-pane-demo.tsx
 bun --conditions=browser run scripts/scroll-demo.tsx
 bun --conditions=browser run scripts/list-demo.tsx
 bun --conditions=browser run scripts/stream-bench.tsx
@@ -92,7 +93,7 @@ bun --conditions=browser run scripts/stream-bench.tsx
 | `@butui/layout` | flex 子集、增量合成、视口窗口、文本选区提取 |
 | `@butui/renderer` | cell → ANSI、逐行差分、SGR / 选区状态机 |
 | `@butui/terminal` | raw mode、resize、输入解码、能力探测、OSC 52 |
-| `@butui/components` | 编辑器、Input、Textarea、List、Diff、ScrollBar、弹窗等 |
+| `@butui/components` | 编辑器、Input、Textarea、List、Diff、ScrollBar、Slider、SplitPane、弹窗等 |
 | `@butui/plugins` | 通用 SlotRegistry / Plugin / 错误隔离；Solid `<Slot>` 适配 |
 | `@butui/keymap` | CommandRegistry / 作用域 keymap / 冲突检测 / help；Solid `useKeymap` |
 | `@butui/stream` | `LineBuffer`、MarkdownStream、DiffStream |
@@ -102,7 +103,7 @@ bun --conditions=browser run scripts/stream-bench.tsx
 | `@butui/web` | 实验性 DOM 渲染，不是当前优先级 |
 | `@butui/test` | headless mount、快照、事件注入 |
 
-源码约 13,900 行，测试约 8,600 行，48 个测试文件。
+源码约 17,000 行，测试约 10,300 行，56 个测试文件。
 
 ## 5. 已完成能力
 
@@ -313,6 +314,20 @@ const bar = createScrollBar({
 - ScrollBar 与 Slider 共用「本地坐标 + capture + drag」模式。
 - 已有 `tests/slider.test.tsx`。
 
+### 5.12 SplitPane
+
+- `splitPaneGeometry()`：先扣掉分隔条，再返回精确的 `first / second` cell；
+  min / max / 端点都夹取。
+- `createSplitPane()`：`horizontal` 左右分栏、`vertical` 上下分栏，支持
+  begin / drag / end 和键盘微调。
+- `<SplitPane>`：两个 `flexGrow` 窗格 + 固定分隔条；鼠标捕获根节点，因此
+  `localX / localY` 的坐标原点不会随分隔条移动。
+- 键盘：方向键 / PageUp / PageDown / Home / End；分隔条可聚焦。
+- 分隔条单独 `selectable={false}`，两侧文本选择不受影响。
+- `size` 默认取终端对应轴；嵌在 padding / border / 兄弟节点容器时，调用方需
+  传实际轴尺寸。
+- 已有 `scripts/split-pane-demo.tsx`、`tests/splitpane.test.tsx`。
+
 ## 6. 稳定接口入口
 
 | 入口 | 文件 |
@@ -325,6 +340,7 @@ const bar = createScrollBar({
 | ScrollBar 几何模型 | `packages/components/src/scrollbar.ts` |
 | `<ScrollBar>` | `packages/components/src/scrollbar.tsx` |
 | Slider 模型 / 组件 | `packages/components/src/{slider.ts,slider.tsx}` |
+| SplitPane 几何 / 组件 | `packages/components/src/{splitpane.ts,splitpane.tsx}` |
 | Plugin / SlotRegistry | `packages/plugins/src/{types,registry}.ts` |
 | Plugin loader / manifest / config / discovery | `packages/plugins/src/{loader,manifest,config,discovery}.ts` |
 | Solid `<Slot>` | `packages/plugins/src/solid.tsx` |
@@ -375,21 +391,23 @@ bridge、真实 tool event 对接或 bugent 快捷键迁移。
 17. 动画只更新变化行；整屏 shimmer 会破坏流式差分价值。
 18. `<Diff>` 行必须固定 1 行并 `truncate`，不能折行。
 19. ScrollBar 的轨道局部坐标来自每个轨道行；不需要也不应该扫描整帧找 bbox。
+20. SplitPane 必须捕获根节点，不能捕获分隔条；分隔条会随比例移动，否则
+    `localX / localY` 的参考原点跟着漂移，拖动会产生反馈抖动。
 
 ### 包边界
 
-20. `@butui/agent` 不能静态依赖 `@butui/image`，browser 打包会碰 Bun builtin。
-21. `bun test` 的 preload 要写在 `[test].preload`，顶层 `preload` 只影响
+21. `@butui/agent` 不能静态依赖 `@butui/image`，browser 打包会碰 Bun builtin。
+22. `bun test` 的 preload 要写在 `[test].preload`，顶层 `preload` 只影响
     `bun run`。
-22. `@butui/web` 是实验层；当前 WebUI 尚未消费 `tool.diff`。
+23. `@butui/web` 是实验层；当前 WebUI 尚未消费 `tool.diff`。
 
 ## 9. 测试与验收
 
 当前：
 
 ```text
-550 pass / 0 fail
-55 test files
+558 pass / 0 fail
+56 test files
 tsc --noEmit pass
 ```
 
@@ -409,6 +427,7 @@ tsc --noEmit pass
 - `tests/keymap-runtime.test.tsx`
 - `tests/mouse-interaction.test.tsx`
 - `tests/slider.test.tsx`
+- `tests/splitpane.test.tsx`
 - `tests/solid-cleanup-contract.test.tsx`
 
 提交前至少跑：
@@ -430,6 +449,7 @@ git diff --check
 - Keymap 只有单键；无多键 chord、前缀超时、用户自定义绑定持久化。
 - Diff 没有 word-level diff、任意位置删除、hunk 折叠、“滚开后有新行”提示。
 - ScrollBar 只有垂直轴；无自动隐藏、hover 展开、水平轴、惯性。
+- SplitPane 的拖动 min/max 依赖应用传对 `size`；无折叠、嵌套拖动约束、双击复位。
 - 动画只有共享时钟和 Diff 游标；无 tween / spring / timeline / shimmer。
 - 编辑器模型没有内部选区、剪贴板历史、撤销栈。
 - 列表只支持单列 + 固定行高，变高行不支持。
@@ -442,16 +462,15 @@ git diff --check
 
 按通用 TUI 收益排序：
 
-1. **鼠标组件继续**：SplitPane、水平 ScrollBar、OSC 22 指针形状与拖动惯性。
+1. **鼠标组件继续**：水平 ScrollBar、OSC 22 指针形状与拖动惯性。
 2. **Keymap 扩展**：多键 chord、前缀超时、用户自定义绑定持久化、Command Palette。
 3. **插件运行时约束 / 审批**：capability 目前只是 import 前门控，下一步做权限
    审批 UI 或 worker 隔离。
 4. **Portal / Dynamic / Toast / Tooltip**：补齐 OpenTUI 已有的通用组件接口。
 5. **Timeline / tween / spring**：建立在现有 `AnimationScheduler` 上。
-6. **ScrollBar 扩展**：水平轴、自动隐藏或 hover，只有在真实 UI 需要时做。
-7. **自定义 renderable / component catalogue**：保持 Bun/TS 的 tag→节点映射，
+6. **自定义 renderable / component catalogue**：保持 Bun/TS 的 tag→节点映射，
    不照搬 OpenTUI 的 Zig Renderable 类层次。
-8. **WebUI diff**：等 WebUI 重新成为优先级再做。
+7. **WebUI diff**：等 WebUI 重新成为优先级再做。
 
 ## 12. 协作约定
 
