@@ -36,7 +36,7 @@ const app = createTuiApp({
 | 布局 | `@butui/layout` | **稳定**（`Cell` / `Line` / `Frame` / `layout`） |
 | 渲染 | `@butui/renderer` | **稳定**（`Renderer` / `plainText` / `paintLine`） |
 | 终端 | `@butui/terminal` | **稳定**（`TerminalSession` / 输入解码 / 能力探测 / `osc22` / `osc52`） |
-| 基础组件 | `@butui/components` | **稳定**（编辑器 / 选择 / 列表 / 滚动 / ScrollBar / Slider / SplitPane / CommandPalette / Diff / 弹窗 / 展示组件） |
+| 基础组件 | `@butui/components` | **稳定**（编辑器 / 选择 / 列表 / 滚动 / ScrollBar / Slider / SplitPane / CommandPalette / Toast / Diff / 弹窗 / 展示组件） |
 | 插件 / Slot | `@butui/plugins` | **稳定**（`Plugin` / `SlotRegistry`；Solid 适配在 `@butui/plugins/solid`；loader 在 `@butui/plugins/loader`） |
 | 命令 / Keymap | `@butui/keymap` | **稳定**（`CommandRegistry` / `Keymap`；Solid 适配在 `@butui/keymap/solid`） |
 | 流式文本 | `@butui/stream` | **稳定**（`StreamSource` / `DiffStream` / `<stream>`） |
@@ -694,6 +694,24 @@ const split = createSplitPane({
 - 输入框自动聚焦，↑↓ / PageUp/PageDown / Home/End / Ctrl+P/N 选择。
 - Enter 执行并关闭，Esc 关闭，鼠标点击结果执行。
 - 命令错误由 `CommandRegistry.onError` 隔离；组件不吞错误。
+
+### 4.26 Toast：`createToastQueue` / `<ToastViewport>`
+
+```tsx
+const toasts = createToastQueue({ defaultDurationMs: 5_000 });
+
+<ToastViewport
+  queue={toasts}
+  placement="bottom-right"
+  onAction={(toast, action) => handleAction(toast, action)}
+/>
+```
+
+- `push()` 支持 `tone`、`message`、`durationMs`、`dedupeKey`、`actions`。
+- 相同 `dedupeKey` 合并并增加 `count`；`maxVisible` 超限自动关闭最旧项。
+- hover 暂停 TTL，移出后继续剩余时间；Esc / `×` 手动关闭。
+- Enter 执行首个 action；`dismissOnAction` 默认 true。
+- `<ToastViewport>` 使用根 `<layer>`，必须挂在与 `<Modal>` 相同的视图根部。
 
 ## 5. 已知缺口（不要依赖，也不建议自己绕）
 

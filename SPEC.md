@@ -1146,6 +1146,33 @@ second    = available - first
 
 ---
 
+### 5.28 Toast（v0.1 实现）
+
+```tsx
+const toasts = createToastQueue({ defaultDurationMs: 5_000 });
+
+<ToastViewport
+  queue={toasts}
+  placement="bottom-right"
+  onAction={(toast, action) => handleAction(toast, action)}
+/>
+
+toasts.push({
+  title: "构建完成",
+  message: "3 files changed",
+  tone: "success",
+  actions: [{ id: "open", label: "打开" }],
+});
+```
+
+- `createToastQueue()` 管 TTL、dedupeKey + count、maxVisible overflow、
+  pause / resume、clear / dispose 与生命周期事件。
+- `<ToastViewport>` 使用根 `<layer>`，四角 placement，支持 action buttons。
+- Enter 执行首个 action，Esc / 鼠标关闭；hover 暂停 TTL。
+- 队列可脱离组件使用，便于自定义 renderer 和 headless 测试。
+
+---
+
 ### 5.17 应用上下文（v0.1 实现）
 
 组件要能问「现在多宽 / 什么色深 / 我想订一个全局键」，但既不该认识 runtime，
@@ -1651,6 +1678,8 @@ P1：
 - `Button`：`<Button>`（Enter / 空格 / 点击，焦点态自亮）
 - `ProgressBar` / `Spinner` / `Badge` / `Divider` / `KeyHint` / `Shimmer`：展示组件
 - `CommandPalette`：`filterCommands` + `CommandRegistry` + `<Input>` / `<List>` / `<Modal>`
+- `Toast`：`createToastQueue` / `<ToastViewport>`，TTL / dedupe / overflow /
+  action / pause-resume（见 §5.28）
 - `Select` / `Tabs`：`<Select>`（↑↓ + Enter）与 `<Tabs>`（←→ 立即切换）
 - `Table`：列宽显式给或按内容算，支持左 / 中 / 右对齐
 - `Tree`：受控展开（`expanded` + `onToggle`），←→ 展开收起、→ 进子节点

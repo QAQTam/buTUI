@@ -3,9 +3,9 @@
 > 交接时间：2026-09-24
 > 仓库：`/home/qaqtamsy/项目/buTUI-v0.2-frontier`
 > 功能基线提交：`61d889b feat(components): add capability approval dialog`
-> 工作区状态：本文件与 isolation benchmark 一并提交
-> 本轮能力：worker / process startup + RPC + RSS benchmark
-> 当前回归：`756 pass / 0 fail`，86 个测试文件，`tsc --noEmit` 通过
+> 工作区状态：本文件与 Toast 组件一并提交
+> 本轮能力：toast queue + viewport + TTL / dedupe / actions
+> 当前回归：`760 pass / 0 fail`，87 个测试文件，`tsc --noEmit` 通过
 
 ## 1. 项目定位
 
@@ -109,7 +109,7 @@ bun --conditions=browser run scripts/plugin-isolation-bench.ts --calls=5000 --wa
 | `@butui/layout` | flex 子集、增量合成、视口窗口、文本选区提取 |
 | `@butui/renderer` | cell → ANSI、逐行差分、SGR / 选区状态机 |
 | `@butui/terminal` | raw mode、resize、输入解码、能力探测、OSC 52 |
-| `@butui/components` | 编辑器、Input、Textarea、List、Diff、ScrollBar、Slider、SplitPane、弹窗等 |
+| `@butui/components` | 编辑器、Input、Textarea、List、Diff、ScrollBar、Slider、SplitPane、Toast、弹窗等 |
 | `@butui/plugins` | 通用 SlotRegistry / Plugin / 错误隔离；Solid `<Slot>` 适配 |
 | `@butui/keymap` | CommandRegistry / 作用域 keymap / 冲突检测 / help；Solid `useKeymap` |
 | `@butui/stream` | `LineBuffer`、MarkdownStream、DiffStream |
@@ -154,6 +154,8 @@ bun --conditions=browser run scripts/plugin-isolation-bench.ts --calls=5000 --wa
 - 内容：`<Markdown>` / `<Code>` / `<Diff>`。
 - 选择类：`<Select>` / `<Tabs>` / `<Table>` / `<Tree>`。
 - 弹窗：`<Button>` / `<Dialog>` / `<Modal>`。
+- Toast：`createToastQueue` / `<ToastViewport>`；TTL、dedupe、overflow、
+  pause/resume、action 与 Esc / 鼠标关闭。
 - 展示：`ProgressBar` / `Spinner` / `Badge` / `Divider` / `KeyHint`。
 
 ### 5.4 鼠标文本选择 + OSC 52
@@ -386,6 +388,14 @@ const bar = createScrollBar({
 - 可传 `shortcut()` 显示快捷键，可传 `limit` / `showAll` / `empty` 定制结果。
 - 已有 `scripts/command-palette-demo.tsx`、`tests/command-palette.test.tsx`。
 
+### 5.14.1 Toast
+
+- `createToastQueue()`：TTL、dedupeKey + count、maxVisible overflow、
+  pause / resume、clear / dispose 和 added / updated / dismissed 事件。
+- `<ToastViewport>`：根 `<layer>` 定位，支持四角 placement、message、tone、
+  action buttons、Enter 主 action、Esc / 鼠标关闭、hover pause。
+- 已有 `tests/toast.test.tsx`。
+
 ### 5.15 高频渲染合帧
 
 - `RenderScheduler`：microtask 与 frame 两种模式；默认行为不变。
@@ -609,8 +619,8 @@ bridge、真实 tool event 对接或 bugent 快捷键迁移。
 当前：
 
 ```text
-756 pass / 0 fail
-86 test files
+760 pass / 0 fail
+87 test files
 tsc --noEmit pass
 ```
 
@@ -639,6 +649,7 @@ tsc --noEmit pass
 - `tests/keymap.test.ts`
 - `tests/keymap-runtime.test.tsx`
 - `tests/command-palette.test.tsx`
+- `tests/toast.test.tsx`
 - `tests/mouse-interaction.test.tsx`
 - `tests/mouse-pointer.test.tsx`
 - `tests/inertia.test.ts`
@@ -710,7 +721,7 @@ git diff --check
    limits、cgroup v2 lifecycle 与 NDJSON audit rotation / remote sink / hash chain /
    HMAC / batch retry / dedupe / explicit ack / source ordering / pending recovery /
    cleanup 已完成；下一步做自动 cgroup 委派与 OS 权限 sandbox。
-5. **Portal / Dynamic / Toast / Tooltip**：补齐 OpenTUI 已有的通用组件接口。
+5. **Portal / Dynamic / Tooltip**：补齐 OpenTUI 已有的通用组件接口。
 6. **动画编排增强**：更复杂的 stagger、滚动回弹和动画调试工具。
 7. **WebUI diff / 水平 ScrollBar**：等真实需求出现后再做。
 

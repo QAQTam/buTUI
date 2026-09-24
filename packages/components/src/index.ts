@@ -28,6 +28,8 @@ export * from "./shimmer.ts";
 export * from "./shimmer.tsx";
 export * from "./display.tsx";
 export * from "./modal.tsx";
+export * from "./toast.ts";
+export * from "./toast.tsx";
 export * from "./capability-approval.tsx";
 export * from "./select.tsx";
 export * from "./table.tsx";
