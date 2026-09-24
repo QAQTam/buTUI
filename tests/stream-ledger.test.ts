@@ -326,11 +326,36 @@ describe("StreamLedger", () => {
     const bBefore = streams.project("stream-b");
     expect(aBefore.spilledSegments.length).toBeGreaterThan(0);
     expect(bBefore.spilledSegments.length).toBeGreaterThan(0);
+    expect(aBefore.spilledSegments[0]?.lineIds).toBeUndefined();
+    expect(aBefore.spilledSegments[0]?.lineRuns).toEqual([
+      {
+        prefix: "line-",
+        start: 1,
+        step: 2,
+        count: aBefore.spilledSegments[0]!.count,
+      },
+    ]);
+    expect(bBefore.spilledSegments[0]?.lineRuns).toEqual([
+      {
+        prefix: "line-",
+        start: 2,
+        step: 2,
+        count: bBefore.spilledSegments[0]!.count,
+      },
+    ]);
 
     const coldA = await streams.readCold("stream-a", ["line-1", "line-3"]);
     const coldB = await streams.readCold("stream-b", ["line-2", "line-4"]);
+    const lastColdA = await streams.readCold("stream-a", [
+      aBefore.spilledSegments[aBefore.spilledSegments.length - 1]!.lastLineId,
+    ]);
+    const lastColdB = await streams.readCold("stream-b", [
+      bBefore.spilledSegments[bBefore.spilledSegments.length - 1]!.lastLineId,
+    ]);
     expect(coldA.map(line => line.text)).toEqual(["a", "a"]);
     expect(coldB.map(line => line.text)).toEqual(["b", "b"]);
+    expect(lastColdA[0]?.text).toBe("a");
+    expect(lastColdB[0]?.text).toBe("b");
     expect(streams.project("stream-a").stableLines).toHaveLength(
       aBefore.stableLines.length
     );
@@ -366,6 +391,57 @@ describe("StreamLedger", () => {
     expect(bLines.map(line => line.id)).toEqual(
       Array.from({ length: 200 }, (_, index) => `line-${index * 2 + 2}`)
     );
+  });
+
+  test("多 stream 非均匀交错时 lineRuns 仍保持完整顺序", async () => {
+    const memory = new MemoryLedger({ totalBytes: 192 });
+    const store = new MemorySpillStore();
+    const streams = new StreamLedger({
+      memory,
+      memoryOwner: "test-stream",
+      spill: { store, policy: { maxBytes: 0 } },
+    });
+    for (const streamId of ["stream-a", "stream-b", "stream-c"]) {
+      streams.open({
+        streamId,
+        kind: "text",
+        priority: 1,
+        createdAt: 0,
+      });
+    }
+
+    const seq = { "stream-a": 1, "stream-b": 1, "stream-c": 1 };
+    const expected = {
+      "stream-a": [] as string[],
+      "stream-b": [] as string[],
+      "stream-c": [] as string[],
+    };
+    const append = async (streamId: keyof typeof seq, text: string) => {
+      await streams.applyWithSpill(
+        envelope(seq[streamId]++, { type: "append", delta: `${text}\n` }, {
+          streamId,
+        })
+      );
+      expected[streamId].push(text);
+    };
+
+    for (let round = 0; round < 80; round++) {
+      await append("stream-a", `a-${round}-0`);
+      await append("stream-a", `a-${round}-1`);
+      await append("stream-b", `b-${round}`);
+      await append("stream-c", `c-${round}-0`);
+      await append("stream-c", `c-${round}-1`);
+      await append("stream-c", `c-${round}-2`);
+    }
+
+    for (const streamId of ["stream-a", "stream-b", "stream-c"] as const) {
+      const before = streams.project(streamId);
+      expect(before.spilledSegments.some(segment => segment.lineRuns)).toBe(true);
+      await streams.hydrate(streamId);
+      expect(streams.project(streamId).stableLines.map(line => line.text)).toEqual(
+        expected[streamId]
+      );
+    }
   });
 
   test("stats 汇总 streams / lines / tombstones", () => {

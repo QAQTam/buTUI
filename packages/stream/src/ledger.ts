@@ -96,7 +96,7 @@ export interface StreamProjection {
   tombstones: readonly StreamTombstone[];
   /**
    * 已离开内存的 stable line segment。连续 ID 只存范围；多 stream 交错时
-   * segment 会携带显式 lineIds。
+   * 优先使用 lineRuns 压缩。
    */
   spilledSegments: readonly SpilledSegment[];
 }
@@ -108,10 +108,19 @@ export interface SpilledSegment {
   count: number;
   bytes: number;
   /**
-   * LineId 不连续时保留显式顺序；连续 segment 省略该字段并使用范围推导。
-   * 多 stream 交错分配全局 LineId 时会出现这种情况。
+   * 非连续 LineId 的 arithmetic runs；例如 `line-1,line-3,line-5` 可表示为
+   * `{ prefix: "line-", start: 1, step: 2, count: 3 }`。
    */
+  lineRuns?: readonly LineIdRun[];
+  /** 非规范数字 ID 无法形成 run 时的显式回退。 */
   lineIds?: readonly LineId[];
+}
+
+export interface LineIdRun {
+  prefix: string;
+  start: number;
+  step: number;
+  count: number;
 }
 
 export interface StreamLedgerStats {
@@ -163,6 +172,7 @@ interface SpilledSegmentState {
   lastLineId: LineId;
   count: number;
   bytes: number;
+  lineRuns?: LineIdRun[];
   lineIds?: LineId[];
 }
 
@@ -349,16 +359,9 @@ export class StreamLedger {
 
     const restored: StreamLineRecord[] = [];
     for (const segment of stream.spilledSegments) {
-      const explicitLineIds = segment.lineIds;
-      const range = explicitLineIds ? undefined : spilledSegmentRange(segment);
       for (let start = 0; start < segment.count; start += HYDRATE_READ_BATCH) {
         const count = Math.min(HYDRATE_READ_BATCH, segment.count - start);
-        const ids = explicitLineIds
-          ? explicitLineIds.slice(start, start + count)
-          : Array.from(
-              { length: count },
-              (_, index) => `${range!.prefix}${range!.start + start + index}`
-            );
+        const ids = segmentLineIdsSlice(segment, start, count);
         const records = await readSpillRecords(this.spillStore, streamId, ids);
         for (let index = 0; index < ids.length; index++) {
           const record = records[index]!;
@@ -395,6 +398,7 @@ export class StreamLedger {
     const explicitSets = new Map<SpilledSegmentState, Set<LineId>>();
     for (const lineId of lineIds) {
       const segment = stream.spilledSegments.find(candidate => {
+        if (candidate.lineRuns) return runsContainLineId(candidate.lineRuns, lineId);
         if (!candidate.lineIds) return rangeContainsLineId(candidate, lineId);
         let ids = explicitSets.get(candidate);
         if (!ids) {
@@ -618,21 +622,13 @@ function appendSpilledSegment(
 
   const previous = stream.spilledSegments[stream.spilledSegments.length - 1];
   if (!previous || previous.streamId !== manifest.streamId) {
-    stream.spilledSegments.push({
-      streamId: manifest.streamId,
-      firstLineId: manifest.firstLineId,
-      lastLineId: manifest.lastLineId,
-      count: manifest.count,
-      bytes: manifest.bytes,
-      ...(lineIdsAreContiguous(manifest.lineIds)
-        ? {}
-        : { lineIds: [...manifest.lineIds] }),
-    });
+    stream.spilledSegments.push(createSpilledSegment(manifest));
     return;
   }
 
   if (
     !previous.lineIds &&
+    !previous.lineRuns &&
     lineIdsAreContiguous(manifest.lineIds) &&
     rangesAreAdjacent(previous, manifest)
   ) {
@@ -642,19 +638,175 @@ function appendSpilledSegment(
     return;
   }
 
-  if (!previous.lineIds) previous.lineIds = materializeSegmentLineIds(previous);
-  for (const lineId of manifest.lineIds) previous.lineIds.push(lineId);
+  const previousRuns = segmentRuns(previous);
+  const manifestRuns = lineIdsToRuns(manifest.lineIds);
+  if (previousRuns && manifestRuns) {
+    previous.lineRuns = mergeRuns(previousRuns, manifestRuns);
+    previous.lineIds = undefined;
+  } else {
+    previous.lineIds = materializeSegmentLineIds(previous);
+    previous.lineRuns = undefined;
+    for (const lineId of manifest.lineIds) previous.lineIds.push(lineId);
+  }
   previous.lastLineId = manifest.lastLineId;
   previous.count += manifest.count;
   previous.bytes += manifest.bytes;
 }
 
+function createSpilledSegment(manifest: SpillManifest): SpilledSegmentState {
+  const segment: SpilledSegmentState = {
+    streamId: manifest.streamId,
+    firstLineId: manifest.firstLineId!,
+    lastLineId: manifest.lastLineId!,
+    count: manifest.count,
+    bytes: manifest.bytes,
+  };
+  if (lineIdsAreContiguous(manifest.lineIds)) return segment;
+
+  const runs = lineIdsToRuns(manifest.lineIds);
+  if (runs && runs.length * 2 <= manifest.lineIds.length) {
+    segment.lineRuns = runs;
+  } else {
+    segment.lineIds = [...manifest.lineIds];
+  }
+  return segment;
+}
+
+function segmentRuns(segment: SpilledSegmentState): LineIdRun[] | undefined {
+  if (segment.lineRuns) return segment.lineRuns.map(run => ({ ...run }));
+  if (segment.lineIds) return lineIdsToRuns(segment.lineIds);
+  const range = spilledSegmentRange(segment);
+  return [
+    {
+      prefix: range.prefix,
+      start: range.start,
+      step: 1,
+      count: segment.count,
+    },
+  ];
+}
+
+function mergeRuns(previous: LineIdRun[], next: readonly LineIdRun[]): LineIdRun[] {
+  const merged = previous;
+  for (const run of next) {
+    const last = merged[merged.length - 1];
+    const contiguous =
+      last !== undefined &&
+      last.prefix === run.prefix &&
+      last.start + last.step * last.count === run.start;
+    if (contiguous && last!.step === run.step) {
+      last!.count += run.count;
+    } else if (contiguous && run.count === 1) {
+      last!.count++;
+    } else if (
+      last?.count === 1 &&
+      last.prefix === run.prefix &&
+      last.start + run.step === run.start
+    ) {
+      last.step = run.step;
+      last.count = run.count + 1;
+    } else {
+      merged.push({ ...run });
+    }
+  }
+  return merged;
+}
+
 function materializeSegmentLineIds(segment: SpilledSegmentState): LineId[] {
+  if (segment.lineIds) return [...segment.lineIds];
+  if (segment.lineRuns) {
+    return segmentLineIdsSlice(segment, 0, segment.count);
+  }
   const range = spilledSegmentRange(segment);
   return Array.from(
     { length: segment.count },
     (_, index) => `${range.prefix}${range.start + index}`
   );
+}
+
+function segmentLineIdsSlice(
+  segment: SpilledSegmentState,
+  start: number,
+  count: number
+): LineId[] {
+  if (segment.lineIds) return segment.lineIds.slice(start, start + count);
+  if (segment.lineRuns) return sliceRuns(segment.lineRuns, start, count);
+
+  const range = spilledSegmentRange(segment);
+  return Array.from(
+    { length: count },
+    (_, index) => `${range.prefix}${range.start + start + index}`
+  );
+}
+
+function sliceRuns(
+  runs: readonly LineIdRun[],
+  start: number,
+  count: number
+): LineId[] {
+  const lineIds: LineId[] = [];
+  let skip = start;
+  for (const run of runs) {
+    if (skip >= run.count) {
+      skip -= run.count;
+      continue;
+    }
+    const runOffset = skip;
+    const take = Math.min(count - lineIds.length, run.count - runOffset);
+    for (let index = 0; index < take; index++) {
+      lineIds.push(
+        `${run.prefix}${run.start + (runOffset + index) * run.step}`
+      );
+    }
+    skip = 0;
+    if (lineIds.length === count) break;
+  }
+  return lineIds;
+}
+
+function lineIdsToRuns(lineIds: readonly LineId[]): LineIdRun[] | undefined {
+  const parsed = lineIds.map(parseSequentialLineId);
+  if (parsed.some(value => value === undefined)) return undefined;
+
+  const runs: LineIdRun[] = [];
+  let index = 0;
+  while (index < parsed.length) {
+    const first = parsed[index]!;
+    const second = parsed[index + 1];
+    if (!second || second.prefix !== first.prefix) {
+      runs.push({ prefix: first.prefix, start: first.number, step: 1, count: 1 });
+      index++;
+      continue;
+    }
+
+    const step = second.number - first.number;
+    if (step <= 0) {
+      runs.push({ prefix: first.prefix, start: first.number, step: 1, count: 1 });
+      index++;
+      continue;
+    }
+
+    let end = index + 2;
+    while (end < parsed.length) {
+      const before = parsed[end - 1]!;
+      const current = parsed[end]!;
+      if (
+        current.prefix !== first.prefix ||
+        current.number - before.number !== step
+      ) {
+        break;
+      }
+      end++;
+    }
+    runs.push({
+      prefix: first.prefix,
+      start: first.number,
+      step,
+      count: end - index,
+    });
+    index = end;
+  }
+  return runs;
 }
 
 function rangesAreAdjacent(
@@ -679,6 +831,23 @@ function lineIdsAreContiguous(lineIds: readonly LineId[]): boolean {
     if (lineIds[index] !== `${first.prefix}${first.number + index}`) return false;
   }
   return true;
+}
+
+function runsContainLineId(
+  runs: readonly LineIdRun[],
+  lineId: LineId
+): boolean {
+  const parsed = parseSequentialLineId(lineId);
+  if (!parsed) return false;
+  return runs.some(run => {
+    if (run.prefix !== parsed.prefix) return false;
+    const distance = parsed.number - run.start;
+    return (
+      distance >= 0 &&
+      distance < run.step * run.count &&
+      distance % run.step === 0
+    );
+  });
 }
 
 function parseSequentialLineId(
