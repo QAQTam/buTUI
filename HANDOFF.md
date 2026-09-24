@@ -2,8 +2,8 @@
 
 > 交接时间：2026-09-24  
 > 仓库：`/home/qaqtamsy/项目/buTUI`  
-> 功能基线提交：`2ac85a7 feat(mouse): hover、双击与指针捕获`
-> 工作区状态：鼠标交互增强提交处干净
+> 功能基线提交：`cec2441 feat(mouse): 本地坐标与 drag 生命周期`
+> 工作区状态：鼠标本地坐标 / drag 提交处干净
 > 本轮能力：鼠标本地坐标 + drag 生命周期
 > 当前回归：`545 pass / 0 fail`，`tsc --noEmit` 通过
 
