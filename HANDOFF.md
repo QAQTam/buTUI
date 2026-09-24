@@ -4,8 +4,8 @@
 > 仓库：`/home/qaqtamsy/项目/buTUI`  
 > 功能基线提交：`2ac85a7 feat(mouse): hover、双击与指针捕获`
 > 工作区状态：鼠标交互增强提交处干净
-> 本轮能力：鼠标 hover / 双击 / 右键 / pointer capture
-> 当前回归：`543 pass / 0 fail`，`tsc --noEmit` 通过
+> 本轮能力：鼠标本地坐标 + drag 生命周期
+> 当前回归：`545 pass / 0 fail`，`tsc --noEmit` 通过
 
 ## 1. 项目定位
 
@@ -295,7 +295,10 @@ const bar = createScrollBar({
 - 原生事件：press / release / move / wheel（SGR 1006）。
 - runtime hit test → 节点冒泡；`onMouseDown/Up/Move/Click/Wheel`。
 - 新增合成 `onMouseEnter` / `onMouseLeave`，只在命中节点变化时触发且不冒泡。
+- 新增 `localX` / `localY`：相对目标节点左上角，捕获 / drag 可为负。
 - 新增 `clickCount`、`onDoubleClick`、`onContextMenu`（右键）。
+- 新增 `onDragStart` / `onDrag` / `onDragEnd`，超过 `dragThreshold` 后触发，
+  target 固定为按下节点。
 - `mouseMotion: "hover"` 开启 1003；默认 `"drag"`。
 - `app.captureMouse(node)` / `releaseMouse()` / `capturedMouse()`；Solid 提供
   `useMouseCapture()`。release 自动解除捕获。
@@ -376,7 +379,7 @@ bridge、真实 tool event 对接或 bugent 快捷键迁移。
 当前：
 
 ```text
-543 pass / 0 fail
+545 pass / 0 fail
 54 test files
 tsc --noEmit pass
 ```
@@ -412,8 +415,8 @@ git diff --check
 
 - 插件已有 manifest / 配置 / 直接依赖发现 / capability 门控；无运行时沙箱 /
   权限审批 / 跨进程隔离。
-- 鼠标已有 hover / 双击 / 右键 / pointer capture；无 pointerId、多指针、
-  dragstart/dragend、localX/localY、OSC 22 指针形状。
+- 鼠标已有 hover / 双击 / 右键 / pointer capture / local 坐标 / drag 生命周期；
+  无 pointerId、多指针、OSC 22 指针形状、惯性。
 - Keymap 只有单键；无多键 chord、前缀超时、用户自定义绑定持久化。
 - Diff 没有 word-level diff、任意位置删除、hunk 折叠、“滚开后有新行”提示。
 - ScrollBar 只有垂直轴；无自动隐藏、hover 展开、水平轴、惯性。
@@ -429,8 +432,8 @@ git diff --check
 
 按通用 TUI 收益排序：
 
-1. **鼠标坐标 / 手势扩展**：`localX/localY`、dragstart/dragend、pointerId、
-   OSC 22 指针形状，以及 ScrollBar / slider 的跨区域拖动。
+1. **鼠标组件适配**：把 `localX/localY + drag` 接进 ScrollBar / slider / split
+   pane；再考虑 OSC 22 指针形状与惯性。
 2. **Keymap 扩展**：多键 chord、前缀超时、用户自定义绑定持久化、Command Palette。
 3. **插件运行时约束 / 审批**：capability 目前只是 import 前门控，下一步做权限
    审批 UI 或 worker 隔离。

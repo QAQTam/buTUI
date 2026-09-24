@@ -7,7 +7,7 @@
 分支式 Undo + WebUI remote attach + 图片子系统（Kitty / iTerm2 / Sixel /
 半块 / 占位符）+ Artifact Canvas + 列表 / 虚拟列表 / 滚动视口 / 弹窗 / 表格 /
 树 + 鼠标选区 / OSC 52 + 流式 Diff / 共享动画时钟 / 精确 ScrollBar +
-通用插件 / Slot / Keymap / 鼠标交互已跑通**，`bun test` 543 个用例全绿。
+通用插件 / Slot / Keymap / 鼠标交互已跑通**，`bun test` 545 个用例全绿。
 
 ```
 应用（你的 agent / 工具 / TUI）
@@ -128,14 +128,21 @@ createTuiApp({
   onContextMenu={event => menu(event)}
   onMouseEnter={() => hover(true)}
   onMouseLeave={() => hover(false)}
+  onDragStart={event => beginDrag(event)}
+  onDrag={event => updateDrag(event.localX, event.localY)}
+  onDragEnd={event => finishDrag(event)}
   onWheel={event => scroll(event.wheel)}
 />
 ```
 
 - `press / release / move / wheel` 来自终端真实事件。
+- `localX / localY` 是相对目标节点左上角的坐标；捕获 / drag 时允许为负或
+  超出节点尺寸。
 - `clickCount` 由 runtime 按时间 + 坐标合成；第二击派发 `onDoubleClick`。
 - 右键 press 优先派发 `onContextMenu`，没有 handler 时回退 `onMouseDown`。
 - `onMouseEnter / onMouseLeave` 是合成事件，只在命中节点变化时触发且不冒泡。
+- `onDragStart / onDrag / onDragEnd` 在左键移动超过 `dragThreshold` 后触发，
+  target 固定为按下时的节点；默认阈值 1 cell。
 - `mouseMotion: "hover"` 会开启终端 1003，允许无按键移动触发 hover；
   默认 `"drag"` 只上报按键拖动，事件量更低。
 - `app.captureMouse(node)` 让拖拽在指针移出目标后继续收到 `move`，

@@ -519,20 +519,28 @@ keymap.bindCommand(
   onMouseUp={() => app.releaseMouse()}
   onDoubleClick={() => open()}
   onContextMenu={() => menu()}
+  onDragStart={event => begin(event)}
+  onDrag={event => update(event.localX, event.localY)}
+  onDragEnd={event => end(event)}
 />
 ```
 
-- `MouseEvent.action` 支持 `press / release / move / wheel / enter / leave`。
+- `MouseEvent.action` 支持
+  `press / release / move / wheel / enter / leave / dragstart / drag / dragend`。
+- `localX / localY` 是相对目标节点左上角的坐标；捕获 / drag 时允许为负或
+  超出节点尺寸。
 - `clickCount` 由 runtime 合成；默认双击间隔 400ms，可用 `mouse.doubleClickMs`
   和 `mouse.now` 覆盖 / 注入。
 - 右键 press 优先 `onContextMenu`；双击优先 `onDoubleClick`，没有对应 handler
   时回退 `onClick`。
 - `onMouseEnter / onMouseLeave` 不冒泡；默认 `mouseMotion: "drag"` 下不会产生
   无按键 hover，需要传 `"hover"` 开启终端 1003。
+- `onDragStart / onDrag / onDragEnd` 在移动超过 `mouse.dragThreshold` 后触发；
+  target 固定为按下节点，release 时结束。
 - `captureMouse(node)` 后鼠标事件发给捕获节点，release 自动解除；组件使用
   `useMouseCapture()`。
 - 文本选择默认接管左键拖拽；控件用 `selectable={false}` 退出竞争。
-- 当前没有 pointerId / 多指针 / dragstart / localX/localY / 指针形状。
+- 当前没有 pointerId / 多指针 / OSC 22 指针形状 / 惯性。
 
 ## 5. 已知缺口（不要依赖，也不建议自己绕）
 
@@ -558,8 +566,8 @@ keymap.bindCommand(
 - **没有布局调试工具**（类似 flexbox inspector）。
 - **焦点不会自动清理**：被移除的节点如果还是焦点，`focusedId()` 会保留它的
   id（下一次 tab 会自动跳到活着的节点）。组件里用 `isFocused` 不受影响。
-- **鼠标没有 pointerId / 本地坐标 / drag 事件**：hover 默认关闭（1003 事件量高）；
-  没有 OSC 22 指针形状、多指针或惯性滚动。
+- **鼠标没有 pointerId / 多指针 / OSC 22 指针形状 / 惯性**：hover 默认关闭
+  （1003 事件量高）；跨终端窗口的 capture 不在协议范围内。
 - **Keymap 只有单键**：多键 chord、超时前缀状态机和 Command Palette UI 还没做；
   当前 keymap 也不持久化用户自定义绑定。
 - **插件 capability 不是沙箱**：它只在动态 import 前做同意门控，没有运行时

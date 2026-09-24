@@ -120,6 +120,67 @@ describe("mouse interaction", () => {
     expect(app.capturedMouse()).toBeUndefined();
     app.dispose();
   });
+
+  test("localX / localY 相对目标节点，捕获后允许为负数", () => {
+    const terminal = new FakeTerminal();
+    const coords: string[] = [];
+    const app = createTuiApp({
+      terminal,
+      size: { columns: 20, rows: 3 },
+      selection: false,
+      onQuit: () => {},
+      view: () => <LocalTarget onCoords={value => coords.push(value)} />,
+    });
+
+    app.send(mouse("press", 3, 1));
+    app.send(mouse("move", 10, 1));
+    app.send(mouse("move", 0, 0));
+    app.send(mouse("release", 0, 0));
+
+    expect(coords).toEqual([
+      "down:1,0",
+      "move:8,0",
+      "move:-2,-1",
+      "up:-2,-1",
+    ]);
+    app.dispose();
+  });
+
+  test("dragstart / drag / dragend 按阈值触发并携带本地坐标", () => {
+    const terminal = new FakeTerminal();
+    const calls: string[] = [];
+    const app = createTuiApp({
+      terminal,
+      size: { columns: 20, rows: 2 },
+      selection: false,
+      mouse: { dragThreshold: 2 },
+      onQuit: () => {},
+      view: () => (
+        <box
+          width={10}
+          height={1}
+          selectable={false}
+          onDragStart={event => calls.push(`start:${event.localX},${event.localY}`)}
+          onDrag={event => calls.push(`drag:${event.localX},${event.localY}`)}
+          onDragEnd={event => calls.push(`end:${event.localX},${event.localY}`)}
+        />
+      ),
+    });
+
+    app.send(mouse("press", 0, 0));
+    app.send(mouse("move", 1, 0));
+    app.send(mouse("move", 2, 0));
+    app.send(mouse("move", 5, 0));
+    app.send(mouse("release", 5, 0));
+
+    expect(calls).toEqual([
+      "start:2,0",
+      "drag:2,0",
+      "drag:5,0",
+      "end:5,0",
+    ]);
+    app.dispose();
+  });
 });
 
 function Draggable(props: { onEvent: (event: string) => void }) {
@@ -143,5 +204,37 @@ function Draggable(props: { onEvent: (event: string) => void }) {
         capture?.release();
       }}
     />
+  );
+}
+
+function LocalTarget(props: { onCoords: (value: string) => void }) {
+  const [node, setNode] = createSignal<Node>();
+  const capture = useMouseCapture();
+
+  return (
+    <box>
+      <box height={1} />
+      <row>
+        <box width={2} height={1} />
+        <box
+          ref={setNode}
+          width={5}
+          height={1}
+          selectable={false}
+          onMouseDown={event => {
+            props.onCoords(`down:${event.localX},${event.localY}`);
+            const current = node();
+            if (current) capture?.capture(current);
+          }}
+          onMouseMove={event =>
+            props.onCoords(`move:${event.localX},${event.localY}`)
+          }
+          onMouseUp={event => {
+            props.onCoords(`up:${event.localX},${event.localY}`);
+            capture?.release();
+          }}
+        />
+      </row>
+    </box>
   );
 }

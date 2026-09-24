@@ -27,6 +27,12 @@ export function handlerName(event: ButuiEvent): string {
           return "onMouseEnter";
         case "leave":
           return "onMouseLeave";
+        case "dragstart":
+          return "onDragStart";
+        case "drag":
+          return "onDrag";
+        case "dragend":
+          return "onDragEnd";
       }
     case "paste":
       return "onPaste";

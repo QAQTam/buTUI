@@ -11,12 +11,13 @@ function Slider() {
   const [node, setNode] = createSignal<Node>();
   const capture = useMouseCapture();
 
-  const begin = (): void => {
+  const begin = (event: MouseEvent): void => {
     const current = node();
     if (current) capture?.capture(current);
+    setSlider(Math.max(0, Math.min(30, event.localX ?? 0)));
   };
   const drag = (event: MouseEvent): void => {
-    setSlider(Math.max(0, Math.min(30, event.x - 2)));
+    setSlider(Math.max(0, Math.min(30, event.localX ?? 0)));
   };
   const end = (): void => capture?.release();
 
@@ -27,7 +28,7 @@ function Slider() {
       height={1}
       selectable={false}
       onMouseDown={begin}
-      onMouseMove={drag}
+      onDrag={drag}
       onMouseUp={end}
     >
       <text>{`slider [${"#".repeat(slider())}${".".repeat(30 - slider())}]`}</text>

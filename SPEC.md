@@ -927,6 +927,9 @@ test 后向目标节点冒泡。
 - `onDoubleClick`：runtime 按时间 + 坐标 + 节点 + button 合成 `clickCount: 2`
 - `onContextMenu`：右键 press 优先派发
 - `onMouseEnter` / `onMouseLeave`：合成事件，只在命中节点变化时触发且不冒泡
+- `onDragStart` / `onDrag` / `onDragEnd`：左键移动超过 `dragThreshold` 后触发，
+  target 固定为按下时节点；默认阈值 1 cell
+- `localX` / `localY`：相对目标节点左上角；捕获 / drag 时允许为负或超出尺寸
 
 hover 需要终端持续上报无按键移动，因此 `mouseMotion` 有两个模式：
 
@@ -950,8 +953,7 @@ move」的问题，slider / split pane 等可以据此实现。
 文本选择仍默认接管左键拖拽；控件用 `selectable={false}` 退出选择竞争。
 
 **已知边界：** 还没有 DOM 式 pointerId / 多指针、hover 的 `mouseover/out`
-冒泡语义、dragstart/dragend 事件、鼠标指针形状（OSC 22）和本地坐标
-（`localX/localY`）。
+冒泡语义、鼠标指针形状（OSC 22）、拖动惯性和跨终端窗口的 capture。
 
 ---
 

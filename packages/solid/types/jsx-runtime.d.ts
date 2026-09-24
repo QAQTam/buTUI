@@ -77,6 +77,9 @@ export namespace JSX {
     onClick?: (event: BtnMouseEvent) => void;
     onDoubleClick?: (event: BtnMouseEvent) => void;
     onContextMenu?: (event: BtnMouseEvent) => void;
+    onDragStart?: (event: BtnMouseEvent) => void;
+    onDrag?: (event: BtnMouseEvent) => void;
+    onDragEnd?: (event: BtnMouseEvent) => void;
     onKey?: (event: KeyEvent) => void;
     onPaste?: (event: PasteEvent) => void;
     onWheel?: (event: BtnMouseEvent) => void;
@@ -114,6 +117,9 @@ export namespace JSX {
     onClick?: (event: BtnMouseEvent) => void;
     onDoubleClick?: (event: BtnMouseEvent) => void;
     onContextMenu?: (event: BtnMouseEvent) => void;
+    onDragStart?: (event: BtnMouseEvent) => void;
+    onDrag?: (event: BtnMouseEvent) => void;
+    onDragEnd?: (event: BtnMouseEvent) => void;
     /**
      * 交互属性与 `BoxProps` 对齐。
      *

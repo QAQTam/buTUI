@@ -34,7 +34,16 @@ export type WheelDirection = "up" | "down" | "left" | "right";
 
 export interface MouseEvent {
   type: "mouse";
-  action: "press" | "release" | "move" | "wheel" | "enter" | "leave";
+  action:
+    | "press"
+    | "release"
+    | "move"
+    | "wheel"
+    | "enter"
+    | "leave"
+    | "dragstart"
+    | "drag"
+    | "dragend";
   button: "left" | "middle" | "right" | "none";
   /**
    * 同一位置的连续点击次数。
@@ -53,6 +62,14 @@ export interface MouseEvent {
   /** 屏幕坐标（0-based，cell 单位） */
   x: number;
   y: number;
+  /**
+   * 相对事件目标节点左上角的坐标。
+   *
+   * 捕获 / drag 时可以是负数或超过节点尺寸 —— 这正是判断拖出边界所需的
+   * 信息。目标节点不在当前 frame 时字段为 undefined。
+   */
+  localX?: number;
+  localY?: number;
   modifiers: KeyModifiers;
   target?: Node;
   /** 语义标识：`message:<id>` / `tool:<callId>` / `checkpoint:<id>`（SPEC §4.2） */

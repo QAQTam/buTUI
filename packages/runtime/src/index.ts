@@ -90,8 +90,17 @@ export interface TextSelectionOptions {
 export interface MouseOptions {
   /** 双击最大间隔（毫秒），默认 400。 */
   doubleClickMs?: number;
+  /** 超过多少 cell 才算 drag，默认 1。 */
+  dragThreshold?: number;
   /** 注入时钟；测试用。 */
   now?: () => number;
+}
+
+interface MouseBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 }
 
 export interface TuiAppOptions {
@@ -252,8 +261,18 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
   let lastMousePress:
     | { nodeId?: number; button: MouseEvent["button"]; x: number; y: number; time: number }
     | undefined;
+  let pressedMouse:
+    | {
+        target: Node;
+        x: number;
+        y: number;
+        started: boolean;
+      }
+    | undefined;
   const mouseNow = options.mouse?.now ?? Date.now;
   const doubleClickMs = options.mouse?.doubleClickMs ?? 400;
+  const dragThreshold = Math.max(0, options.mouse?.dragThreshold ?? 1);
+  const frameBounds = new WeakMap<Frame, Map<number, MouseBounds>>();
 
   const selectionAllowed = (): boolean =>
     selectionOptions !== undefined && (selectionOptions.enabled?.() ?? true);
@@ -446,22 +465,79 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
     return clickCount;
   };
 
-  const dispatchHover = (
-    action: "enter" | "leave",
+  const boundsOf = (node: Node | undefined): MouseBounds | undefined => {
+    if (!node) return undefined;
+    const frame = computeFrame();
+    let cache = frameBounds.get(frame);
+    if (!cache) {
+      cache = new Map();
+      frameBounds.set(frame, cache);
+    }
+    const cached = cache.get(node.id);
+    if (cached) return cached;
+
+    let left = Number.POSITIVE_INFINITY;
+    let top = Number.POSITIVE_INFINITY;
+    let right = -1;
+    let bottom = -1;
+    for (let y = 0; y < frame.lines.length; y++) {
+      const line = frame.lines[y]!;
+      for (let x = 0; x < line.length; x++) {
+        const cell = line[x]!;
+        if (cell.node !== node.id || cell.width === 0) continue;
+        if (x < left) left = x;
+        if (y < top) top = y;
+        if (x + cell.width > right) right = x + cell.width;
+        if (y + 1 > bottom) bottom = y + 1;
+      }
+    }
+    if (right < 0 || bottom < 0) return undefined;
+    const bounds = { x: left, y: top, width: right - left, height: bottom - top };
+    cache.set(node.id, bounds);
+    return bounds;
+  };
+
+  const applyLocalCoordinates = (
+    event: MouseEvent,
+    target: Node | undefined
+  ): void => {
+    const bounds = boundsOf(target);
+    if (!bounds) {
+      delete event.localX;
+      delete event.localY;
+      return;
+    }
+    event.localX = event.x - bounds.x;
+    event.localY = event.y - bounds.y;
+  };
+
+  const dispatchSyntheticMouse = (
+    action: MouseEvent["action"],
     target: Node | undefined,
-    source: MouseEvent
-  ): number => {
-    if (!target) return 0;
+    source: MouseEvent,
+    options: { button?: MouseEvent["button"]; bubble?: boolean } = {}
+  ): { delivered: number; event?: MouseEvent } => {
+    if (!target) return { delivered: 0 };
     const event = eventTarget({
       type: "mouse" as const,
       action,
-      button: "none" as const,
+      button: options.button ?? "none",
       x: source.x,
       y: source.y,
       modifiers: source.modifiers,
     }) as MouseEvent;
-    return dispatchEvent(target, event, { bubble: false });
+    applyLocalCoordinates(event, target);
+    const delivered = dispatchEvent(target, event, {
+      bubble: options.bubble ?? false,
+    });
+    return { delivered, event };
   };
+
+  const dispatchHover = (
+    action: "enter" | "leave",
+    target: Node | undefined,
+    source: MouseEvent
+  ): number => dispatchSyntheticMouse(action, target, source).delivered;
 
   const updateMouseHover = (
     event: MouseEvent,
@@ -473,6 +549,56 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
     dispatchHover("leave", previous, event);
     dispatchHover("enter", target, event);
     requestPaint();
+  };
+
+  const beginMouseDrag = (
+    event: MouseEvent,
+    target: Node | undefined
+  ): void => {
+    if (event.button !== "left" || !target) return;
+    pressedMouse = {
+      target,
+      x: event.x,
+      y: event.y,
+      started: false,
+    };
+  };
+
+  const updateMouseDrag = (event: MouseEvent): number => {
+    if (!pressedMouse) return 0;
+    const distance = Math.max(
+      Math.abs(event.x - pressedMouse.x),
+      Math.abs(event.y - pressedMouse.y)
+    );
+    if (!pressedMouse.started && distance < dragThreshold) return 0;
+
+    const target = capturedMouseNode ?? pressedMouse.target;
+    let delivered = 0;
+    if (!pressedMouse.started) {
+      pressedMouse.started = true;
+      delivered += dispatchSyntheticMouse("dragstart", target, event, {
+        button: "left",
+        bubble: true,
+      }).delivered;
+    }
+    delivered += dispatchSyntheticMouse("drag", target, event, {
+      button: "left",
+      bubble: true,
+    }).delivered;
+    return delivered;
+  };
+
+  const endMouseDrag = (event: MouseEvent): number => {
+    if (!pressedMouse) return 0;
+    const target = capturedMouseNode ?? pressedMouse.target;
+    const delivered = pressedMouse.started
+      ? dispatchSyntheticMouse("dragend", target, event, {
+          button: "left",
+          bubble: true,
+        }).delivered
+      : 0;
+    pressedMouse = undefined;
+    return delivered;
   };
 
   /**
@@ -566,24 +692,42 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
     if (event.type === "mouse") {
       const hitTarget = nodeById(root, computeFrame().nodeAt(event.x, event.y));
       const target = capturedMouseNode ?? hitTarget;
+      applyLocalCoordinates(event, target);
       if (event.action === "press") {
+        endMouseDrag(event);
         event.clickCount = clickCountFor(event, target);
+        if (!capturedMouseNode && !selecting) updateMouseHover(event, hitTarget);
+        beginMouseDrag(event, target);
       }
       if (
         !capturedMouseNode &&
-        (event.action === "move" || event.action === "press") &&
+        !pressedMouse &&
+        event.action === "move" &&
         !selecting
       ) {
         updateMouseHover(event, hitTarget);
       }
+      const dragDelivered =
+        event.action === "move" ? updateMouseDrag(event) : 0;
       const selectionHandled = handleSelectionMouse(event, target);
       // move 由选择器消费；press / release 仍按普通 hit test 派发，
       // 保证点击组件和拖拽选择可以共存。
-      if (event.action === "move" && selectionHandled) return 1;
+      if (event.action === "move" && selectionHandled && dragDelivered === 0) {
+        return 1;
+      }
       const delivered = dispatchEvent(target, event);
-      if (delivered === 0) options.onMouse?.(event);
+      const dragEndDelivered =
+        event.action === "release" ? endMouseDrag(event) : 0;
+      if (delivered === 0 && dragDelivered === 0 && dragEndDelivered === 0) {
+        options.onMouse?.(event);
+      }
       if (event.action === "release" && capturedMouseNode) releaseMouse();
-      return delivered || (selectionHandled ? 1 : 0);
+      return (
+        delivered ||
+        dragDelivered ||
+        dragEndDelivered ||
+        (selectionHandled ? 1 : 0)
+      );
     }
 
     if (event.type === "paste") {
@@ -660,6 +804,9 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
   function stop(): void {
     if (!started) return;
     started = false;
+    pressedMouse = undefined;
+    hoveredMouseNode = undefined;
+    capturedMouseNode = undefined;
     for (const dispose of disposers.splice(0)) dispose();
     terminal.stop();
   }
