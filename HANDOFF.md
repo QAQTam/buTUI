@@ -3,9 +3,9 @@
 > 交接时间：2026-09-24
 > 仓库：`/home/qaqtamsy/项目/buTUI-v0.2-frontier`
 > 功能基线提交：`61d889b feat(components): add capability approval dialog`
-> 工作区状态：本文件与 Worker supervisor 一并提交
-> 本轮能力：worker RPC + capability proxy + restart supervision
-> 当前回归：`721 pass / 0 fail`，80 个测试文件，`tsc --noEmit` 通过
+> 工作区状态：本文件与 process transport 一并提交
+> 本轮能力：worker supervision + NDJSON process transport
+> 当前回归：`726 pass / 0 fail`，81 个测试文件，`tsc --noEmit` 通过
 
 ## 1. 项目定位
 
@@ -453,8 +453,11 @@ const bar = createScrollBar({
   cleanup fence 和 `error` / `messageerror` fail-fast；`serveWorkerCapabilities`
   在 host 侧把 method 绑定到 capability，并逐次检查 broker，revoke / TTL 立即生效。
   `createWorkerSupervisor` 提供 generation、自动重启预算、延迟、ready / restart /
-  dispose 和生命周期事件，并在每次重建时重新挂载 setup。Worker 只做崩溃 / 堆隔离，
-  不是 capability sandbox。
+  dispose 和生命周期事件，并在每次重建时重新挂载 setup。
+- Plugin process transport：`createNdjsonRpcEndpoint` / `attachProcessRpc` /
+  `createProcessStdioEndpoint` / `serveProcessRpc` 用 UTF-8 NDJSON 接 `Bun.spawn`
+  stdio，复用 RPC、capability proxy 和 supervisor；单帧默认上限 8 MiB。
+  Worker / process 只做崩溃和堆隔离，不是 capability 或 OS sandbox。
 
 关键实测：
 
@@ -581,8 +584,8 @@ bridge、真实 tool event 对接或 bugent 快捷键迁移。
 当前：
 
 ```text
-721 pass / 0 fail
-80 test files
+726 pass / 0 fail
+81 test files
 tsc --noEmit pass
 ```
 
@@ -602,6 +605,7 @@ tsc --noEmit pass
 - `tests/plugin-loader.test.ts`
 - `tests/worker-rpc.test.ts`
 - `tests/worker-supervisor.test.ts`
+- `tests/process-rpc.test.ts`
 - `tests/keymap.test.ts`
 - `tests/keymap-runtime.test.tsx`
 - `tests/command-palette.test.tsx`
@@ -631,7 +635,8 @@ git diff --check
 
 - 插件已有 manifest / 配置 / 直接依赖发现 / capability 白名单、运行时审批、
   approval queue / dialog、lease / TTL / revoke、Worker RPC、crash fail-fast、
-  capability proxy 和 restart supervision；仍无进程 adapter 与 OS sandbox。
+  capability proxy、restart supervision 与 NDJSON process transport；仍无进程
+  权限沙箱、heap / CPU 资源上限和协议版本握手。
 - 鼠标已有 hover / 双击 / 右键 / pointer capture / local 坐标 / drag 生命周期 /
   OSC 22 指针 / 拖动惯性；无 pointerId、多指针。惯性只接 ScrollBar / Slider。
 - Keymap 已有多键 chord / 前缀超时，Command Palette 已有基础 UI；无用户自定义
@@ -667,8 +672,8 @@ git diff --check
 3. **numeric index sidecar 生命周期**：1M 磁盘换出原型已完成；下一步由
    bugent 决定默认策略、目录清理和恢复语义。
 4. **插件 worker / 跨进程隔离**：审批队列、dialog、lease / TTL / revoke、
-   Worker RPC、crash fail-fast、capability proxy 与 restart supervision 已完成；
-   下一步做进程 adapter 和 OS sandbox 边界。
+   Worker RPC、crash fail-fast、capability proxy、restart supervision 与 NDJSON
+   process transport 已完成；下一步做协议握手、进程资源上限和 OS sandbox 边界。
 5. **Portal / Dynamic / Toast / Tooltip**：补齐 OpenTUI 已有的通用组件接口。
 6. **动画编排增强**：更复杂的 stagger、滚动回弹和动画调试工具。
 7. **WebUI diff / 水平 ScrollBar**：等真实需求出现后再做。
