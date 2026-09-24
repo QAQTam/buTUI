@@ -749,7 +749,8 @@ export class StreamLedger {
       0
     );
     const stableCount = spilledLines + stream.stableLines.length;
-    const totalLines = stableCount + stream.tailLines.length;
+    const tailSnapshot = stream.tailLines.map(line => ({ ...line }));
+    const totalLines = stableCount + tailSnapshot.length;
     const start = clampIndex(offset, totalLines);
     const requested = Number.isFinite(count)
       ? Math.max(0, Math.floor(count))
@@ -769,7 +770,7 @@ export class StreamLedger {
 
     const tailStart = Math.max(start, stableCount);
     for (let index = tailStart; index < end; index++) {
-      const line = stream.tailLines[index - stableCount]!;
+      const line = tailSnapshot[index - stableCount]!;
       lines.push({
         id: line.id,
         text: line.text,

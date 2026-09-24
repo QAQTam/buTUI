@@ -89,6 +89,17 @@ describe("StreamLedger", () => {
     expect(tail.lines.map(line => line.volatile === true)).toEqual([false, true]);
   });
 
+  test("readWindow 与并发 append 交错时不会丢失 tail 快照", async () => {
+    const streams = ledger();
+    streams.apply(envelope(1, { type: "append", delta: "a\nb\nc" }));
+
+    const reading = streams.readWindow("stream-1", 0, 10);
+    streams.apply(envelope(2, { type: "append", delta: "\nd" }));
+    const window = await reading;
+
+    expect(window.lines.map(line => line.text)).toEqual(["a", "b", "c"]);
+  });
+
   test("重复 seq 幂等，同 seq 不同 op 冲突，缺口显式拒绝", () => {
     const streams = ledger();
     const first = envelope(1, { type: "append", delta: "a" });
