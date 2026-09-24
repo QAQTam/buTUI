@@ -13,7 +13,7 @@
  * 3. **垂直滚动由光标驱动**：光标跑出视口才动窗口，和 `<List>` 的跟随策略
  *    一致（用户手动滚开不会被弹回来）。
  */
-import { type KeyEvent, type Node } from "@butui/core";
+import { type KeyEvent, type MousePointerStyle, type Node } from "@butui/core";
 import { useFocus, useFocusScope } from "@butui/solid";
 import type { JSX } from "@butui/solid/jsx-runtime";
 import { Show, createEffect, createMemo, createSignal } from "solid-js";
@@ -97,7 +97,10 @@ export interface TextareaProps {
   placeholderColor?: string;
   /** bar 光标用这个字符（默认 `▏`）；block 反显当前字符 */
   cursorChar?: string;
+  /** 文本光标绘制方式（bar / block），不是鼠标指针 */
   cursorStyle?: "bar" | "block";
+  /** OSC 22 鼠标指针形状，默认 `text` */
+  cursor?: MousePointerStyle;
   focusColor?: string;
   /** 左侧行号 */
   lineNumbers?: boolean;
@@ -189,6 +192,7 @@ export function Textarea(props: TextareaProps) {
         props.ref?.(node);
       }}
       focusable
+      cursor={props.cursor ?? "text"}
       semantic={props.semantic ?? "textarea"}
       onKey={(event: KeyEvent) => {
         if (props.onKey?.(event) === true) return;

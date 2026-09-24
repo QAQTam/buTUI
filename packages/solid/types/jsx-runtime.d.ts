@@ -13,6 +13,7 @@ import type {
   FocusEvent as BtnFocusEvent,
   KeyEvent,
   MouseEvent as BtnMouseEvent,
+  MousePointerStyle,
   PasteEvent,
 } from "@butui/core";
 
@@ -68,6 +69,8 @@ export namespace JSX {
     disabled?: boolean;
     /** false = 鼠标文本选择不从这个节点 / 子树启动（scrollbar、控件用） */
     selectable?: boolean;
+    /** OSC 22 鼠标指针形状；`auto` 根据节点交互能力决定 */
+    cursor?: MousePointerStyle;
     semantic?: Semantic;
     onMouseDown?: (event: BtnMouseEvent) => void;
     onMouseUp?: (event: BtnMouseEvent) => void;
@@ -129,6 +132,8 @@ export namespace JSX {
     focusable?: boolean;
     disabled?: boolean;
     selectable?: boolean;
+    /** OSC 22 鼠标指针形状；`auto` 根据节点交互能力决定 */
+    cursor?: MousePointerStyle;
     onKey?: (event: KeyEvent) => void;
     onFocus?: (event: BtnFocusEvent) => void;
     onBlur?: (event: BtnFocusEvent) => void;

@@ -35,7 +35,7 @@ const app = createTuiApp({
 | JSX 与编译 | `@butui/solid` | **稳定**（含 `useAnimationFrame` / `AnimationScheduler`） |
 | 布局 | `@butui/layout` | **稳定**（`Cell` / `Line` / `Frame` / `layout`） |
 | 渲染 | `@butui/renderer` | **稳定**（`Renderer` / `plainText` / `paintLine`） |
-| 终端 | `@butui/terminal` | **稳定**（`TerminalSession` / 输入解码 / 能力探测） |
+| 终端 | `@butui/terminal` | **稳定**（`TerminalSession` / 输入解码 / 能力探测 / `osc22` / `osc52`） |
 | 基础组件 | `@butui/components` | **稳定**（编辑器 / 选择 / 列表 / 滚动 / ScrollBar / Slider / SplitPane / Diff / 弹窗 / 展示组件） |
 | 插件 / Slot | `@butui/plugins` | **稳定**（`Plugin` / `SlotRegistry`；Solid 适配在 `@butui/plugins/solid`；loader 在 `@butui/plugins/loader`） |
 | 命令 / Keymap | `@butui/keymap` | **稳定**（`CommandRegistry` / `Keymap`；Solid 适配在 `@butui/keymap/solid`） |
@@ -539,8 +539,13 @@ keymap.bindCommand(
   target 固定为按下节点，release 时结束。
 - `captureMouse(node)` 后鼠标事件发给捕获节点，release 自动解除；组件使用
   `useMouseCapture()`。
+- 节点 `cursor?: MousePointerStyle` 通过 OSC 22 切换鼠标指针；未声明时，
+  `onClick` / `onMouseDown` 等交互链自动使用 `pointer`。
+- 相同形状去重；capture 期间保持捕获节点形状，release / stop / dispose 恢复
+  `default`。`mousePointer: false` 可关闭，终端不支持时忽略。
+- `<Input>` / `<Textarea>` 默认 `cursor="text"`。
 - 文本选择默认接管左键拖拽；控件用 `selectable={false}` 退出竞争。
-- 当前没有 pointerId / 多指针 / OSC 22 指针形状 / 惯性。
+- 当前没有 pointerId / 多指针 / 惯性。
 
 ### 4.22 Slider：`createSlider` / `<Slider>`
 
@@ -613,8 +618,8 @@ const split = createSplitPane({
 - **没有布局调试工具**（类似 flexbox inspector）。
 - **焦点不会自动清理**：被移除的节点如果还是焦点，`focusedId()` 会保留它的
   id（下一次 tab 会自动跳到活着的节点）。组件里用 `isFocused` 不受影响。
-- **鼠标没有 pointerId / 多指针 / OSC 22 指针形状 / 惯性**：hover 默认关闭
-  （1003 事件量高）；跨终端窗口的 capture 不在协议范围内。
+- **鼠标没有 pointerId / 多指针 / 惯性**：hover 默认关闭（1003 事件量高）；
+  OSC 22 是 best-effort，终端可忽略；跨终端窗口的 capture 不在协议范围内。
 - **Keymap 只有单键**：多键 chord、超时前缀状态机和 Command Palette UI 还没做；
   当前 keymap 也不持久化用户自定义绑定。
 - **插件 capability 不是沙箱**：它只在动态 import 前做同意门控，没有运行时

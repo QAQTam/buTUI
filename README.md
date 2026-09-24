@@ -7,8 +7,8 @@
 分支式 Undo + WebUI remote attach + 图片子系统（Kitty / iTerm2 / Sixel /
 半块 / 占位符）+ Artifact Canvas + 列表 / 虚拟列表 / 滚动视口 / 弹窗 / 表格 /
 树 + 鼠标选区 / OSC 52 + 流式 Diff / 共享动画时钟 / 精确 ScrollBar +
-通用插件 / Slot / Keymap / 鼠标交互 / Slider / SplitPane 已跑通**，`bun test`
-558 个用例全绿。
+通用插件 / Slot / Keymap / 鼠标交互 / OSC 22 指针 / Slider / SplitPane 已跑通**，
+`bun test` 567 个用例全绿。
 
 ```
 应用（你的 agent / 工具 / TUI）
@@ -148,7 +148,24 @@ createTuiApp({
   默认 `"drag"` 只上报按键拖动，事件量更低。
 - `app.captureMouse(node)` 让拖拽在指针移出目标后继续收到 `move`，
   release 时自动解除；组件里用 `useMouseCapture()`。
+- `cursor="pointer"` / `"text"` / `"grab"` 等通过 OSC 22 切换鼠标指针；
+  未声明时可点击节点自动使用 `pointer`。
 - 文本选择默认开启；控件声明 `selectable={false}` 可退出选择竞争。
+
+```tsx
+<box cursor="pointer" onClick={() => open()}>打开</box>
+<Input editor={editor} cursor="text" />
+
+createTuiApp({
+  mouseMotion: "hover", // 无按键移动时也能更新指针
+  mousePointer: true,   // 默认；false 可完全关闭 OSC 22
+  view: () => <App />,
+});
+```
+
+`cursor` 的可用值与 CSS / OpenTUI 对齐；终端不支持 OSC 22 时会忽略。应用
+退出时会恢复 `default`。默认 `mouseMotion: "drag"` 仍会在 press / drag 时更新，
+但只有 `"hover"` 才能在未按键移动时切换。
 
 `bun --conditions=browser run scripts/mouse-demo.tsx` 可直接试 hover、双击、
 右键和跨区域拖动。
@@ -837,7 +854,7 @@ Demo 的工作区是**内存实现**，但走的是完全一样的 journal / dif
 |---|---|
 | `@butui/core` | 节点树、`rev` 失效传播、`childrenRevSum`、focus、事件冒泡、theme、ANSI 解析 |
 | `@butui/solid` | `@solidjs/universal` host ops、JSX 类型、Bun 编译插件、共享动画帧时钟、`useMouseCapture` |
-| `@butui/runtime` | `createTuiApp`：终端、合帧重绘、事件分发、鼠标选区 / OSC 52 —— 应用作者的唯一入口 |
+| `@butui/runtime` | `createTuiApp`：终端、合帧重绘、事件分发、鼠标选区 / OSC 52 / OSC 22 指针 —— 应用作者的唯一入口 |
 | `@butui/components` | `createTextEditor` / `<Input>` / `<Textarea>` / `<Markdown>` / `<Code>` / `<Diff>` / `<ScrollBar>` / `<Slider>` / `<SplitPane>`、`createSelection` / `<List>` / `<VirtualList>`、`createScrollView`、`<Select>` / `<Tabs>` / `<Table>` / `<Tree>`、`<Button>` / `<Dialog>` / `<Modal>`、`ProgressBar` / `Spinner` / `Badge` / `Divider` / `KeyHint` |
 | `@butui/plugins` | 通用 `SlotRegistry` / `Plugin` / 错误隔离；`@butui/plugins/solid` 提供 `createSlot` / `<Slot>`；`@butui/plugins/loader` 提供 manifest / 配置 / 动态加载 / 自动发现 / capability 门控 |
 | `@butui/keymap` | `CommandRegistry` / `createKeymap`：scope、priority、when、冲突检测、help；Solid 适配 `useKeymap` |
@@ -848,7 +865,7 @@ Demo 的工作区是**内存实现**，但走的是完全一样的 journal / dif
 | `@butui/image` | 协议探测、PNG 编解码、Kitty/iTerm2/Sixel/半块/占位符、安全加载、图形图层 |
 | `@butui/layout` | flex 子集 → cell 网格，带 `frozen` 的增量合成、视口窗口、选区提取 |
 | `@butui/renderer` | cell → ANSI，逐行差分 + SGR / 选区状态机 |
-| `@butui/terminal` | raw mode、备用屏、输入解码、能力探测、OSC 52 |
+| `@butui/terminal` | raw mode、备用屏、输入解码、能力探测、OSC 52 / OSC 22 |
 | `@butui/test` | headless render、快照、事件注入 |
 
 ## 必须知道的坑
@@ -1015,9 +1032,9 @@ Bun.plugin(onLoad)
 - Keymap 只有单键，多键 chord / 超时状态机未做；Command Palette UI 也还没包
 - 插件已有 manifest / 配置 / 直接依赖自动发现 / 加载前 capability 门控；
   还缺运行时沙箱、权限审批 UI 与跨进程隔离
-- `@butui/components` 继续长：ASCIIFont / LineNumberRenderable、
-  水平 ScrollBar 等；CommandPalette 用 `<Input onKey={e => sel.handleKey(e)}>`
-  + `<List>` 组合就够，不必再包一层
+- `@butui/components` 继续长：ASCIIFont / LineNumberRenderable 等按真实场景
+  增补，不追求 OpenTUI feature parity；CommandPalette 用
+  `<Input onKey={e => sel.handleKey(e)}>` + `<List>` 组合就够，不必再包一层
 - 编辑器模型还缺内部选区 / 剪贴板历史 / 撤销栈（全局鼠标选区已由 runtime 提供）；
   列表只支持单列 + 固定行高
 - Artifact Canvas：artifact 的持久化（现在只在 Session 内存里）、WebUI 侧的服务端图片路由

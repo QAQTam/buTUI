@@ -80,6 +80,7 @@ export function SplitPane(props: SplitPaneProps) {
       height={orientation() === "vertical" ? geometry().separator : "100%"}
       focusable
       selectable={false}
+      cursor={orientation() === "horizontal" ? "col-resize" : "row-resize"}
       semantic={`${props.semantic ?? "split-pane"}:separator`}
       onMouseDown={begin}
       onKey={onKey}

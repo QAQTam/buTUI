@@ -26,6 +26,7 @@ import {
   type ColorDepth,
   type KeyEvent,
   type MouseEvent,
+  type MousePointerStyle,
   type Node,
   type PasteEvent,
   createElement,
@@ -37,6 +38,7 @@ import {
   focusedNode,
   getFocusState,
   isElement,
+  isMousePointerStyle,
   nodeById,
   onFocusChange,
   onMutation,
@@ -51,7 +53,7 @@ import {
 } from "@butui/layout";
 import { type RenderStats, Renderer } from "@butui/renderer";
 import { provideAppScope, provideFocusScope, render } from "@butui/solid";
-import { TerminalSession, osc52, terminalSize } from "@butui/terminal";
+import { TerminalSession, osc22, osc52, terminalSize } from "@butui/terminal";
 import { createSignal, flush } from "solid-js";
 
 export interface TuiSize {
@@ -69,6 +71,8 @@ export interface TuiTerminal {
   start(): void;
   stop(): void;
   write(chunk: string): void;
+  /** 可选：终端层自行去重 / stop 时恢复 default */
+  setMousePointer?(style: MousePointerStyle): void;
   onEvent(listener: (event: ButuiEvent) => void): () => void;
   onResize(listener: (size: TuiSize) => void): () => void;
 }
@@ -161,6 +165,13 @@ export interface TuiAppOptions {
    * 无按键移动也能触发 `onMouseEnter/Leave`。
    */
   mouseMotion?: "drag" | "hover";
+  /**
+   * 通过 OSC 22 根据命中节点切换鼠标指针形状，默认开启。
+   *
+   * 节点用 `cursor` 属性覆盖；未声明时，可点击 / 可拖动节点自动使用
+   * `pointer`。无按键 hover 需要同时设置 `mouseMotion: "hover"`。
+   */
+  mousePointer?: boolean;
   /** 应用级鼠标：**焦点节点没处理时**才会走到这里（比如语义动作分发） */
   onMouse?: (event: MouseEvent) => boolean | void;
   /**
@@ -236,7 +247,10 @@ export interface TuiApp {
 export function createTuiApp(options: TuiAppOptions): TuiApp {
   const terminal: TuiTerminal =
     options.terminal ??
-    new TerminalSession({ mouseMotion: options.mouseMotion ?? "drag" });
+    new TerminalSession({
+      mouseMotion: options.mouseMotion ?? "drag",
+      mousePointer: options.mousePointer ?? true,
+    });
   const root = createElement("root");
 
   const [size, setSize] = createSignal<TuiSize>(options.size ?? terminal.size);
@@ -258,6 +272,8 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
   let selectionHasText = false;
   let capturedMouseNode: Node | undefined;
   let hoveredMouseNode: Node | undefined;
+  let mousePointerStyle: MousePointerStyle | undefined;
+  const mousePointerEnabled = options.mousePointer ?? true;
   let lastMousePress:
     | { nodeId?: number; button: MouseEvent["button"]; x: number; y: number; time: number }
     | undefined;
@@ -424,6 +440,47 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
       current = current.parent ?? undefined;
     }
     return true;
+  };
+
+  const isInteractiveNode = (node: Node): boolean => {
+    if (!isElement(node) || node.props.disabled === true) return false;
+    return (
+      typeof node.props.onClick === "function" ||
+      typeof node.props.onMouseDown === "function" ||
+      typeof node.props.onDoubleClick === "function" ||
+      typeof node.props.onContextMenu === "function"
+    );
+  };
+
+  /**
+   * 最近的非 `auto` 显式 `cursor` 优先；没有显式值时，命中链上存在交互
+   * handler 就用 pointer。`auto` 等价于「交回 runtime 判断」。
+   */
+  const mousePointerFor = (target: Node | undefined): MousePointerStyle => {
+    let current = target;
+    let interactive = false;
+    while (current) {
+      if (isElement(current)) {
+        if (isInteractiveNode(current)) interactive = true;
+        const explicit = current.props.cursor;
+        if (isMousePointerStyle(explicit) && explicit !== "auto") return explicit;
+      }
+      current = current.parent ?? undefined;
+    }
+    return interactive ? "pointer" : "default";
+  };
+
+  const setMousePointer = (style: MousePointerStyle): void => {
+    if (!mousePointerEnabled) return;
+    const normalized = style === "auto" ? "default" : style;
+    if (mousePointerStyle === normalized) return;
+    mousePointerStyle = normalized;
+    if (terminal.setMousePointer) terminal.setMousePointer(normalized);
+    else terminal.write(osc22(normalized, { multiplexer: "auto" }));
+  };
+
+  const updateMousePointer = (target: Node | undefined): void => {
+    setMousePointer(mousePointerFor(target));
   };
 
   const captureMouse = (node: Node): void => {
@@ -700,6 +757,7 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
       const hitTarget = nodeById(root, computeFrame().nodeAt(event.x, event.y));
       const target = capturedMouseNode ?? hitTarget;
       applyLocalCoordinates(event, target);
+      updateMousePointer(target);
       if (event.action === "press") {
         endMouseDrag(event);
         event.clickCount = clickCountFor(event, target);
@@ -729,6 +787,7 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
         options.onMouse?.(event);
       }
       if (event.action === "release" && capturedMouseNode) releaseMouse();
+      updateMousePointer(capturedMouseNode ?? hitTarget);
       return (
         delivered ||
         dragDelivered ||
@@ -803,6 +862,7 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
     );
 
     terminal.start();
+    setMousePointer("default");
     flush();
     dirty = false;
     paint();
@@ -814,6 +874,7 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
     pressedMouse = undefined;
     hoveredMouseNode = undefined;
     capturedMouseNode = undefined;
+    setMousePointer("default");
     for (const dispose of disposers.splice(0)) dispose();
     terminal.stop();
   }

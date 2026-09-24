@@ -6,7 +6,14 @@
  *
  * 所有能力都是渐进增强的：不支持时安静降级（SPEC §4.4）。
  */
-import type { ButuiEvent, ColorDepth, KeyEvent, MouseEvent, PasteEvent } from "@butui/core";
+import type {
+  ButuiEvent,
+  ColorDepth,
+  KeyEvent,
+  MouseEvent,
+  MousePointerStyle,
+  PasteEvent,
+} from "@butui/core";
 import { InputDecoder } from "./input.ts";
 
 export * from "./input.ts";
@@ -69,18 +76,38 @@ export const CONTROL = {
 
 export type ClipboardTarget = "clipboard" | "primary";
 
-export interface Osc52Options {
-  target?: ClipboardTarget;
+export interface OscTransportOptions {
   /**
    * 多路复用器透传。
    *
    * `"auto"` 在 `$TMUX` 存在时自动包一层 tmux passthrough；`"none"` 直接发
-   * OSC 52。终端不支持 OSC 52 时会安静忽略 —— 这个 API 只能表示「已尝试」，
-   * 不能等待系统剪贴板确认。
+   * OSC。终端不支持对应能力时会安静忽略 —— 这个 API 只能表示「已尝试」。
    */
   multiplexer?: "auto" | "tmux" | "none";
   /** 结束符。BEL 兼容面最广；部分终端只认 ST（`ESC \`）。 */
   terminator?: "bel" | "st";
+}
+
+export interface Osc52Options extends OscTransportOptions {
+  target?: ClipboardTarget;
+}
+
+export interface Osc22Options extends OscTransportOptions {}
+
+function wrapOsc(sequence: string, options: OscTransportOptions): string {
+  const mode =
+    options.multiplexer === "auto"
+      ? process.env.TMUX
+        ? "tmux"
+        : "none"
+      : (options.multiplexer ?? "none");
+  if (mode !== "tmux") return sequence;
+  // tmux DCS passthrough：内部的 ESC 必须写两遍。
+  return `\x1bPtmux;${sequence.replaceAll("\x1b", "\x1b\x1b")}\x1b\\`;
+}
+
+function oscEnd(options: OscTransportOptions): string {
+  return options.terminator === "st" ? "\x1b\\" : "\x07";
 }
 
 /**
@@ -92,17 +119,22 @@ export interface Osc52Options {
 export function osc52(text: string, options: Osc52Options = {}): string {
   const target = options.target === "primary" ? "p" : "c";
   const encoded = Buffer.from(text, "utf8").toString("base64");
-  const end = options.terminator === "st" ? "\x1b\\" : "\x07";
-  const sequence = `\x1b]52;${target};${encoded}${end}`;
-  const mode =
-    options.multiplexer === "auto"
-      ? process.env.TMUX
-        ? "tmux"
-        : "none"
-      : (options.multiplexer ?? "none");
-  if (mode !== "tmux") return sequence;
-  // tmux DCS passthrough：内部的 ESC 必须写两遍。
-  return `\x1bPtmux;${sequence.replaceAll("\x1b", "\x1b\x1b")}\x1b\\`;
+  const sequence = `\x1b]52;${target};${encoded}${oscEnd(options)}`;
+  return wrapOsc(sequence, options);
+}
+
+/**
+ * 生成 OSC 22 鼠标指针形状序列。
+ *
+ * `auto` 在协议层没有含义，统一写 `default`；具体节点是否显示 pointer 由
+ * runtime 解析。终端不支持时忽略，不需要 ACK。
+ */
+export function osc22(
+  shape: MousePointerStyle,
+  options: Osc22Options = {}
+): string {
+  const value = shape === "auto" ? "default" : shape;
+  return wrapOsc(`\x1b]22;${value}${oscEnd(options)}`, options);
 }
 
 export interface TerminalSessionOptions {
@@ -118,6 +150,8 @@ export interface TerminalSessionOptions {
   bracketedPaste?: boolean;
   focusEvents?: boolean;
   kittyKeyboard?: boolean;
+  /** 允许 OSC 22 指针形状；stop 时自动恢复 default */
+  mousePointer?: boolean;
   /** 单独的 ESC 按键等待多久算「真的按了 ESC」 */
   escapeTimeout?: number;
 }
@@ -132,6 +166,7 @@ export class TerminalSession {
   private escapeTimer: ReturnType<typeof setTimeout> | undefined;
   private started = false;
   private disposers: Array<() => void> = [];
+  private mousePointerStyle: MousePointerStyle | undefined;
 
   constructor(options: TerminalSessionOptions = {}) {
     this.stdin = options.stdin ?? process.stdin;
@@ -143,6 +178,7 @@ export class TerminalSession {
       bracketedPaste: options.bracketedPaste ?? true,
       focusEvents: options.focusEvents ?? true,
       kittyKeyboard: options.kittyKeyboard ?? false,
+      mousePointer: options.mousePointer ?? true,
       escapeTimeout: options.escapeTimeout ?? 25,
     };
   }
@@ -208,6 +244,7 @@ export class TerminalSession {
     if (this.options.focusEvents) this.write(CONTROL.focusOff);
     if (this.options.bracketedPaste) this.write(CONTROL.pasteOff);
     if (this.options.mouse) this.write(CONTROL.mouseOff);
+    if (this.mousePointerStyle !== undefined) this.setMousePointer("default");
     this.write(CONTROL.cursorShow);
     if (this.options.altScreen) this.write(CONTROL.altScreenOff);
     this.setRawMode(false);
@@ -216,6 +253,15 @@ export class TerminalSession {
   /** 直接写原始字节（渲染器用） */
   write(chunk: string): void {
     this.stdout.write(chunk);
+  }
+
+  /** 设置 OSC 22 指针形状；相同形状不重复写，stop 时恢复 default。 */
+  setMousePointer(style: MousePointerStyle): void {
+    if (!this.options.mousePointer) return;
+    const normalized = style === "auto" ? "default" : style;
+    if (this.mousePointerStyle === normalized) return;
+    this.mousePointerStyle = normalized;
+    this.write(osc22(normalized, { multiplexer: "auto" }));
   }
 
   /**

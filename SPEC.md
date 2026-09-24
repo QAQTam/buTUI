@@ -945,8 +945,23 @@ move」的问题，Slider / SplitPane 已据此实现。
 
 文本选择仍默认接管左键拖拽；控件用 `selectable={false}` 退出选择竞争。
 
+鼠标指针通过 OSC 22 渐进增强：
+
+```tsx
+<box cursor="pointer" onClick={() => open()}>打开</box>
+<Input editor={editor} cursor="text" />
+```
+
+- `MousePointerStyle` 与 CSS / OpenTUI 名称对齐，底层提供 `osc22(shape)`。
+- 节点 `cursor` 优先；未声明时，`onClick` / `onMouseDown` 等交互链自动使用
+  `pointer`。
+- capture 期间保持捕获节点的形状，release / stop / dispose 恢复 `default`。
+- `mousePointer: false` 可关闭；默认 `mouseMotion: "drag"` 只在按键事件更新，
+  无按键 hover 需要 `"hover"`。
+- 相同形状去重，不重复写控制序列；终端不支持时忽略。
+
 **已知边界：** 还没有 DOM 式 pointerId / 多指针、hover 的 `mouseover/out`
-冒泡语义、鼠标指针形状（OSC 22）、拖动惯性和跨终端窗口的 capture。
+冒泡语义、拖动惯性和跨终端窗口的 capture。
 
 ---
 
@@ -1425,6 +1440,7 @@ P1：
 - Kitty keyboard protocol
 - capability detection
 - OSC 52 剪贴板（tmux passthrough）
+- OSC 22 鼠标指针形状（tmux passthrough）
 - `NO_COLOR` / `TERM=dumb` 降级
 
 ### 9.4 交互
@@ -1499,7 +1515,7 @@ P1：
   intrinsic elements，不是包装组件）
 - `ScrollBox`：`<box overflow="scroll" scrollOffset={n}>`（布局层实现）
 - `Input` / `Textarea`：`createTextEditor` + `<Input>`（单行）/ `<Textarea>`
-  （多行：软换行 + 垂直滚动 + 行号）
+  （多行：软换行 + 垂直滚动 + 行号；OSC 22 鼠标指针默认 `text`）
 - `List` / `VirtualList`：`createSelection` + `<List>` / `<VirtualList>`
   （见 §5.12）
 - `Overlay` / `Portal` / `Dialog`：`<Modal>` / `<Dialog>`（根 layer + 焦点

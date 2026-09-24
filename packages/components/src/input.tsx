@@ -12,7 +12,7 @@
  * 光标只在聚焦时高亮（焦点来自 `useFocus()`）；没有运行时上下文时退化成
  * 「一直显示」，这样组件单独用也不会看起来像坏了。
  */
-import { type KeyEvent, type Node } from "@butui/core";
+import { type KeyEvent, type MousePointerStyle, type Node } from "@butui/core";
 import { useFocus, useFocusScope } from "@butui/solid";
 import { Show, createEffect, createMemo, createSignal } from "solid-js";
 import type { TextEditor } from "./editor.ts";
@@ -111,7 +111,10 @@ export interface InputProps {
   placeholder?: string;
   /** bar 光标用这个字符（默认 `▏`）；block 光标用「反显当前字符」 */
   cursorChar?: string;
+  /** 文本光标绘制方式（bar / block），不是鼠标指针 */
   cursorStyle?: "bar" | "block";
+  /** OSC 22 鼠标指针形状，默认 `text` */
+  cursor?: MousePointerStyle;
   color?: string;
   placeholderColor?: string;
   focusColor?: string;
@@ -147,6 +150,7 @@ export function Input(props: InputProps) {
     <row
       ref={setNode}
       focusable
+      cursor={props.cursor ?? "text"}
       semantic={props.semantic ?? "input"}
       onKey={event => {
         if (props.onKey?.(event) === true) return;

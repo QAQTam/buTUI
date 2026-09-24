@@ -2,7 +2,9 @@ import { Slider, createSlider } from "@butui/components";
 import { createTuiApp } from "@butui/runtime";
 import { For, createSignal } from "solid-js";
 
-const [message, setMessage] = createSignal("移动鼠标试 hover，双击 / 右键试语义");
+const [message, setMessage] = createSignal(
+  "移动鼠标试 hover / OSC 22，双击 / 右键试语义"
+);
 const [hover, setHover] = createSignal<string | null>(null);
 const [slider, setSlider] = createSignal(12);
 const sliderModel = createSlider({
@@ -22,21 +24,32 @@ createTuiApp({
       </text>
       <text>{message()}</text>
       <row gap={1}>
-        <For each={["A", "B", "C"]}>
-          {label => (
+        <For
+          each={[
+            { label: "A", cursor: "pointer" },
+            { label: "B", cursor: "help" },
+            { label: "C", cursor: "text" },
+          ] as const}
+        >
+          {target => (
             <box
               width={8}
               height={1}
-              bg={hover() === label ? "accent" : "bg"}
+              cursor={target.cursor}
+              bg={hover() === target.label ? "accent" : "bg"}
               onMouseEnter={() => {
-                setHover(label);
-                setMessage(`enter ${label}`);
+                setHover(target.label);
+                setMessage(`enter ${target.label}: ${target.cursor}`);
               }}
               onMouseLeave={() => setHover(null)}
-              onClick={event => setMessage(`click ${label}:${event.clickCount ?? 1}`)}
-              onDoubleClick={() => setMessage(`double click ${label}`)}
-              onContextMenu={() => setMessage(`context menu ${label}`)}
-            />
+              onClick={event =>
+                setMessage(`click ${target.label}:${event.clickCount ?? 1}`)
+              }
+              onDoubleClick={() => setMessage(`double click ${target.label}`)}
+              onContextMenu={() => setMessage(`context menu ${target.label}`)}
+            >
+              <text>{target.label}</text>
+            </box>
           )}
         </For>
       </row>

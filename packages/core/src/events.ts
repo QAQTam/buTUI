@@ -32,6 +32,59 @@ export interface KeyEvent {
 /** 滚轮方向（`action === "wheel"` 时才有值） */
 export type WheelDirection = "up" | "down" | "left" | "right";
 
+/**
+ * 鼠标指针形状（OSC 22）。
+ *
+ * 名称与 CSS / OpenTUI 对齐；终端不支持时会忽略对应序列。`auto` 由 runtime
+ * 根据节点是否可交互决定，`default` 强制恢复系统默认指针。
+ */
+export const MOUSE_POINTER_STYLES = [
+  "auto",
+  "default",
+  "none",
+  "context-menu",
+  "help",
+  "pointer",
+  "progress",
+  "wait",
+  "cell",
+  "crosshair",
+  "text",
+  "vertical-text",
+  "alias",
+  "copy",
+  "move",
+  "no-drop",
+  "not-allowed",
+  "grab",
+  "grabbing",
+  "all-scroll",
+  "col-resize",
+  "row-resize",
+  "n-resize",
+  "e-resize",
+  "s-resize",
+  "w-resize",
+  "ne-resize",
+  "nw-resize",
+  "se-resize",
+  "sw-resize",
+  "ew-resize",
+  "ns-resize",
+  "nesw-resize",
+  "nwse-resize",
+  "zoom-in",
+  "zoom-out",
+] as const;
+
+export type MousePointerStyle = (typeof MOUSE_POINTER_STYLES)[number];
+
+const MOUSE_POINTER_STYLE_SET = new Set<string>(MOUSE_POINTER_STYLES);
+
+export function isMousePointerStyle(value: unknown): value is MousePointerStyle {
+  return typeof value === "string" && MOUSE_POINTER_STYLE_SET.has(value);
+}
+
 export interface MouseEvent {
   type: "mouse";
   action:
