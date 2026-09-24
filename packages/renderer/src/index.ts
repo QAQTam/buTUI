@@ -101,10 +101,10 @@ function paintDamage(
     const from = Math.max(0, Math.min(span.from, maxLength));
     const to = Math.max(from, Math.min(span.to, maxLength));
     if (from === 0 && to >= maxLength) {
-      out += moveTo(y, 0) + paintLine(line) + ERASE_TO_END;
+      out += moveTo(y, 1) + paintLine(line) + ERASE_TO_END;
       continue;
     }
-    out += moveTo(y, from) + RESET + paintLine(line.slice(from, to));
+    out += moveTo(y, from + 1) + RESET + paintLine(line.slice(from, to));
     if (to >= maxLength) out += ERASE_TO_END;
   }
   return out;
@@ -151,11 +151,11 @@ export class Renderer {
       const line = frame.lines[y];
       changed.push(y);
       if (!line) {
-        out += moveTo(y, 0) + ERASE_TO_END;
+        out += moveTo(y, 1) + ERASE_TO_END;
         continue;
       }
       if (full) {
-        out += moveTo(y, 0) + paintLine(line) + ERASE_TO_END;
+        out += moveTo(y, 1) + paintLine(line) + ERASE_TO_END;
         continue;
       }
       out += paintDamage(y, line, this.previous[y], lineDamage);

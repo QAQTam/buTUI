@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  ERASE_TO_END,
   RESET,
   Renderer,
   computeDamage,
@@ -66,7 +67,18 @@ describe("渲染器（SPEC §6 / §17）", () => {
     expect(second.full).toBe(false);
     expect(second.changedLines).toBe(1);
     // 只定位到第 2 行发生变化的 cell，不再重画整行
-    expect(output).toBe(`${moveTo(1, 1)}${RESET}X`);
+    expect(output).toBe(`${moveTo(1, 2)}${RESET}X`);
+  });
+
+  test("行缩短时从正确的 1-based 列清到行尾", () => {
+    let output = "";
+    const renderer = new Renderer(chunk => {
+      output += chunk;
+    });
+    renderer.draw({ lines: [line("abcd")], width: 4, height: 1 } as never);
+    output = "";
+    renderer.draw({ lines: [line("ab")], width: 4, height: 1 } as never);
+    expect(output).toBe(`${moveTo(0, 3)}${RESET}${ERASE_TO_END}`);
   });
 
   test("尺寸变化触发整屏重绘", () => {
