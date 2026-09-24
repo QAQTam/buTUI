@@ -10,6 +10,10 @@ import {
   resolveManifestEntry,
   type PluginManifest,
 } from "./manifest.ts";
+import {
+  CapabilityBroker,
+  type CapabilityLease,
+} from "./capability.ts";
 import type { SlotRegistry } from "./registry.ts";
 import type {
   Plugin,
@@ -33,6 +37,8 @@ export interface PluginLoadContext<TContext extends PluginContext = PluginContex
   context: Readonly<TContext>;
   /** 如果插件包提供了 manifest，会一并传入。 */
   manifest?: PluginManifest;
+  /** broker 已签发的 capability lease；不配置 broker 时省略。 */
+  capabilities?: readonly CapabilityLease[];
 }
 
 export type PluginModuleFactory<
@@ -85,6 +91,8 @@ export interface LoadPluginsOptions<
   approveCapability?: (
     request: CapabilityApprovalRequest
   ) => boolean | Promise<boolean>;
+  /** 可选 lease broker；审批通过后签发，插件 dispose 时 revoke。 */
+  capabilityBroker?: CapabilityBroker;
   /**
    * 严格模式：要求每个插件都有 manifest。默认 false。
    *
@@ -129,15 +137,23 @@ export async function loadPlugins<
   for (const entry of entries) {
     if (entry.enabled === false) continue;
     const label = entry.id ?? entry.module;
+    let leases: CapabilityLease[] = [];
     try {
       const resolved = await resolvePluginEntry(entry, cwd);
-      await assertCapabilities(
+      const requiredCapabilities = await assertCapabilities(
         entry,
         resolved.manifest,
         options,
         resolved.manifest?.id ?? label,
         resolved.path
       );
+      const provisionalId =
+        entry.id ?? resolved.manifest?.id ?? entry.module;
+      if (options.capabilityBroker) {
+        leases = requiredCapabilities.map(capability =>
+          options.capabilityBroker!.grant(provisionalId, capability)
+        );
+      }
       const module = await importer(pathToFileURL(resolved.path).href);
       const candidate = extractPluginExport(module);
       if (candidate === undefined) {
@@ -146,8 +162,6 @@ export async function loadPlugins<
         );
       }
 
-      const provisionalId =
-        entry.id ?? resolved.manifest?.id ?? entry.module;
       const loadContext: PluginLoadContext<TContext> = {
         id: provisionalId,
         module: entry.module,
@@ -156,6 +170,7 @@ export async function loadPlugins<
         options: entry.options,
         context: options.context,
         ...(resolved.manifest ? { manifest: resolved.manifest } : {}),
+        ...(options.capabilityBroker ? { capabilities: leases } : {}),
       };
 
       const loaded =
@@ -178,13 +193,25 @@ export async function loadPlugins<
       const errorStart = options.registry.getPluginErrors().length;
       const dispose = options.registry.register(plugin);
       if (!options.registry.has(plugin.id)) {
+        for (const lease of leases) {
+          options.capabilityBroker?.revoke(lease, "register-failed");
+        }
+        leases = [];
         errors.push(...options.registry.getPluginErrors().slice(errorStart));
         continue;
       }
 
       ids.push(plugin.id);
-      disposers.push(dispose);
+      disposers.push(() => {
+        dispose();
+        for (const lease of leases) {
+          options.capabilityBroker?.revoke(lease, "plugin-disposed");
+        }
+      });
     } catch (error) {
+      for (const lease of leases) {
+        options.capabilityBroker?.revoke(lease, "load-failed");
+      }
       const event = options.registry.reportPluginError({
         pluginId: label,
         phase: "load",
@@ -217,7 +244,7 @@ async function assertCapabilities<
   options: LoadPluginsOptions<TNode, TSlots, TContext>,
   label: string,
   path: string
-): Promise<void> {
+): Promise<readonly PluginCapability[]> {
   if (options.requireCapabilities && !manifest) {
     throw new Error(
       `Plugin "${label}" does not declare a manifest with capabilities`
@@ -225,7 +252,7 @@ async function assertCapabilities<
   }
 
   const required = manifest?.capabilities ?? [];
-  if (required.length === 0) return;
+  if (required.length === 0) return [];
 
   const granted =
     entry.capabilities ??
@@ -233,7 +260,7 @@ async function assertCapabilities<
       ? "all"
       : options.allowedCapabilities) ??
     "all";
-  if (granted === "all") return;
+  if (granted === "all") return required;
 
   const denied: PluginCapability[] = [];
   for (const capability of required) {
@@ -257,6 +284,7 @@ async function assertCapabilities<
       `Plugin "${label}" requires capabilities ${reason}: ${denied.join(", ")}`
     );
   }
+  return required;
 }
 
 async function resolvePluginEntry(

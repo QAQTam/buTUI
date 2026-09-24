@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { SlotRegistry } from "@butui/plugins";
+import { CapabilityBroker, SlotRegistry } from "@butui/plugins";
 import {
   discoverPlugins,
   findPluginManifest,
@@ -394,6 +394,56 @@ describe("plugin capabilities", () => {
       expect(loaded.errors[0]?.error.message).toContain(
         "does not declare a manifest"
       );
+    });
+  });
+
+  test("capabilityBroker 在 factory 前签发、dispose 后回收", async () => {
+    await withTempDir(async dir => {
+      await writeFile(
+        path.join(dir, "plugin.ts"),
+        `export default function createPlugin(load) {
+           const leases = load.capabilities ?? [];
+           return {
+             id: "lease",
+             slots: {
+               header: () => ({
+                 kind: leases.map(lease => lease.capability + ":" + lease.state).join(","),
+               }),
+             },
+           };
+         };`
+      );
+      await writeFile(
+        path.join(dir, "butui.plugin.json"),
+        JSON.stringify({
+          entry: "./plugin.ts",
+          id: "lease",
+          capabilities: ["fs:read", "network"],
+        })
+      );
+
+      const host = {};
+      const registry = new SlotRegistry<Node, Slots>(host, {});
+      const broker = new CapabilityBroker();
+      const loaded = await loadPlugins<Node, Slots>({
+        registry,
+        host,
+        context: {},
+        cwd: dir,
+        entries: ["./plugin.ts"],
+        capabilityBroker: broker,
+      });
+
+      expect(loaded.ids).toEqual(["lease"]);
+      expect(broker.has("lease", "fs:read")).toBe(true);
+      expect(broker.has("lease", "network")).toBe(true);
+      expect(registry.resolve("header")[0]!({}, { title: "x" })).toEqual({
+        kind: "fs:read:active,network:active",
+      });
+
+      loaded.dispose();
+      expect(broker.active("lease")).toEqual([]);
+      broker.dispose();
     });
   });
 
