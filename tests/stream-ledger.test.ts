@@ -3,9 +3,23 @@ import { MemoryLedger } from "@butui/core";
 import {
   MemorySpillStore,
   StreamLedger,
+  type LineId,
+  type SpillRecord,
   type StreamEnvelope,
   type StreamOperation,
 } from "@butui/stream";
+
+class TrackingSpillStore extends MemorySpillStore {
+  readManyCalls = 0;
+
+  override readMany(
+    streamId: string,
+    lineIds: readonly LineId[]
+  ): (SpillRecord | undefined)[] {
+    this.readManyCalls++;
+    return super.readMany(streamId, lineIds);
+  }
+}
 
 function envelope(
   seq: number,
@@ -212,6 +226,70 @@ describe("StreamLedger", () => {
     expect(await streams.hydrate("stream-1")).toBe(1);
     expect(streams.project("stream-1").stableLines[0]?.text).toBe("hello");
     expect(streams.project("stream-1").spilledSegments).toEqual([]);
+  });
+
+  test("hydrate 使用有界批读并保持 spilled segment 顺序", async () => {
+    const memory = new MemoryLedger({ totalBytes: 256 });
+    const store = new TrackingSpillStore();
+    const streams = new StreamLedger({
+      memory,
+      memoryOwner: "test-stream",
+      spill: { store, policy: { maxBytes: 0 } },
+    });
+    streams.open({
+      streamId: "stream-1",
+      kind: "text",
+      priority: 1,
+      createdAt: 0,
+    });
+
+    for (let seq = 1; seq <= 3_000; seq++) {
+      const result = await streams.applyWithSpill(
+        envelope(seq, { type: "append", delta: "x\n" })
+      );
+      expect(result.status).toBe("applied");
+    }
+
+    const before = streams.stats();
+    expect(before.spilledLines).toBeGreaterThan(1024);
+    store.readManyCalls = 0;
+
+    expect(await streams.hydrate("stream-1")).toBe(before.spilledLines);
+    expect(store.readManyCalls).toBe(Math.ceil(before.spilledLines / 1024));
+
+    const projection = streams.project("stream-1");
+    expect(projection.spilledSegments).toEqual([]);
+    expect(projection.stableLines).toHaveLength(3_000);
+    expect(projection.stableLines[0]?.id).toBe("line-1");
+    expect(projection.stableLines[1024]?.id).toBe("line-1025");
+    expect(projection.stableLines[2999]?.id).toBe("line-3000");
+  });
+
+  test("hydrate 批读缺失记录时显式 cold-read-error", async () => {
+    const memory = new MemoryLedger({ totalBytes: 64 });
+    const store = new TrackingSpillStore();
+    const streams = new StreamLedger({
+      memory,
+      memoryOwner: "test-stream",
+      spill: { store, policy: { maxBytes: 0 } },
+    });
+    streams.open({
+      streamId: "stream-1",
+      kind: "text",
+      priority: 1,
+      createdAt: 0,
+    });
+
+    for (let seq = 1; seq <= 1_300; seq++) {
+      await streams.applyWithSpill(
+        envelope(seq, { type: "append", delta: "x\n" })
+      );
+    }
+    store.delete("stream-1", "line-1");
+
+    await expect(streams.hydrate("stream-1")).rejects.toThrow(
+      "cold-read-error: stream-1/line-1"
+    );
   });
 
   test("stats 汇总 streams / lines / tombstones", () => {

@@ -72,8 +72,19 @@ export class MemorySpillStore implements SpillStore {
     this.bytes += record.bytes;
   }
 
+  writeMany(records: readonly SpillRecord[]): void {
+    for (const record of records) this.write(record);
+  }
+
   read(streamId: StreamId, lineId: LineId): SpillRecord | undefined {
     return this.records.get(spillKey(streamId, lineId));
+  }
+
+  readMany(
+    streamId: StreamId,
+    lineIds: readonly LineId[]
+  ): (SpillRecord | undefined)[] {
+    return lineIds.map(lineId => this.read(streamId, lineId));
   }
 
   delete(streamId: StreamId, lineId: LineId): void {

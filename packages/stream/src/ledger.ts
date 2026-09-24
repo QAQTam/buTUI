@@ -15,12 +15,15 @@ import {
   StreamRetention,
   type RetentionPolicy,
   type SpillManifest,
+  type SpillRecord,
   type SpillStore,
 } from "./spill.ts";
 
 export type StreamId = string;
 export type LineId = string;
 export type SessionRevision = number;
+
+const HYDRATE_READ_BATCH = 1024;
 
 export type StreamKind = "text" | "reasoning" | "tool" | "diff" | "status";
 export type StreamPriority = 0 | 1 | 2 | 3;
@@ -305,34 +308,47 @@ export class StreamLedger {
     }
 
     const wanted = lineIds ? new Set(lineIds) : undefined;
+    const targets = stream.stableLines.filter(
+      line => line.spilled && (!wanted || wanted.has(line.id))
+    );
     let hydrated = 0;
-    for (const line of stream.stableLines) {
-      if (!line.spilled || (wanted && !wanted.has(line.id))) continue;
-      const record = await this.spillStore.read(streamId, line.id);
-      if (!record) {
-        throw new Error(`[butui] cold-read-error: ${streamId}/${line.id}`);
+    if (targets.length > 0) {
+      const records = await readSpillRecordsInBatches(
+        this.spillStore,
+        streamId,
+        targets.map(line => line.id)
+      );
+      for (let index = 0; index < targets.length; index++) {
+        const line = targets[index]!;
+        const record = records[index]!;
+        line.text = record.text;
+        line.digest = record.digest;
+        delete line.spilled;
+        hydrated++;
       }
-      line.text = record.text;
-      line.digest = record.digest;
-      delete line.spilled;
-      hydrated++;
     }
 
     if (wanted || stream.spilledSegments.length === 0) return hydrated;
 
     const restored: StreamLineRecord[] = [];
     for (const segment of stream.spilledSegments) {
-      for (const lineId of lineIdsForSegment(segment)) {
-        const record = await this.spillStore.read(streamId, lineId);
-        if (!record) {
-          throw new Error(`[butui] cold-read-error: ${streamId}/${lineId}`);
+      const range = spilledSegmentRange(segment);
+      for (let start = 0; start < segment.count; start += HYDRATE_READ_BATCH) {
+        const count = Math.min(HYDRATE_READ_BATCH, segment.count - start);
+        const ids = Array.from(
+          { length: count },
+          (_, index) => `${range.prefix}${range.start + start + index}`
+        );
+        const records = await readSpillRecords(this.spillStore, streamId, ids);
+        for (let index = 0; index < ids.length; index++) {
+          const record = records[index]!;
+          restored.push({
+            id: ids[index]!,
+            text: record.text,
+            stableAtRevision: record.stableAtRevision,
+            digest: record.digest,
+          });
         }
-        restored.push({
-          id: lineId,
-          text: record.text,
-          stableAtRevision: record.stableAtRevision,
-          digest: record.digest,
-        });
       }
     }
     stream.stableLines = [...restored, ...stream.stableLines];
@@ -453,7 +469,10 @@ export class StreamLedger {
   }
 }
 
-function lineIdsForSegment(segment: SpilledSegment): LineId[] {
+function spilledSegmentRange(segment: SpilledSegment): {
+  prefix: string;
+  start: number;
+} {
   const match = /(\d+)$/.exec(segment.firstLineId);
   if (!match) {
     throw new Error(
@@ -462,14 +481,54 @@ function lineIdsForSegment(segment: SpilledSegment): LineId[] {
   }
   const start = Number(match[1]);
   const prefix = segment.firstLineId.slice(0, match.index);
-  const ids = Array.from(
-    { length: segment.count },
-    (_, index) => `${prefix}${start + index}`
-  );
-  if (ids[ids.length - 1] !== segment.lastLineId) {
+  if (`${prefix}${start + segment.count - 1}` !== segment.lastLineId) {
     throw new Error(`[butui] spilled segment 不连续: ${segment.streamId}`);
   }
-  return ids;
+  return { prefix, start };
+}
+
+async function readSpillRecordsInBatches(
+  store: SpillStore,
+  streamId: StreamId,
+  lineIds: readonly LineId[]
+): Promise<SpillRecord[]> {
+  const records: SpillRecord[] = [];
+  for (let start = 0; start < lineIds.length; start += HYDRATE_READ_BATCH) {
+    const batch = lineIds.slice(start, start + HYDRATE_READ_BATCH);
+    records.push(...(await readSpillRecords(store, streamId, batch)));
+  }
+  return records;
+}
+
+async function readSpillRecords(
+  store: SpillStore,
+  streamId: StreamId,
+  lineIds: readonly LineId[]
+): Promise<SpillRecord[]> {
+  if (store.readMany) {
+    const records = await store.readMany(streamId, lineIds);
+    if (records.length !== lineIds.length) {
+      throw new Error(
+        `[butui] cold-read-error: ${streamId} returned ${records.length}/${lineIds.length} records`
+      );
+    }
+    return records.map((record, index) => {
+      if (!record) {
+        throw new Error(`[butui] cold-read-error: ${streamId}/${lineIds[index]}`);
+      }
+      return record;
+    });
+  }
+
+  const records: SpillRecord[] = [];
+  for (const lineId of lineIds) {
+    const record = await store.read(streamId, lineId);
+    if (!record) {
+      throw new Error(`[butui] cold-read-error: ${streamId}/${lineId}`);
+    }
+    records.push(record);
+  }
+  return records;
 }
 
 function appendSpilledSegment(

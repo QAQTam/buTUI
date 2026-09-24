@@ -5,6 +5,7 @@
  *   bun --conditions=browser run scripts/stream-retention-bench.ts --lines=100000
  *   bun --conditions=browser run scripts/stream-retention-bench.ts --lines=1000000 --batch=500
  *   bun --conditions=browser run scripts/stream-retention-bench.ts --lines=1000000 --reopen
+ *   bun --conditions=browser run scripts/stream-retention-bench.ts --lines=1000000 --hydrate
  */
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -101,6 +102,25 @@ function reopenStore() {
   };
 }
 
+async function hydrateStore() {
+  (Bun as typeof Bun & { gc?: (force?: boolean) => void }).gc?.(true);
+  const before = process.memoryUsage();
+  const started = performance.now();
+  const restored = await streams.hydrate(streamId);
+  const elapsedMs = performance.now() - started;
+  const usage = process.memoryUsage();
+  const projection = streams.project(streamId);
+  return {
+    elapsedMs,
+    restored,
+    heapBefore: before.heapUsed,
+    heapAfter: usage.heapUsed,
+    rssAfter: usage.rss,
+    stableLines: projection.stableLines.length,
+    spilledSegments: projection.spilledSegments.length,
+  };
+}
+
 const startedAt = performance.now();
 let seq = 0;
 let processedLines = 0;
@@ -129,6 +149,9 @@ try {
 
   const final = snapshot(totalLines);
   const elapsedMs = performance.now() - startedAt;
+  const hydrate = process.argv.includes("--hydrate")
+    ? await hydrateStore()
+    : undefined;
   const reopen = process.argv.includes("--reopen") ? reopenStore() : undefined;
   console.log(
     JSON.stringify(
@@ -139,6 +162,7 @@ try {
         retainedBytes,
         elapsedMs,
         final,
+        ...(hydrate ? { hydrate } : {}),
         ...(reopen ? { reopen } : {}),
         samples,
       },
