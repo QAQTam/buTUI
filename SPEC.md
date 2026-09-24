@@ -779,7 +779,10 @@ top        = round(maxTop * thumbStart / thumbRange)
 
 **和文本选择共存。** 左键拖动同时被全局文本选择监听，所以 scrollbar 声明
 `selectable={false}`；runtime 的 hit test 从目标向上继承这个属性，命中
-scrollbar 时不启动文本选择，`onMouseMove` 才能完整交给拖动逻辑。
+scrollbar 时不启动文本选择。
+
+**跨区域拖动。** 按下 thumb / 轨道后捕获 scrollbar 节点；后续 `onDrag` 使用
+相对轨道的 `localY` 更新位置，因此指针移出 scrollbar 矩形后拖动仍继续。
 
 `createScrollBarFor(view)` 是 `createScrollView()` 的直连适配器；`<Diff
 scrollbar>` 也使用同一模型，因此根转录、列表、diff 的 thumb 比例与拖动语义
@@ -957,6 +960,28 @@ move」的问题，slider / split pane 等可以据此实现。
 
 ---
 
+### 5.24 Slider（v0.1 实现）
+
+`createSlider()` 是纯模型，`<Slider>` 只负责画轨道和接鼠标 / 键盘。
+
+```ts
+const slider = createSlider({
+  value: () => value(),
+  min: 0,
+  max: 100,
+  step: 10,
+  onChange: setValue,
+});
+```
+
+- `sliderValueAt(localX, track, min, max, step)` 做比例、step 和端点夹取；
+- 鼠标走 `localX + capture + onDrag`，拖出矩形后继续更新；
+- 键盘支持左右 / 上下 / PageUp / PageDown / Home / End；
+- 组件宽度只影响显示，不影响模型的值域；
+- 和 ScrollBar 共用「本地坐标 + capture + drag」的交互模式。
+
+---
+
 ### 5.17 应用上下文（v0.1 实现）
 
 组件要能问「现在多宽 / 什么色深 / 我想订一个全局键」，但既不该认识 runtime，
@@ -1095,7 +1120,7 @@ createEffect(() => dep(), () => {
   协议探测、PNG 编解码、Kitty/iTerm2/Sixel/半块/占位符、安全加载、图形图层
 
 @butui/components
-  createTextEditor / <Input>（v0.1）；Select / List / ScrollBox / Table 待做
+  createTextEditor / <Input> / List / ScrollBar / Slider 等
 
 @butui/plugins
   通用 SlotRegistry / Plugin / manifest / 配置 / 动态加载 / capability 门控

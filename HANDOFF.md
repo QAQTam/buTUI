@@ -4,8 +4,8 @@
 > 仓库：`/home/qaqtamsy/项目/buTUI`  
 > 功能基线提交：`cec2441 feat(mouse): 本地坐标与 drag 生命周期`
 > 工作区状态：鼠标本地坐标 / drag 提交处干净
-> 本轮能力：鼠标本地坐标 + drag 生命周期
-> 当前回归：`545 pass / 0 fail`，`tsc --noEmit` 通过
+> 本轮能力：ScrollBar 跨区域拖动 + Slider 组件
+> 当前回归：`550 pass / 0 fail`，`tsc --noEmit` 通过
 
 ## 1. 项目定位
 
@@ -249,7 +249,7 @@ const bar = createScrollBar({
 - 端点精确：`top=0 → thumbStart=0`，`top=maxTop → thumbStart=thumbRange`。
 - 拖拽保留 `grabOffset`。
 - 点击轨道默认居中 thumb；`jump(y, "start")` 精确到顶部。
-- 每行轨道就是局部坐标，不扫描 frame / 不依赖节点 bbox。
+- `<ScrollBar>` 用 capture + `localY`，拖出轨道矩形仍继续更新。
 - `<Diff scrollbar>` 已接入。
 - 当前仅垂直轴。
 
@@ -305,6 +305,14 @@ const bar = createScrollBar({
 - 文本选择仍默认接管左键拖拽；控件用 `selectable={false}`。
 - 已有 `scripts/mouse-demo.tsx`、`tests/mouse-interaction.test.tsx`。
 
+### 5.11 Slider
+
+- `createSlider()`：纯模型，比例 / step / 端点 / 键盘步进。
+- `<Slider>`：单行轨道，鼠标 `localX + capture + onDrag`，拖出矩形继续更新。
+- 键盘：方向键 / PageUp / PageDown / Home / End。
+- ScrollBar 与 Slider 共用「本地坐标 + capture + drag」模式。
+- 已有 `tests/slider.test.tsx`。
+
 ## 6. 稳定接口入口
 
 | 入口 | 文件 |
@@ -316,6 +324,7 @@ const bar = createScrollBar({
 | `<Diff>` | `packages/components/src/diff.tsx` |
 | ScrollBar 几何模型 | `packages/components/src/scrollbar.ts` |
 | `<ScrollBar>` | `packages/components/src/scrollbar.tsx` |
+| Slider 模型 / 组件 | `packages/components/src/{slider.ts,slider.tsx}` |
 | Plugin / SlotRegistry | `packages/plugins/src/{types,registry}.ts` |
 | Plugin loader / manifest / config / discovery | `packages/plugins/src/{loader,manifest,config,discovery}.ts` |
 | Solid `<Slot>` | `packages/plugins/src/solid.tsx` |
@@ -379,8 +388,8 @@ bridge、真实 tool event 对接或 bugent 快捷键迁移。
 当前：
 
 ```text
-545 pass / 0 fail
-54 test files
+550 pass / 0 fail
+55 test files
 tsc --noEmit pass
 ```
 
@@ -399,6 +408,7 @@ tsc --noEmit pass
 - `tests/keymap.test.ts`
 - `tests/keymap-runtime.test.tsx`
 - `tests/mouse-interaction.test.tsx`
+- `tests/slider.test.tsx`
 - `tests/solid-cleanup-contract.test.tsx`
 
 提交前至少跑：
@@ -432,8 +442,7 @@ git diff --check
 
 按通用 TUI 收益排序：
 
-1. **鼠标组件适配**：把 `localX/localY + drag` 接进 ScrollBar / slider / split
-   pane；再考虑 OSC 22 指针形状与惯性。
+1. **鼠标组件继续**：SplitPane、水平 ScrollBar、OSC 22 指针形状与拖动惯性。
 2. **Keymap 扩展**：多键 chord、前缀超时、用户自定义绑定持久化、Command Palette。
 3. **插件运行时约束 / 审批**：capability 目前只是 import 前门控，下一步做权限
    审批 UI 或 worker 隔离。

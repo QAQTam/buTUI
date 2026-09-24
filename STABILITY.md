@@ -439,8 +439,8 @@ const bar = createScrollBarFor(view);
 - `scrollBarGeometry()` 是纯函数：整数轨道、thumb 至少 1 格、端点精确。
 - `topForThumb()` / `topAtTrack()` 提供双向映射和轨道点击定位。
 - `createScrollBar()` 拖动保留 `grabOffset`；`jump(y, "start")` 可精确到轨道行。
-- 轨道每一行是独立节点，鼠标局部 `y` 就是轨道行号，不需要扫描 frame 或
-  获取节点 bbox。
+- `<ScrollBar>` 按下后捕获自身节点，`onDrag` 用 `localY` 更新，拖出轨道矩形
+  仍继续。
 - ScrollBar 声明 `selectable={false}`。runtime 会从命中节点向上继承该属性，
   不启动全局文本选择，因此拖拽不会被选区吃掉。
 - `<Diff scrollbar>` 与 `createScrollBarFor(view)` 使用同一几何模型。
@@ -541,6 +541,25 @@ keymap.bindCommand(
   `useMouseCapture()`。
 - 文本选择默认接管左键拖拽；控件用 `selectable={false}` 退出竞争。
 - 当前没有 pointerId / 多指针 / OSC 22 指针形状 / 惯性。
+
+### 4.22 Slider：`createSlider` / `<Slider>`
+
+```tsx
+const slider = createSlider({
+  value: () => value(),
+  min: 0,
+  max: 100,
+  step: 10,
+  onChange: setValue,
+});
+<Slider model={slider} width={31} showValue />;
+```
+
+- `sliderValueAt()` 是纯函数：比例、step、端点都精确。
+- `beginDrag` / `drag` / `endDrag` 管理拖动状态；鼠标使用 `localX + capture`。
+- 键盘支持左右 / 上下 / PageUp / PageDown / Home / End。
+- 组件宽度只影响显示，不影响模型值域。
+- 当前是单行水平 slider；没有垂直轴、双 thumb 或刻度组件。
 
 ## 5. 已知缺口（不要依赖，也不建议自己绕）
 

@@ -476,6 +476,13 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
     const cached = cache.get(node.id);
     if (cached) return cached;
 
+    const ids = new Set<number>();
+    const collect = (current: Node): void => {
+      ids.add(current.id);
+      for (const child of current.children) collect(child);
+    };
+    collect(node);
+
     let left = Number.POSITIVE_INFINITY;
     let top = Number.POSITIVE_INFINITY;
     let right = -1;
@@ -484,7 +491,7 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
       const line = frame.lines[y]!;
       for (let x = 0; x < line.length; x++) {
         const cell = line[x]!;
-        if (cell.node !== node.id || cell.width === 0) continue;
+        if (!ids.has(cell.node) || cell.width === 0) continue;
         if (x < left) left = x;
         if (y < top) top = y;
         if (x + cell.width > right) right = x + cell.width;
