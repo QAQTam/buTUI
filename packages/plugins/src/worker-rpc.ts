@@ -20,10 +20,18 @@ export interface WorkerRpcError {
   };
 }
 
+export interface WorkerRpcHello {
+  type: "hello";
+  protocol: string;
+  version: number;
+  capabilities: readonly string[];
+}
+
 export type WorkerRpcMessage =
   | WorkerRpcRequest
   | WorkerRpcResult
-  | WorkerRpcError;
+  | WorkerRpcError
+  | WorkerRpcHello;
 
 export interface WorkerRpcOptions {
   /** 单次调用超时；不传表示无限等待。 */

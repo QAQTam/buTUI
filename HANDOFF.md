@@ -3,9 +3,9 @@
 > 交接时间：2026-09-24
 > 仓库：`/home/qaqtamsy/项目/buTUI-v0.2-frontier`
 > 功能基线提交：`61d889b feat(components): add capability approval dialog`
-> 工作区状态：本文件与 process transport 一并提交
-> 本轮能力：worker supervision + NDJSON process transport
-> 当前回归：`726 pass / 0 fail`，81 个测试文件，`tsc --noEmit` 通过
+> 工作区状态：本文件与 RPC handshake 一并提交
+> 本轮能力：process transport + protocol handshake
+> 当前回归：`731 pass / 0 fail`，82 个测试文件，`tsc --noEmit` 通过
 
 ## 1. 项目定位
 
@@ -457,6 +457,8 @@ const bar = createScrollBar({
 - Plugin process transport：`createNdjsonRpcEndpoint` / `attachProcessRpc` /
   `createProcessStdioEndpoint` / `serveProcessRpc` 用 UTF-8 NDJSON 接 `Bun.spawn`
   stdio，复用 RPC、capability proxy 和 supervisor；单帧默认上限 8 MiB。
+- RPC handshake：`withRpcHandshake` 双向校验 protocol / version / capabilities，
+  支持 `requiredCapabilities`、握手前排队和 timeout fail-fast。
   Worker / process 只做崩溃和堆隔离，不是 capability 或 OS sandbox。
 
 关键实测：
@@ -584,8 +586,8 @@ bridge、真实 tool event 对接或 bugent 快捷键迁移。
 当前：
 
 ```text
-726 pass / 0 fail
-81 test files
+731 pass / 0 fail
+82 test files
 tsc --noEmit pass
 ```
 
@@ -606,6 +608,7 @@ tsc --noEmit pass
 - `tests/worker-rpc.test.ts`
 - `tests/worker-supervisor.test.ts`
 - `tests/process-rpc.test.ts`
+- `tests/rpc-handshake.test.ts`
 - `tests/keymap.test.ts`
 - `tests/keymap-runtime.test.tsx`
 - `tests/command-palette.test.tsx`
@@ -635,8 +638,8 @@ git diff --check
 
 - 插件已有 manifest / 配置 / 直接依赖发现 / capability 白名单、运行时审批、
   approval queue / dialog、lease / TTL / revoke、Worker RPC、crash fail-fast、
-  capability proxy、restart supervision 与 NDJSON process transport；仍无进程
-  权限沙箱、heap / CPU 资源上限和协议版本握手。
+  capability proxy、restart supervision、NDJSON process transport 与 protocol
+  handshake；仍无进程权限沙箱、heap / CPU 资源上限和 capability 细粒度协商。
 - 鼠标已有 hover / 双击 / 右键 / pointer capture / local 坐标 / drag 生命周期 /
   OSC 22 指针 / 拖动惯性；无 pointerId、多指针。惯性只接 ScrollBar / Slider。
 - Keymap 已有多键 chord / 前缀超时，Command Palette 已有基础 UI；无用户自定义
@@ -672,8 +675,9 @@ git diff --check
 3. **numeric index sidecar 生命周期**：1M 磁盘换出原型已完成；下一步由
    bugent 决定默认策略、目录清理和恢复语义。
 4. **插件 worker / 跨进程隔离**：审批队列、dialog、lease / TTL / revoke、
-   Worker RPC、crash fail-fast、capability proxy、restart supervision 与 NDJSON
-   process transport 已完成；下一步做协议握手、进程资源上限和 OS sandbox 边界。
+   Worker RPC、crash fail-fast、capability proxy、restart supervision、NDJSON
+   process transport 与 protocol handshake 已完成；下一步做 capability 细粒度
+   协商、进程资源上限和 OS sandbox 边界。
 5. **Portal / Dynamic / Toast / Tooltip**：补齐 OpenTUI 已有的通用组件接口。
 6. **动画编排增强**：更复杂的 stagger、滚动回弹和动画调试工具。
 7. **WebUI diff / 水平 ScrollBar**：等真实需求出现后再做。

@@ -10,6 +10,7 @@ export * from "./capability.ts";
 export * from "./approval.ts";
 export * from "./capability-proxy.ts";
 export * from "./process-rpc.ts";
+export * from "./rpc-handshake.ts";
 export * from "./worker-rpc.ts";
 export * from "./worker-supervisor.ts";
 export * from "./registry.ts";
