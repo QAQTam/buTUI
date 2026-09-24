@@ -8,8 +8,8 @@
 半块 / 占位符）+ Artifact Canvas + 列表 / 虚拟列表 / 滚动视口 / 弹窗 / 表格 /
 树 + 鼠标选区 / OSC 52 + 流式 Diff / 共享动画时钟 / 精确 ScrollBar +
 通用插件 / Slot / Keymap / 鼠标交互 / OSC 22 指针 / 拖动惯性 / tween /
-spring / timeline / Shimmer / Keymap chord / Slider / SplitPane 已跑通**，
-`bun test` 589 个用例全绿。
+spring / timeline / Shimmer / Keymap chord / Command Palette / Slider /
+SplitPane 已跑通**，`bun test` 593 个用例全绿。
 
 ```
 应用（你的 agent / 工具 / TUI）
@@ -546,7 +546,32 @@ createTuiApp({
 - `pendingSequence()` 可给状态栏 / 帮助面板显示当前前缀。
 - `@butui/keymap/solid` 的 `useKeymap()` 可让组件 / 插件临时挂载一层 keymap。
 
-`bun --conditions=browser run scripts/keymap-demo.tsx` 可试 F1 / Ctrl+O / Esc。
+`bun --conditions=browser run scripts/keymap-demo.tsx` 可试 F1 / Ctrl+O /
+Ctrl+K Ctrl+P / Esc。
+
+## Command Palette
+
+```tsx
+const registry = new CommandRegistry();
+const [open, setOpen] = createSignal(false);
+
+<CommandPalette
+  registry={registry}
+  open={open()}
+  onDismiss={() => setOpen(false)}
+  shortcut={command => command.id === "file.save" ? "ctrl+s" : undefined}
+/>
+```
+
+- 直接消费 `CommandRegistry.list()`，不维护第二份命令表。
+- 默认按 `title / id / description` 做 exact / prefix / substring / subsequence
+  评分；`when() === false` 的命令不展示。
+- 输入框自动聚焦；↑↓ / PageUp/PageDown / Home/End / Ctrl+P/N 选择结果。
+- Enter 执行并关闭，Esc 关闭；鼠标点击结果也可执行。
+- 命令错误仍由 `CommandRegistry.onError` 隔离。
+- 需要自定义布局时可只复用 `filterCommands()` / `commandScore()`。
+
+`bun --conditions=browser run scripts/command-palette-demo.tsx` 可直接体验。
 
 ## 流式渲染 O(1)
 
@@ -883,6 +908,9 @@ bun --conditions=browser run scripts/plugin-demo.tsx
 # 命令 / Keymap / scope
 bun --conditions=browser run scripts/keymap-demo.tsx
 
+# Command Palette
+bun --conditions=browser run scripts/command-palette-demo.tsx
+
 # 鼠标 hover / 双击 / 右键 / capture
 bun --conditions=browser run scripts/mouse-demo.tsx
 
@@ -921,9 +949,9 @@ Demo 的工作区是**内存实现**，但走的是完全一样的 journal / dif
 | `@butui/core` | 节点树、`rev` 失效传播、`childrenRevSum`、focus、事件冒泡、theme、ANSI 解析 |
 | `@butui/solid` | `@solidjs/universal` host ops、JSX 类型、Bun 编译插件、共享动画时钟 / tween / spring / timeline / 拖动惯性、`useMouseCapture` |
 | `@butui/runtime` | `createTuiApp`：终端、合帧重绘、事件分发、鼠标选区 / OSC 52 / OSC 22 指针 —— 应用作者的唯一入口 |
-| `@butui/components` | `createTextEditor` / `<Input>` / `<Textarea>` / `<Markdown>` / `<Code>` / `<Diff>` / `<ScrollBar>` / `<Slider>` / `<SplitPane>` / `<Shimmer>`、`createSelection` / `<List>` / `<VirtualList>`、`createScrollView`、`<Select>` / `<Tabs>` / `<Table>` / `<Tree>`、`<Button>` / `<Dialog>` / `<Modal>`、`ProgressBar` / `Spinner` / `Badge` / `Divider` / `KeyHint` |
+| `@butui/components` | `createTextEditor` / `<Input>` / `<Textarea>` / `<Markdown>` / `<Code>` / `<Diff>` / `<ScrollBar>` / `<Slider>` / `<SplitPane>` / `<Shimmer>` / `<CommandPalette>`、`createSelection` / `<List>` / `<VirtualList>`、`createScrollView`、`<Select>` / `<Tabs>` / `<Table>` / `<Tree>`、`<Button>` / `<Dialog>` / `<Modal>`、`ProgressBar` / `Spinner` / `Badge` / `Divider` / `KeyHint` |
 | `@butui/plugins` | 通用 `SlotRegistry` / `Plugin` / 错误隔离；`@butui/plugins/solid` 提供 `createSlot` / `<Slot>`；`@butui/plugins/loader` 提供 manifest / 配置 / 动态加载 / 自动发现 / capability 门控 |
-| `@butui/keymap` | `CommandRegistry` / `createKeymap`：scope、priority、when、冲突检测、help；Solid 适配 `useKeymap` |
+| `@butui/keymap` | `CommandRegistry` / `createKeymap`：scope、priority、when、多键 chord / 前缀超时、冲突检测、help；Solid 适配 `useKeymap` |
 | `@butui/agent` | 事件协议（NDJSON）、Session reducer、流式 diff 事件、SPEC §10.2 组件、Artifact Canvas |
 | `@butui/undo` | 工作区变更日志、行级 patch、undo 预览与执行（SPEC §8） |
 | `@butui/web` | WebUI：ANSI→HTML、DOM 组件、`mountWebUI`（复用同一个 Session） |
@@ -1095,8 +1123,8 @@ Bun.plugin(onLoad)
 
 ## 还没做
 
-- Keymap 已支持多键 chord / 超时前缀；Command Palette UI 和用户自定义绑定
-  持久化还没做
+- Keymap 已支持多键 chord / 超时前缀；Command Palette 已有组件，用户自定义
+  绑定持久化还没做
 - 插件已有 manifest / 配置 / 直接依赖自动发现 / 加载前 capability 门控；
   还缺运行时沙箱、权限审批 UI 与跨进程隔离
 - `@butui/components` 继续长：ASCIIFont / LineNumberRenderable 等按真实场景

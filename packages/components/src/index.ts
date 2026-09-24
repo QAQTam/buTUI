@@ -13,6 +13,8 @@ export * from "./input.tsx";
 export * from "./textarea.tsx";
 export * from "./selection.ts";
 export * from "./list.tsx";
+export * from "./command-palette.ts";
+export * from "./command-palette.tsx";
 export * from "./scroll.ts";
 export * from "./scrollbar.ts";
 export * from "./scrollbar.tsx";

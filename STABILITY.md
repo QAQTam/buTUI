@@ -36,7 +36,7 @@ const app = createTuiApp({
 | 布局 | `@butui/layout` | **稳定**（`Cell` / `Line` / `Frame` / `layout`） |
 | 渲染 | `@butui/renderer` | **稳定**（`Renderer` / `plainText` / `paintLine`） |
 | 终端 | `@butui/terminal` | **稳定**（`TerminalSession` / 输入解码 / 能力探测 / `osc22` / `osc52`） |
-| 基础组件 | `@butui/components` | **稳定**（编辑器 / 选择 / 列表 / 滚动 / ScrollBar / Slider / SplitPane / Diff / 弹窗 / 展示组件） |
+| 基础组件 | `@butui/components` | **稳定**（编辑器 / 选择 / 列表 / 滚动 / ScrollBar / Slider / SplitPane / CommandPalette / Diff / 弹窗 / 展示组件） |
 | 插件 / Slot | `@butui/plugins` | **稳定**（`Plugin` / `SlotRegistry`；Solid 适配在 `@butui/plugins/solid`；loader 在 `@butui/plugins/loader`） |
 | 命令 / Keymap | `@butui/keymap` | **稳定**（`CommandRegistry` / `Keymap`；Solid 适配在 `@butui/keymap/solid`） |
 | 流式文本 | `@butui/stream` | **稳定**（`StreamSource` / `DiffStream` / `<stream>`） |
@@ -630,6 +630,22 @@ const split = createSplitPane({
 - 不要把 Shimmer 铺到完整 Markdown / Diff；`ReasoningLine` 只在 streaming 时
   动画前缀。
 
+### 4.25 Command Palette：`<CommandPalette>`
+
+```tsx
+<CommandPalette
+  registry={registry}
+  open={open()}
+  onDismiss={() => setOpen(false)}
+/>
+```
+
+- 结果直接来自 `CommandRegistry.list()`；`when() === false` 默认不展示。
+- `filterCommands()` / `commandScore()` 可按 title / id / description 搜索。
+- 输入框自动聚焦，↑↓ / PageUp/PageDown / Home/End / Ctrl+P/N 选择。
+- Enter 执行并关闭，Esc 关闭，鼠标点击结果执行。
+- 命令错误由 `CommandRegistry.onError` 隔离；组件不吞错误。
+
 ## 5. 已知缺口（不要依赖，也不建议自己绕）
 
 - **列表只有单列 + 固定行高**：`itemHeight` 是常数，变高行（折行文本、展开的
@@ -661,8 +677,8 @@ const split = createSplitPane({
 - **鼠标没有 pointerId / 多指针**：hover 默认关闭（1003 事件量高）；
   OSC 22 是 best-effort，终端可忽略；跨终端窗口的 capture 不在协议范围内。
   惯性只接在 ScrollBar / Slider，不作用于 SplitPane 或文本选择。
-- **Keymap 已支持多键 chord / 超时前缀**：还缺 Command Palette UI 和用户自定义
-  绑定持久化。
+- **Keymap 已支持多键 chord / 超时前缀，Command Palette 已有基础 UI**：还缺用户
+  自定义绑定持久化、复杂权限门控和更丰富的 result metadata。
 - **插件 capability 不是沙箱**：它只在动态 import 前做同意门控，没有运行时
   权限拦截、审批 UI 或跨进程隔离；插件在应用进程内执行，只应加载可信代码。
 - **`@butui/web` 是实验层**：接口可能变。

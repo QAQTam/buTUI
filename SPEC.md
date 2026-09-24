@@ -1076,6 +1076,28 @@ second    = available - first
 
 ---
 
+### 5.27 Command Palette（v0.1 实现）
+
+`<CommandPalette>` 直接消费 `CommandRegistry`，不复制命令表：
+
+```tsx
+<CommandPalette
+  registry={registry}
+  open={open()}
+  onDismiss={() => setOpen(false)}
+  shortcut={command => shortcutFor(command.id)}
+/>
+```
+
+- `filterCommands()` / `commandScore()` 是纯函数：exact / prefix / substring /
+  subsequence 评分，覆盖 title / id / description。
+- `when() === false` 的命令默认隐藏；执行仍走 `CommandRegistry` 的错误隔离。
+- 输入框自动聚焦；↑↓ / PageUp/PageDown / Home/End / Ctrl+P/N 移动选择。
+- Enter 执行并关闭，Esc 关闭；鼠标点击列表项执行。
+- 可复用现有 `<Modal>` / `<Input>` / `<List>`，不新增布局或事件机制。
+
+---
+
 ### 5.17 应用上下文（v0.1 实现）
 
 组件要能问「现在多宽 / 什么色深 / 我想订一个全局键」，但既不该认识 runtime，
@@ -1580,6 +1602,7 @@ P1：
   trap，见 §5.15）
 - `Button`：`<Button>`（Enter / 空格 / 点击，焦点态自亮）
 - `ProgressBar` / `Spinner` / `Badge` / `Divider` / `KeyHint` / `Shimmer`：展示组件
+- `CommandPalette`：`filterCommands` + `CommandRegistry` + `<Input>` / `<List>` / `<Modal>`
 - `Select` / `Tabs`：`<Select>`（↑↓ + Enter）与 `<Tabs>`（←→ 立即切换）
 - `Table`：列宽显式给或按内容算，支持左 / 中 / 右对齐
 - `Tree`：受控展开（`expanded` + `onToggle`），←→ 展开收起、→ 进子节点
@@ -1618,7 +1641,6 @@ P1：
 - `FoldableOutput`（通用折叠；ToolCard 已接流式 Diff）
 - `SessionTree`
 - `AgentTimeline`
-- `CommandPalette`
 - `ToolGraph`
 - `BranchSwitcher`（现在只有 BranchTree）
 
@@ -2005,6 +2027,7 @@ type UiCommand =
 - runtime 支持结构类型 `keymap` 选项，顺序在 `onKey` 之后、`useKeyboard`
   之前。
 - `@butui/keymap/solid` 提供 `useKeymap()`。
+- `<CommandPalette>` 复用 `CommandRegistry` 与 `filterCommands()`，不复制命令表。
 
 不能把：
 
