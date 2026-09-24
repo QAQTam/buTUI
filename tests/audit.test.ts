@@ -4,8 +4,9 @@ import {
   createHttpAuditSink,
   createMemoryAuditLog,
   readAuditLog,
+  verifyAuditEvents,
   withAuditSinks,
-} from "@butui/plugins";
+ } from "@butui/plugins";
 import type { AuditRotationSummary } from "@butui/plugins";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -27,6 +28,54 @@ describe("audit log", () => {
     expect(audit.query({ since: 150 })).toEqual([
       { type: "capability.denied", pluginId: "b", seq: 2, at: 200 },
     ]);
+  });
+
+  test("hash chain 可检测篡改与重排", () => {
+    const audit = createMemoryAuditLog({ now: () => 1, hashChain: true });
+    const first = audit.record({ type: "a" });
+    const second = audit.record({ type: "b" });
+
+    expect(first.prevHash).toBe("");
+    expect(first.hash).toHaveLength(64);
+    expect(second.prevHash).toBe(first.hash);
+    expect(verifyAuditEvents(audit.query())).toMatchObject({
+      valid: true,
+      events: 2,
+      headHash: second.hash,
+    });
+
+    const tampered = audit.query().map(event =>
+      event.seq === 2 ? { ...event, type: "tampered" } : event
+    );
+    expect(verifyAuditEvents(tampered)).toMatchObject({
+      valid: false,
+      failedSeq: 2,
+      error: "hash mismatch",
+    });
+    expect(verifyAuditEvents([second, first])).toMatchObject({
+      valid: false,
+      failedSeq: 2,
+      error: "prevHash mismatch",
+    });
+  });
+
+  test("HMAC signature 使用独立密钥校验", () => {
+    const audit = createMemoryAuditLog({
+      now: () => 1,
+      signatureKey: "secret",
+    });
+    audit.record({ type: "a" });
+    audit.record({ type: "b" });
+
+    expect(verifyAuditEvents(audit.query(), { signatureKey: "secret" }).valid).toBe(
+      true
+    );
+    expect(verifyAuditEvents(audit.query(), { signatureKey: "wrong" })).toMatchObject(
+      {
+        valid: false,
+        error: "signature mismatch",
+      }
+    );
   });
 
   test("file log 持久化 NDJSON，可从磁盘重新查询", async () => {
@@ -78,6 +127,7 @@ describe("audit log", () => {
       maxFileBytes: 90,
       retainedFiles: 2,
       now: () => 100,
+      hashChain: true,
       onRotate(summary) {
         summaries.push(summary);
       },
@@ -105,6 +155,10 @@ describe("audit log", () => {
         "event.two",
         "audit.rotated",
       ]);
+      expect(verifyAuditEvents([...oldEvents, ...current])).toMatchObject({
+        valid: true,
+        events: 3,
+      });
     } finally {
       await audit.dispose();
       await fs.rm(dir, { recursive: true, force: true });

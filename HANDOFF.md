@@ -3,9 +3,9 @@
 > 交接时间：2026-09-24
 > 仓库：`/home/qaqtamsy/项目/buTUI-v0.2-frontier`
 > 功能基线提交：`61d889b feat(components): add capability approval dialog`
-> 工作区状态：本文件与 audit rotation / sinks 一并提交
-> 本轮能力：NDJSON rotation + remote audit sink
-> 当前回归：`747 pass / 0 fail`，86 个测试文件，`tsc --noEmit` 通过
+> 工作区状态：本文件与 audit integrity 一并提交
+> 本轮能力：hash chain + HMAC verification
+> 当前回归：`749 pass / 0 fail`，86 个测试文件，`tsc --noEmit` 通过
 
 ## 1. 项目定位
 
@@ -469,7 +469,8 @@ const bar = createScrollBar({
 - Audit persistence：memory / NDJSON file log 支持 type / plugin / 时间查询；
   capability grant / revoke / deny、worker restart、process start / error / exit /
   kill、cgroup create / release / recover 已接入；文件支持 size rotation、
-  retention / summary，`withAuditSinks` + HTTP NDJSON sink 支持批量远端汇聚与重试。
+  retention / summary，`withAuditSinks` + HTTP NDJSON sink 支持批量远端汇聚与重试；
+  可选 hash chain / HMAC signature，`verifyAuditEvents` 检测篡改、重排和错误密钥。
   审计失败不破坏原操作。
   Worker / process 只做崩溃和堆隔离，不是 capability 或 OS sandbox。
 
@@ -598,7 +599,7 @@ bridge、真实 tool event 对接或 bugent 快捷键迁移。
 当前：
 
 ```text
-747 pass / 0 fail
+749 pass / 0 fail
 86 test files
 tsc --noEmit pass
 ```
@@ -656,8 +657,8 @@ git diff --check
   approval queue / dialog、lease / TTL / revoke、Worker RPC、crash fail-fast、
   capability proxy、restart supervision、NDJSON process transport、protocol
   handshake、path / rate 策略、process resource limits、cgroup v2 lifecycle 和
-  NDJSON audit rotation / remote sink；仍无自动 cgroup 委派、OS 权限 sandbox、
-  audit 签名校验和远端持久化 ack。
+  NDJSON audit rotation / remote sink / hash chain / HMAC；仍无自动 cgroup 委派、
+  OS 权限 sandbox、远端持久化 ack 和接收端去重。
 - 鼠标已有 hover / 双击 / 右键 / pointer capture / local 坐标 / drag 生命周期 /
   OSC 22 指针 / 拖动惯性；无 pointerId、多指针。惯性只接 ScrollBar / Slider。
 - Keymap 已有多键 chord / 前缀超时，Command Palette 已有基础 UI；无用户自定义
@@ -695,8 +696,8 @@ git diff --check
 4. **插件 worker / 跨进程隔离**：审批队列、dialog、lease / TTL / revoke、
    Worker RPC、crash fail-fast、capability proxy、restart supervision、NDJSON
    process transport、protocol handshake、path / rate 策略、process resource
-   limits、cgroup v2 lifecycle 与 NDJSON audit rotation / remote sink 已完成；
-   下一步做自动 cgroup 委派、权限 sandbox，以及 audit 签名 / 远端 ack。
+   limits、cgroup v2 lifecycle 与 NDJSON audit rotation / remote sink / hash chain /
+   HMAC 已完成；下一步做自动 cgroup 委派、权限 sandbox，以及远端 ack / 去重。
 5. **Portal / Dynamic / Toast / Tooltip**：补齐 OpenTUI 已有的通用组件接口。
 6. **动画编排增强**：更复杂的 stagger、滚动回弹和动画调试工具。
 7. **WebUI diff / 水平 ScrollBar**：等真实需求出现后再做。

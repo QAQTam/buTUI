@@ -1,3 +1,4 @@
+import { createHash, createHmac } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 
@@ -6,14 +7,41 @@ export interface AuditEvent {
   at: number;
   type: string;
   pluginId?: string;
+  prevHash?: string;
+  hash?: string;
+  signature?: string;
   [key: string]: unknown;
 }
 
-export interface AuditEventInput {
+export type AuditEventInput = {
   type: string;
   pluginId?: string;
   at?: number;
   [key: string]: unknown;
+};
+
+export interface AuditIntegrityOptions {
+  /** 启用 prevHash / hash 链。 */
+  hashChain?: boolean;
+  /** 启用后对 hash 做 HMAC-SHA256，并写入 signature。 */
+  signatureKey?: string | Uint8Array;
+  /** 已有日志续写时的起始 seq；默认 1。 */
+  startSeq?: number;
+  /** 已有日志续写时的 head hash。 */
+  startHash?: string;
+}
+
+export interface AuditVerificationOptions {
+  signatureKey?: string | Uint8Array;
+  requireChain?: boolean;
+}
+
+export interface AuditVerificationResult {
+  valid: boolean;
+  events: number;
+  headHash?: string;
+  failedSeq?: number;
+  error?: string;
 }
 
 export interface AuditQuery {
@@ -41,7 +69,7 @@ export interface AuditFs {
   rm?(path: string): Promise<void>;
 }
 
-export interface FileAuditLogOptions {
+export interface FileAuditLogOptions extends AuditIntegrityOptions {
   path: string;
   now?: () => number;
   /** 内存中保留的最新事件数；默认 1,000。完整历史从文件查询。 */
@@ -67,7 +95,7 @@ export interface AuditSink {
   close?(): void | Promise<void>;
 }
 
-export interface MemoryAuditLogOptions {
+export interface MemoryAuditLogOptions extends AuditIntegrityOptions {
   now?: () => number;
   maxEvents?: number;
 }
@@ -115,8 +143,10 @@ export function createMemoryAuditLog(
 ): AuditLog {
   const now = options.now ?? (() => Date.now());
   const maxEvents = normalizeLimit(options.maxEvents ?? Number.MAX_SAFE_INTEGER);
+  const integrity = normalizeIntegrity(options);
   const events: AuditEvent[] = [];
-  let nextSeq = 1;
+  let nextSeq = options.startSeq ?? 1;
+  let lastHash = options.startHash;
   let disposed = false;
 
   return {
@@ -125,11 +155,16 @@ export function createMemoryAuditLog(
     },
     record(input) {
       if (disposed) throw new Error("[butui] audit log 已关闭");
-      const event: AuditEvent = {
-        ...input,
-        seq: nextSeq++,
-        at: input.at ?? now(),
-      };
+      const event = withAuditIntegrity(
+        {
+          ...input,
+          seq: nextSeq++,
+          at: input.at ?? now(),
+        },
+        lastHash,
+        integrity
+      );
+      if (event.hash) lastHash = event.hash;
       events.push(event);
       if (events.length > maxEvents) events.splice(0, events.length - maxEvents);
       return event;
@@ -152,9 +187,11 @@ export function createFileAuditLog(
   const maxMemoryEvents = normalizeLimit(options.maxMemoryEvents ?? 1_000);
   const maxFileBytes = normalizeOptionalLimit(options.maxFileBytes);
   const retainedFiles = normalizeRetention(options.retainedFiles ?? 5);
+  const integrity = normalizeIntegrity(options);
   const events: AuditEvent[] = [];
   let pending: AuditEvent[] = [];
-  let nextSeq = 1;
+  let nextSeq = options.startSeq ?? 1;
+  let lastHash = options.startHash;
   let scheduled = false;
   let disposed = false;
   let writeChain: Promise<void> = Promise.resolve();
@@ -190,15 +227,20 @@ export function createFileAuditLog(
     } catch {
       // summary 可退化；rotation 本身已经成功。
     }
-    const summary: AuditEvent = {
-      seq: nextSeq++,
-      at: now(),
-      type: "audit.rotated",
-      path: options.path,
-      rotatedPath,
-      events: rotatedEvents,
-      bytes: fileBytes,
-    };
+    const summary = withAuditIntegrity(
+      {
+        seq: nextSeq++,
+        at: now(),
+        type: "audit.rotated",
+        path: options.path,
+        rotatedPath,
+        events: rotatedEvents,
+        bytes: fileBytes,
+      },
+      lastHash,
+      integrity
+    );
+    if (summary.hash) lastHash = summary.hash;
     events.push(summary);
     if (events.length > maxMemoryEvents) {
       events.splice(0, events.length - maxMemoryEvents);
@@ -266,11 +308,16 @@ export function createFileAuditLog(
     },
     record(input) {
       if (disposed) throw new Error("[butui] audit log 已关闭");
-      const event: AuditEvent = {
-        ...input,
-        seq: nextSeq++,
-        at: input.at ?? now(),
-      };
+      const event = withAuditIntegrity(
+        {
+          ...input,
+          seq: nextSeq++,
+          at: input.at ?? now(),
+        },
+        lastHash,
+        integrity
+      );
+      if (event.hash) lastHash = event.hash;
       events.push(event);
       if (events.length > maxMemoryEvents) {
         events.splice(0, events.length - maxMemoryEvents);
@@ -453,6 +500,55 @@ export function queryAuditEvents(
   return result;
 }
 
+export function verifyAuditEvents(
+  events: readonly AuditEvent[],
+  options: AuditVerificationOptions = {}
+): AuditVerificationResult {
+  const requireChain =
+    options.requireChain ?? events.some(event => event.hash !== undefined);
+  let previousHash = "";
+  let expectedSeq = events[0]?.seq ?? 1;
+  let processed = 0;
+
+  for (const event of events) {
+    if (event.seq !== expectedSeq) {
+      return invalidAudit(event.seq, `expected seq ${expectedSeq}`, processed);
+    }
+    expectedSeq++;
+    if (!requireChain) {
+      processed++;
+      continue;
+    }
+    if (!event.hash) {
+      return invalidAudit(event.seq, "missing hash", processed);
+    }
+    if ((event.prevHash ?? "") !== previousHash) {
+      return invalidAudit(event.seq, "prevHash mismatch", processed);
+    }
+    const expected = computeAuditDigest(
+      withoutIntegrityFields(event),
+      options.signatureKey
+    );
+    if (expected.hash !== event.hash) {
+      return invalidAudit(event.seq, "hash mismatch", processed);
+    }
+    if (
+      options.signatureKey !== undefined &&
+      expected.signature !== event.signature
+    ) {
+      return invalidAudit(event.seq, "signature mismatch", processed);
+    }
+    previousHash = event.hash;
+    processed++;
+  }
+
+  return {
+    valid: true,
+    events: events.length,
+    ...(previousHash ? { headHash: previousHash } : {}),
+  };
+}
+
 export function safeRecordAudit(
   audit: AuditLog | undefined,
   event: AuditEventInput
@@ -492,6 +588,88 @@ function normalizeRetention(value: number): number {
     throw new Error("[butui] retainedFiles must be a non-negative number");
   }
   return Math.floor(value);
+}
+
+function normalizeIntegrity(
+  options: AuditIntegrityOptions
+): AuditIntegrityOptions {
+  return {
+    hashChain: options.hashChain === true || options.signatureKey !== undefined,
+    ...(options.signatureKey !== undefined
+      ? { signatureKey: options.signatureKey }
+      : {}),
+  };
+}
+
+function withAuditIntegrity(
+  event: AuditEvent,
+  previousHash: string | undefined,
+  integrity: AuditIntegrityOptions
+): AuditEvent {
+  if (!integrity.hashChain) return event;
+  const chained: AuditEvent = {
+    ...event,
+    prevHash: previousHash ?? "",
+  };
+  const digest = computeAuditDigest(chained, integrity.signatureKey);
+  return {
+    ...chained,
+    hash: digest.hash,
+    ...(digest.signature ? { signature: digest.signature } : {}),
+  };
+}
+
+function computeAuditDigest(
+  event: AuditEvent,
+  signatureKey: string | Uint8Array | undefined
+): { hash: string; signature?: string } {
+  const hash = createHash("sha256")
+    .update(stableStringify(event))
+    .digest("hex");
+  return {
+    hash,
+    ...(signatureKey !== undefined
+      ? {
+          signature: createHmac("sha256", signatureKey)
+            .update(hash)
+            .digest("hex"),
+        }
+      : {}),
+  };
+}
+
+function withoutIntegrityFields(event: AuditEvent): AuditEvent {
+  const { hash: _hash, signature: _signature, ...rest } = event;
+  return rest;
+}
+
+function stableStringify(value: unknown): string {
+  if (value === undefined) return "null";
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map(item => stableStringify(item)).join(",")}]`;
+  }
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, item]) => item !== undefined)
+    .sort(([left], [right]) => left.localeCompare(right));
+  return `{${entries
+    .map(([key, item]) => `${JSON.stringify(key)}:${stableStringify(item)}`)
+    .join(",")}}`;
+}
+
+function invalidAudit(
+  failedSeq: number,
+  error: string,
+  events: number
+): AuditVerificationResult {
+  return {
+    valid: false,
+    events,
+    failedSeq,
+    error,
+  };
 }
 
 function serializeAudit(events: readonly AuditEvent[]): string {
