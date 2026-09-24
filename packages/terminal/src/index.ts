@@ -505,6 +505,8 @@ export interface PtyRunOptions {
   cols?: number;
   rows?: number;
   name?: string;
+  /** abort 时终止子进程；已 aborted 时立即终止。 */
+  signal?: AbortSignal;
   /** PTY 与子进程建立后、等待退出前的钩子。 */
   onReady?: (terminal: Bun.Terminal) => void;
 }
@@ -535,6 +537,7 @@ export async function runPtyWithRawLease(
       },
     });
     let unsubscribeInput: (() => void) | undefined;
+    let unsubscribeAbort: (() => void) | undefined;
     const unsubscribeResize = session.onResize(size => {
       try {
         terminal.resize(size.columns, size.rows);
@@ -549,10 +552,27 @@ export async function runPtyWithRawLease(
         ...(options.env ? { env: options.env } : {}),
         terminal,
       });
+      const abort = (): void => {
+        try {
+          process.kill();
+        } catch {
+          // 进程可能已退出；abort 是幂等清理。
+        }
+      };
+      if (options.signal) {
+        if (options.signal.aborted) {
+          abort();
+        } else {
+          options.signal.addEventListener("abort", abort, { once: true });
+          unsubscribeAbort = () =>
+            options.signal?.removeEventListener("abort", abort);
+        }
+      }
       unsubscribeInput = context.onInput(chunk => terminal.write(chunk));
       options.onReady?.(terminal);
       return await process.exited;
     } finally {
+      unsubscribeAbort?.();
       unsubscribeInput?.();
       unsubscribeResize();
       terminal.close();

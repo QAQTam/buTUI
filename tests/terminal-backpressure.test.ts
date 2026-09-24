@@ -281,6 +281,40 @@ describe("TerminalSession backpressure", () => {
     }
   );
 
+  test.skipIf(process.platform === "win32")(
+    "runPtyWithRawLease abort 终止子进程并恢复 frame",
+    async () => {
+      const { stdin, stdout } = streams(true);
+      const session = new TerminalSession({
+        stdin,
+        stdout,
+        altScreen: false,
+        mouse: false,
+        bracketedPaste: false,
+        focusEvents: false,
+      });
+      session.start();
+
+      const controller = new AbortController();
+      const started = Date.now();
+      const exited = session.runPty("child", "tool", {
+        cmd: [
+          process.execPath,
+          "-e",
+          "setInterval(() => {}, 1000)",
+        ],
+        signal: controller.signal,
+      });
+      setTimeout(() => controller.abort(), 50);
+      await exited;
+
+      expect(Date.now() - started).toBeLessThan(1_000);
+      expect(session.frameLease?.state).toBe("active");
+      expect(session.outputArbiter.current()).toBe(session.frameLease);
+      session.stop();
+    }
+  );
+
   test("runtime withRawLease 自动恢复 frame 并请求 full damage", async () => {
     const { stdin, stdout } = streams(true);
     const session = new TerminalSession({
