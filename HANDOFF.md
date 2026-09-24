@@ -2,8 +2,8 @@
 
 > 交接时间：2026-09-24  
 > 仓库：`/home/qaqtamsy/项目/buTUI`  
-> 功能基线提交：`6e9f285 feat(plugins): 自动发现与 capability 门控`
-> 工作区状态：插件自动发现 / capability 能力提交处干净
+> 功能基线提交：`e625f5e feat(keymap): 命令注册与作用域快捷键`
+> 工作区状态：Keymap / Command Registry 提交处干净
 > 本轮能力：Keymap / Command Registry + runtime 按键优先级接入
 > 当前回归：`539 pass / 0 fail`，`tsc --noEmit` 通过
 
