@@ -324,12 +324,14 @@ renderer             → 只画 cursor 覆盖的 prefix
 ```
 
 - `speed` 是基础列 / 秒；CJK / emoji 按 `Bun.stringWidth` 计列。
+- 默认 120fps；同一 fps 的所有 smooth stream 共享一个 timer。
 - `catchUpMs` 控制积压追平时间，`maxColumnsPerFrame` 防止超大 backlog 一帧喷完。
+- target 没变时不重建 tail；cursor 没跨过可见列时不触发 Solid / layout。
 - `Bun.sliceAnsi` 负责 ANSI / grapheme 安全切片，CJK、emoji、Markdown 样式不会
   被劈开。
 - 已定稿行只追加；volatile tail 可以重写，但 cursor 不回退。
 - 挂载时已有历史立即显示，只 reveal 挂载后新增内容。
-- 共享 60fps 时钟，所有 smooth stream 只有一个 timer；无积压时自动退订。
+- 只保存行引用和未 reveal 行的宽度缓存，不复制文本；无积压时自动退订。
 - `TERM=dumb` / `BUTUI_REDUCED_MOTION=1` 直接显示。
 
 组件 API 是 `<StreamText smooth>` / `<StreamMarkdown smooth>`；手动组合可用
@@ -448,7 +450,8 @@ chunk 3 ─┘
 空闲后的第一个变更走微任务；帧预算内后续 chunk 只标脏，不反复 flush。最后一次
 变更仍会排尾帧，所以不会丢掉流式内容的尾巴。`paint()` 仍是立即绘制的逃生口。
 在 1ms tick、每 tick 2 chunk 的基准里，microtask 模式写入 1000 次 / 89640
-字节，frame 60fps 写入 68 次 / 7439 字节，用时基本相同。
+字节，frame 60fps 写入 68 次 / 7439 字节，用时基本相同。smooth reveal
+120fps 写入 176 次 / 17921 字节，但可见内容是逐帧连续推进，而不是一次跳块。
 
 没有它，每个 app 都要手写 `schedulePaint`，并且在每个可能改状态的地方记得
 调用 —— demo 里曾经有 6 处，漏一处就是「界面不刷新」这种最难查的 bug。

@@ -9,7 +9,7 @@
 树 + 鼠标选区 / OSC 52 + 流式 Diff / 共享动画时钟 / 精确 ScrollBar +
 通用插件 / Slot / Keymap / 鼠标交互 / OSC 22 指针 / 拖动惯性 / tween /
 spring / timeline / Shimmer / Keymap chord / Command Palette / Slider /
-SplitPane / 高频 chunk 合帧 / smooth reveal 已跑通**，`bun test` 604 个用例全绿。
+SplitPane / 高频 chunk 合帧 / smooth reveal 已跑通**，`bun test` 607 个用例全绿。
 
 ```
 应用（你的 agent / 工具 / TUI）
@@ -618,8 +618,8 @@ frame 模式的语义：
 | 模式 | 终端写入 | 写入字节 | 说明 |
 |---|---:|---:|---|
 | `microtask` | 1000 | 89640 | 每个 tick 都绘制 |
-| `frame` 60fps | 68 | 7529 | 合并终端差分 |
-| `smooth` reveal | 81 | 9140 | 合并 + 连续推进可见 cursor |
+| `frame` 60fps | 68 | 7439 | 合并终端差分 |
+| `smooth` reveal 120fps | 176 | 17921 | 合并 + 连续推进可见 cursor |
 
 ### 平滑显现：smooth reveal
 
@@ -630,9 +630,10 @@ frame 模式的语义：
 <StreamMarkdown
   source={source}
   smooth={{
+    fps: 120,              // 默认就是 120
     speed: 160,            // 基础 160 列/秒；CJK 按 2 列
     catchUpMs: 180,        // 积压在这个时间内平滑追平
-    maxColumnsPerFrame: 256,
+    maxColumnsPerFrame: 128,
   }}
 />
 ```
@@ -651,7 +652,7 @@ view.dispose();  // 退订 source / 时钟
 语义：
 
 - 挂载时已有历史立即显示，只有之后新增的内容做 reveal。
-- target 可以按 2000 tok/s 增长，但可见 cursor 按 60fps、每帧有限列推进。
+- target 可以按 2000 tok/s 增长，但可见 cursor 默认按 120fps、每帧有限列推进。
 - 积压变大时按 `catchUpMs` 加速，不会无限落后；`maxColumnsPerFrame` 防止
   超大 backlog 一帧喷完。
 - `Bun.sliceAnsi` 按 grapheme / SGR 边界切片，CJK、emoji、Markdown 样式不会
@@ -660,10 +661,14 @@ view.dispose();  // 退订 source / 时钟
 
 `frame` 与 `smooth` 解决不同问题：前者压终端差分频率，后者控制视觉推进。
 只做 smooth 时保持默认 `microtask` 即可 —— reveal 自己已经把可见变更限制在
-60fps；如果再叠低 fps 的 frame，反而会把 reveal 帧吞掉。
+120fps；如果再叠低 fps 的 frame，反而会把 reveal 帧吞掉。
 
 `bun --conditions=browser run scripts/smooth-stream-demo.tsx` 可直接观察 2000
 chunk/s 输入下的逐列流动效果。
+
+`bun --conditions=browser run scripts/smooth-bench.tsx` 可查看内存 / CPU
+增量。当前实现只保存行引用和未 reveal 行的宽度缓存，不复制文本；20k 行时
+wrapper 增量约 265.5 KiB（约 13.6 B/行）。
 
 ### 用法
 

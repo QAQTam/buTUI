@@ -42,7 +42,13 @@ async function run(mode: "microtask" | "frame" | "smooth") {
       mode === "smooth" ? (
         <StreamText
           source={source}
-          smooth={{ speed: 160, catchUpMs: 180, reducedMotion: false }}
+          smooth={{
+            fps: 120,
+            speed: 160,
+            catchUpMs: 180,
+            maxColumnsPerFrame: 128,
+            reducedMotion: false,
+          }}
         />
       ) : (
         <StreamText source={source} />

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { AnimationScheduler } from "@butui/solid";
 import { mount } from "@butui/test";
 import {
+  DEFAULT_SMOOTH_FPS,
   StreamText,
   createMarkdownStream,
   createSmoothStream,
@@ -16,6 +17,10 @@ function manualScheduler() {
 }
 
 describe("createSmoothStream —— reveal cursor", () => {
+  test("默认 120fps", () => {
+    expect(DEFAULT_SMOOTH_FPS).toBe(120);
+  });
+
   test("已有历史立即显示，挂载后的新内容才做 reveal", () => {
     const source = createTextStream({ width: 20 });
     source.push("history\n");
@@ -147,6 +152,44 @@ describe("createSmoothStream —— reveal cursor", () => {
 
     smooth.finish();
     expect(smooth.lag()).toBe(0);
+    smooth.dispose();
+  });
+
+  test("cursor 没跨过可见列时不触发版本 / Solid 更新", () => {
+    const scheduler = manualScheduler();
+    const source = createTextStream({ width: 20 });
+    const smooth = createSmoothStream(source, {
+      speed: 1,
+      catchUpMs: 100_000,
+      reducedMotion: false,
+      scheduler,
+    });
+    scheduler.stop();
+    source.push("abcdef");
+
+    scheduler.tick(0); // flush 初始版本并建立时钟基线
+    const initialVersion = smooth.version();
+    for (let time = 8; time <= 400; time += 8) scheduler.tick(time);
+    expect(smooth.version()).toBe(initialVersion);
+    expect(smooth.tail()).toBe("");
+    expect(smooth.stats.smoothSkippedTicks).toBeGreaterThan(0);
+    smooth.dispose();
+  });
+
+  test("revealed lines 复用 source 行对象，不复制文本", () => {
+    const source = createTextStream({ width: 20 });
+    for (let i = 0; i < 500; i++) source.push(`line ${i}\n`);
+
+    const smooth = createSmoothStream(source, {
+      speed: 10,
+      reducedMotion: false,
+    });
+
+    expect(smooth.lines.length).toBe(500);
+    expect(smooth.lines[0]).toBe(source.lines[0]);
+    expect(smooth.lines[499]).toBe(source.lines[499]);
+    expect(smooth.stats.revealLines).toBe(500);
+    expect(smooth.stats.revealPendingWidths).toBe(0);
     smooth.dispose();
   });
 });

@@ -10,6 +10,9 @@
  * 推进 `speed` 列；积压变大时按 `catchUpMs` 在有限时间内加速追平。追赶仍然按
  * 帧推进，不会一次性把 backlog 全部刷到屏幕上。
  *
+ * 默认 120fps。高频时钟只有“有积压”时才订阅，target 没变时不重建 tail，cursor
+ * 没跨过可见列时不触发 Solid / layout，避免把 120fps 变成 120 次无效重绘。
+ *
  * ANSI 切片交给 `Bun.sliceAnsi`，CJK / emoji 不会被劈开；已定稿行只追加，
  * volatile tail 可以随 source 重写，但不会破坏已经显示的前缀。
  */
@@ -17,11 +20,24 @@ import { AnimationScheduler, prefersReducedMotion } from "@butui/solid";
 import { createSignal } from "solid-js";
 import type { StreamLine, StreamSource } from "./source.ts";
 
-/** 所有 smooth stream 共享一个 60fps 时钟，避免每个流各起一个 timer。 */
-const smoothScheduler = new AnimationScheduler({ fps: 60 });
+export const DEFAULT_SMOOTH_FPS = 120;
+
+const smoothSchedulers = new Map<number, AnimationScheduler>();
 const EPSILON = 1e-6;
 
+function schedulerForFps(fps: number): AnimationScheduler {
+  const normalized = Math.max(1, Math.min(240, Math.round(fps)));
+  let scheduler = smoothSchedulers.get(normalized);
+  if (!scheduler) {
+    scheduler = new AnimationScheduler({ fps: normalized });
+    smoothSchedulers.set(normalized, scheduler);
+  }
+  return scheduler;
+}
+
 export interface SmoothStreamOptions {
+  /** 目标刷新率，默认 120；同一 fps 的所有流共享一个 timer。 */
+  fps?: number;
   /**
    * 基础显现速度，单位是终端列 / 秒。默认 160。
    *
@@ -30,13 +46,13 @@ export interface SmoothStreamOptions {
   speed?: number;
   /** 当前积压在这个时间内追平；默认 180ms。越大越柔和，越小越跟手。 */
   catchUpMs?: number;
-  /** 单帧最多推进多少列，默认 256；防止超大 backlog 一帧跳完整段。 */
+  /** 单帧最多推进多少列，默认 128；防止超大 backlog 一帧跳完整段。 */
   maxColumnsPerFrame?: number;
   /** false 时直接显示 target，不做 reveal 动画。 */
   enabled?: boolean;
   /** 测试 / 嵌入方覆盖 reduced-motion 环境检测。 */
   reducedMotion?: boolean;
-  /** 测试 / 嵌入方注入时钟。 */
+  /** 测试 / 嵌入方注入时钟；给定时忽略 fps。 */
   scheduler?: AnimationScheduler;
 }
 
@@ -55,8 +71,9 @@ export function createSmoothStream(
 ): SmoothStream {
   const speed = Math.max(1, options.speed ?? 160);
   const catchUpMs = Math.max(16, options.catchUpMs ?? 180);
-  const maxColumnsPerFrame = Math.max(1, options.maxColumnsPerFrame ?? 256);
-  const scheduler = options.scheduler ?? smoothScheduler;
+  const maxColumnsPerFrame = Math.max(1, options.maxColumnsPerFrame ?? 128);
+  const fps = Math.max(1, Math.min(240, options.fps ?? DEFAULT_SMOOTH_FPS));
+  const scheduler = options.scheduler ?? schedulerForFps(fps);
   const enabled =
     options.enabled !== false &&
     !(options.reducedMotion ?? prefersReducedMotion());
@@ -64,27 +81,39 @@ export function createSmoothStream(
   const revealedLines: StreamLine[] = [];
   const [version, setVersion] = createSignal(0);
   const listeners = new Set<() => void>();
-  const committedWidths: number[] = [];
+  const pendingWidths = new Map<number, number>();
   let committedTotalWidth = 0;
   let knownCommitted = 0;
   let revealedWidth = 0;
+  let tailSource = "";
   let tailLines: string[] = [];
   let tailWidths: number[] = [];
+  let tailPrefixWidths: number[] = [];
+  let tailTotalWidth = 0;
+  let tailDirty = true;
+  let tailRevision = 0;
   let cursorLine = 0;
   let cursorColumns = 0;
   let currentTail = "";
+  let renderedLineCount = 0;
+  let renderedCursorLine = -1;
+  let renderedCursorColumns = -1;
+  let renderedTailRevision = -1;
   let currentRate = speed;
   let lastTickAt: number | undefined;
   let stopTick: (() => void) | undefined;
   let stopSource: (() => void) | undefined;
   let disposed = false;
+  let tickCount = 0;
+  let skippedTickCount = 0;
+  let renderCount = 0;
 
   const widthOf = (text: string): number => Bun.stringWidth(text);
 
   const syncCommitted = (): void => {
     for (let i = knownCommitted; i < source.lines.length; i++) {
       const width = widthOf(source.lines[i]!.text);
-      committedWidths.push(width);
+      pendingWidths.set(i, width);
       committedTotalWidth += width;
     }
     knownCommitted = source.lines.length;
@@ -94,29 +123,33 @@ export function createSmoothStream(
     const line = source.lines[index];
     if (!line || revealedLines.length !== index) return;
     revealedLines.push(line);
-    revealedWidth += committedWidths[index] ?? widthOf(line.text);
-  };
-
-  const targetWidth = (): number => {
-    let total = committedTotalWidth;
-    for (const width of tailWidths) total += width;
-    return total;
-  };
-
-  const shownWidth = (): number => {
-    let total = revealedWidth;
-    if (cursorLine < source.lines.length) return total + cursorColumns;
-
-    const tailIndex = cursorLine - source.lines.length;
-    const fullTail = Math.min(tailIndex, tailLines.length);
-    for (let i = 0; i < fullTail; i++) total += tailWidths[i] ?? 0;
-    if (tailIndex < tailLines.length) total += cursorColumns;
-    return total;
+    revealedWidth += lineWidth(index);
+    pendingWidths.delete(index);
   };
 
   const lineWidth = (index: number): number => {
-    if (index < source.lines.length) return committedWidths[index] ?? 0;
+    if (index < source.lines.length) {
+      const cached = pendingWidths.get(index);
+      if (cached !== undefined) return cached;
+      const width = widthOf(source.lines[index]!.text);
+      pendingWidths.set(index, width);
+      return width;
+    }
     return tailWidths[index - source.lines.length] ?? 0;
+  };
+
+  const targetWidth = (): number => committedTotalWidth + tailTotalWidth;
+
+  const shownWidth = (): number => {
+    if (cursorLine < source.lines.length) {
+      return revealedWidth + cursorColumns;
+    }
+
+    const tailIndex = cursorLine - source.lines.length;
+    if (tailIndex >= tailLines.length) {
+      return revealedWidth + tailTotalWidth;
+    }
+    return revealedWidth + (tailPrefixWidths[tailIndex] ?? 0) + cursorColumns;
   };
 
   const totalLines = (): number => source.lines.length + tailLines.length;
@@ -129,8 +162,22 @@ export function createSmoothStream(
    */
   const syncTarget = (): void => {
     syncCommitted();
-    tailLines = source.tail() === "" ? [] : source.tail().split("\n");
-    tailWidths = tailLines.map(widthOf);
+    if (tailDirty) {
+      const nextTail = source.tail();
+      if (nextTail !== tailSource) {
+        tailSource = nextTail;
+        tailLines = nextTail === "" ? [] : nextTail.split("\n");
+        tailWidths = tailLines.map(widthOf);
+        tailPrefixWidths = new Array(tailWidths.length);
+        tailTotalWidth = 0;
+        for (let i = 0; i < tailWidths.length; i++) {
+          tailPrefixWidths[i] = tailTotalWidth;
+          tailTotalWidth += tailWidths[i] ?? 0;
+        }
+        tailRevision++;
+      }
+      tailDirty = false;
+    }
 
     const total = totalLines();
     if (cursorLine > total) {
@@ -147,7 +194,7 @@ export function createSmoothStream(
     }
 
     while (cursorLine < source.lines.length) {
-      const width = committedWidths[cursorLine] ?? 0;
+      const width = lineWidth(cursorLine);
       if (cursorColumns + EPSILON < width) break;
       pushCommittedLine(cursorLine);
       cursorLine++;
@@ -155,10 +202,7 @@ export function createSmoothStream(
     }
 
     if (cursorLine < source.lines.length) {
-      cursorColumns = Math.min(
-        cursorColumns,
-        committedWidths[cursorLine] ?? 0
-      );
+      cursorColumns = Math.min(cursorColumns, lineWidth(cursorLine));
     } else if (cursorLine < total) {
       cursorColumns = Math.min(
         cursorColumns,
@@ -190,17 +234,39 @@ export function createSmoothStream(
     return parts.join("\n");
   };
 
-  const renderView = (force = false): void => {
+  const renderView = (force = false): boolean => {
+    const visibleColumns = Math.floor(cursorColumns);
+    const lineCountChanged = revealedLines.length !== renderedLineCount;
+    const cursorChanged =
+      cursorLine !== renderedCursorLine ||
+      visibleColumns !== renderedCursorColumns;
+    const tailChanged = tailRevision !== renderedTailRevision;
+
+    if (!force && !lineCountChanged && !cursorChanged && !tailChanged) {
+      return false;
+    }
+
     const nextTail = renderTail();
-    if (!force && nextTail === currentTail) return;
+    renderedLineCount = revealedLines.length;
+    renderedCursorLine = cursorLine;
+    renderedCursorColumns = visibleColumns;
+    renderedTailRevision = tailRevision;
+
+    // tail 的 ANSI / 文本可能被 source 重写，但可见 prefix 恰好相同；
+    // 没有结构变化时不必触发 Solid。
+    if (!force && !lineCountChanged && nextTail === currentTail) {
+      return false;
+    }
+
     currentTail = nextTail;
+    renderCount++;
     setVersion(v => v + 1);
     for (const listener of [...listeners]) listener();
+    return true;
   };
 
-  const advance = (columns: number): void => {
+  const advance = (columns: number): boolean => {
     let remaining = columns;
-    syncTarget();
 
     while (remaining > EPSILON) {
       const total = totalLines();
@@ -238,7 +304,7 @@ export function createSmoothStream(
       }
     }
 
-    renderView(true);
+    return renderView(false);
   };
 
   const revealAll = (): void => {
@@ -279,6 +345,7 @@ export function createSmoothStream(
 
   const tick = (time: number): void => {
     if (disposed) return;
+    tickCount++;
     if (!enabled) {
       revealAll();
       stopAnimation();
@@ -307,14 +374,15 @@ export function createSmoothStream(
     const blend = 1 - Math.exp(-dt / 80);
     currentRate += (targetRate - currentRate) * blend;
 
-    const frameScale = dt / (1000 / 60);
+    const frameScale = dt / (1000 / fps);
     const step = Math.min(
       lag,
       (currentRate * dt) / 1000,
       maxColumnsPerFrame * frameScale
     );
-    if (step <= EPSILON) return;
-    advance(step);
+    if (step <= EPSILON || !advance(step)) {
+      skippedTickCount++;
+    }
   };
 
   const ensureAnimation = (): void => {
@@ -331,6 +399,7 @@ export function createSmoothStream(
 
   const onSourceChange = (): void => {
     if (disposed) return;
+    tailDirty = true;
     if (!enabled) {
       revealAll();
       return;
@@ -368,6 +437,11 @@ export function createSmoothStream(
       return {
         ...source.stats,
         revealLag: Math.max(0, targetWidth() - shownWidth()),
+        revealLines: revealedLines.length,
+        revealPendingWidths: pendingWidths.size,
+        smoothTicks: tickCount,
+        smoothSkippedTicks: skippedTickCount,
+        smoothRenders: renderCount,
       };
     },
     lag() {
@@ -385,6 +459,7 @@ export function createSmoothStream(
       stopSource?.();
       stopSource = undefined;
       listeners.clear();
+      pendingWidths.clear();
     },
   };
 }

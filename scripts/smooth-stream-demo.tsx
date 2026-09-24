@@ -3,8 +3,8 @@
  *
  *   bun --conditions=browser run scripts/smooth-stream-demo.tsx
  *
- * 生产者按约 2000 chunk/s 推入，显示端以 160 列/秒起步；积压时在 180ms
- * 内平滑追赶，而不是每个 chunk 到了一次性跳出。
+ * 生产者按约 2000 chunk/s 推入，显示端以 120fps / 160 列/秒起步；积压时在
+ * 180ms 内平滑追赶，而不是每个 chunk 到了一次性跳出。
  */
 import { createTuiApp } from "@butui/runtime";
 import { StreamMarkdown, createMarkdownStream } from "@butui/stream";
@@ -21,10 +21,10 @@ const text = (
 const app = createTuiApp({
   view: () => (
     <box border padding={1} direction="column">
-      <text bold color="accent">smooth reveal · 2000 chunk/s</text>
+      <text bold color="accent">smooth reveal · 120fps · 2000 chunk/s</text>
       <StreamMarkdown
         source={source}
-        smooth={{ speed: 160, catchUpMs: 180, maxColumnsPerFrame: 256 }}
+        smooth={{ fps: 120, speed: 160, catchUpMs: 180, maxColumnsPerFrame: 128 }}
       />
     </box>
   ),

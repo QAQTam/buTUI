@@ -170,22 +170,24 @@ source.push(delta);
 ```tsx
 <StreamMarkdown
   source={source}
-  smooth={{ speed: 160, catchUpMs: 180, maxColumnsPerFrame: 256 }}
+  smooth={{ fps: 120, speed: 160, catchUpMs: 180, maxColumnsPerFrame: 128 }}
 />
 ```
 
 或手动：
 
 ```ts
-const view = createSmoothStream(source, { speed: 160 });
+const view = createSmoothStream(source, { fps: 120, speed: 160 });
 view.lag();
 view.finish();
 view.dispose();
 ```
 
+- `fps` 默认 120；同一 fps 的流共享 timer。
 - `speed` 单位是终端列 / 秒；CJK / emoji 按 `Bun.stringWidth` 计宽。
 - 已有历史立即显示；只 reveal 创建之后新增的 target。
 - `catchUpMs` 是积压追平时间，`maxColumnsPerFrame` 是单帧推进上限。
+- target 没变时不重建 tail；cursor 没跨过可见列时不触发 Solid / layout。
 - `TERM=dumb` / `BUTUI_REDUCED_MOTION=1|true` 下直接显示。
 - `StreamSource.onChange?(listener)` 是可选订阅；自定义 source 要接 smooth
   时应该实现它。已有 `createTextStream` / `createMarkdownStream` 已实现。
