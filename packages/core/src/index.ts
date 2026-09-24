@@ -5,3 +5,4 @@ export * from "./events.ts";
 export * from "./dispatch.ts";
 export * from "./ansi.ts";
 export * from "./frame-clock.ts";
+export * from "./adaptive-quality.ts";

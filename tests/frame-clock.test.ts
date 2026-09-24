@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  AdaptiveQuality,
   FrameClock,
   type FrameClockOptions,
   type FrameRequest,
@@ -313,5 +314,32 @@ describe("FrameClock P0-A", () => {
     h.runMicrotasks();
     expect(ran).toBe(0);
     expect(h.clock.active).toBe(false);
+  });
+
+  test("AdaptiveQuality 可在 dispatch 后自动降级", () => {
+    const controller = new AdaptiveQuality({
+      initial: "full",
+      downgradeAfter: 3,
+      targetIntervalMs: 50,
+    });
+    const h = clockHarness({ fps: 20, qualityController: controller });
+
+    for (let i = 0; i < 3; i++) {
+      h.now += 50;
+      h.clock.request(
+        request(
+          "critical",
+          () => {
+            h.now += 8;
+          },
+          { coalesceKey: `frame-${i}`, sessionRevision: i + 1, deadline: h.now }
+        )
+      );
+      h.clock.advanceTo(h.now);
+    }
+
+    expect(h.clock.stats().quality).toBe("balanced");
+    expect(h.clock.stats().qualitySignals?.computeP95Ms).toBeGreaterThan(6);
+    h.clock.dispose();
   });
 });

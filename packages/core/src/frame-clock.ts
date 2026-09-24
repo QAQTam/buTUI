@@ -9,7 +9,13 @@
  */
 
 export type FrameLane = "critical" | "reveal" | "decorative" | "maintenance";
-export type QualityLevel = "full" | "balanced" | "responsive" | "minimal";
+
+import {
+  AdaptiveQuality,
+  QUALITY_BUDGET_MS,
+  type QualityLevel,
+  type QualitySignals,
+} from "./adaptive-quality.ts";
 
 export type FrameId = number;
 export type SessionRevision = number;
@@ -72,6 +78,7 @@ export interface FrameClockStats {
   skipped: number;
   superseded: number;
   aborted: number;
+  qualitySignals?: QualitySignals;
   lastDispatch?: FrameDispatchSample;
 }
 
@@ -87,6 +94,10 @@ export interface FrameClockOptions {
   fps?: number;
   /** 默认 full。 */
   quality?: QualityLevel;
+  /** 开启自动质量降级 / 升档；默认关闭，保持 v0.1 行为。 */
+  adaptiveQuality?: boolean;
+  /** 注入自定义质量控制器；优先级高于 adaptiveQuality。 */
+  qualityController?: AdaptiveQuality;
   /** 覆盖当前 quality 的 compute budget；测试和嵌入方使用。 */
   budgetMs?: number;
 }
@@ -112,13 +123,6 @@ const LANE_ORDER: Record<FrameLane, number> = {
   maintenance: 3,
 };
 
-const QUALITY_BUDGET_MS: Record<QualityLevel, number> = {
-  full: 6,
-  balanced: 12,
-  responsive: 8,
-  minimal: 4,
-};
-
 export class FrameClock {
   private readonly intervalMs: number;
   private readonly nowFn: () => number;
@@ -130,6 +134,7 @@ export class FrameClock {
   private readonly clearTimer: (handle: ReturnType<typeof setTimeout>) => void;
 
   private quality: QualityLevel;
+  private readonly qualityController?: AdaptiveQuality;
   private readonly budgetOverride?: number;
   private readonly queue = new Map<string, InternalRequest>();
   private timer: ReturnType<typeof setTimeout> | undefined;
@@ -155,6 +160,15 @@ export class FrameClock {
     const fps = clamp(options.fps ?? 120, MIN_FPS, MAX_FPS);
     this.intervalMs = 1000 / fps;
     this.quality = options.quality ?? "full";
+    this.qualityController =
+      options.qualityController ??
+      (options.adaptiveQuality
+        ? new AdaptiveQuality({
+            initial: this.quality,
+            targetIntervalMs: this.intervalMs,
+          })
+        : undefined);
+    if (this.qualityController) this.quality = this.qualityController.current();
     if (options.budgetMs !== undefined) this.budgetOverride = Math.max(0, options.budgetMs);
     this.nowFn = dependencies.now ?? (() => performance.now());
     this.microtask = dependencies.queueMicrotask ?? queueMicrotask;
@@ -209,15 +223,18 @@ export class FrameClock {
     switch (outcome.status) {
       case "presented":
         this.lastPresentedAt = outcome.at;
+        this.quality = this.qualityController?.recordPresented(outcome.at) ?? this.quality;
         break;
       case "blocked":
         this.blocked = true;
+        this.quality = this.qualityController?.recordBlocked(outcome.at) ?? this.quality;
         this.clearWake();
         break;
       case "drained":
         this.blocked = false;
         // 让 drain 后的 critical 立即可运行，而不是等下一整帧。
         this.lastDispatchAt = outcome.at - this.intervalMs;
+        this.quality = this.qualityController?.recordDrained(outcome.at) ?? this.quality;
         break;
       case "superseded":
         this.superseded++;
@@ -230,7 +247,7 @@ export class FrameClock {
   }
 
   setQuality(quality: QualityLevel): void {
-    this.quality = quality;
+    this.quality = this.qualityController?.setQuality(quality) ?? quality;
     this.scheduleWake();
   }
 
@@ -253,6 +270,9 @@ export class FrameClock {
       queued: this.queue.size,
       frameId: this.nextFrameId - 1,
       quality: this.quality,
+      ...(this.qualityController
+        ? { qualitySignals: this.qualityController.signals(this.nowFn()) }
+        : {}),
       ...(Number.isFinite(this.lastDispatchAt)
         ? { lastDispatchAt: this.lastDispatchAt }
         : {}),
@@ -335,6 +355,7 @@ export class FrameClock {
     if (due.length === 0) return;
 
     const frameId = this.nextFrameId++ as FrameId;
+    const quality = this.quality;
     const budgetMs = this.budgetForQuality();
     const ran: FrameLane[] = [];
     const skipped: FrameLane[] = [];
@@ -356,7 +377,7 @@ export class FrameClock {
       const result = request.work({
         clockTime,
         frameId,
-        quality: this.quality,
+        quality,
         budgetMs,
         sessionRevision: request.sessionRevision,
         phase: "dispatch",
@@ -383,11 +404,19 @@ export class FrameClock {
       clockTime,
       computeMs: usedMs,
       budgetMs,
-      quality: this.quality,
+      quality,
       ran,
       skipped,
       ...(dirtyRevision !== undefined ? { dirtyRevision } : {}),
     };
+
+    this.quality =
+      this.qualityController?.recordDispatch({
+        at: this.lastDispatchAt,
+        computeMs: usedMs,
+        budgetMs,
+        skipped: skipped.length,
+      }) ?? quality;
 
     this.scheduleWake();
   }

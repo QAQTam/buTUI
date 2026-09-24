@@ -24,6 +24,8 @@ export interface RenderOptions {
   mode?: RenderMode;
   /** frame 模式的目标帧率，默认 120；限制在 1~240。 */
   fps?: number;
+  /** 开启 FrameClock 自适应质量；默认关闭以保持 v0.1 行为。 */
+  adaptiveQuality?: boolean;
 }
 
 export interface RenderSchedulerDependencies {
@@ -70,7 +72,15 @@ export class RenderScheduler {
     this.now = dependencies.now ?? (() => performance.now());
     const { clock, ...clockDependencies } = dependencies;
     this.ownsClock = clock === undefined;
-    this.clock = clock ?? new FrameClock({ fps }, clockDependencies);
+    this.clock =
+      clock ??
+      new FrameClock(
+        {
+          fps,
+          adaptiveQuality: options.adaptiveQuality,
+        },
+        clockDependencies
+      );
   }
 
   /** 共享给 runtime animation / reveal 的底层时钟。 */
