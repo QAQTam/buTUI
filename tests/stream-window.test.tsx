@@ -5,6 +5,7 @@ import {
   StreamLedger,
   StreamText,
   createStreamWindow,
+  createStreamWindowController,
   type LineId,
   type SpillRecord,
   type SpillStore,
@@ -157,5 +158,52 @@ describe("createStreamWindow", () => {
 
     await source.refresh();
     expect(store.readManyCalls).toBeGreaterThan(afterFirstLoad);
+  });
+
+  test("controller 管理 offset / height，并利用 prefetch 窗口", async () => {
+    const store = new DelayedSpillStore();
+    const ledger = await createSpilledLedger(1_500, store);
+    const controller = createStreamWindowController({
+      ledger,
+      streamId: "stream-1",
+      height: 10,
+      prefetchPages: 2,
+      cacheSize: 4,
+    });
+    store.readManyCalls = 0;
+
+    await controller.scrollTo(500);
+    expect(controller.offset()).toBe(500);
+    expect(controller.height()).toBe(10);
+    expect(controller.totalLines()).toBe(1_500);
+    expect(controller.source.lines.map(line => line.text)).toEqual(
+      Array.from({ length: 10 }, (_, index) => `value-${501 + index}`)
+    );
+
+    await controller.flushPrefetch();
+    const callsAfterPrefetch = store.readManyCalls;
+    expect(callsAfterPrefetch).toBeGreaterThan(0);
+
+    await controller.scrollBy(5);
+    expect(controller.offset()).toBe(505);
+    expect(store.readManyCalls).toBe(callsAfterPrefetch);
+
+    await controller.pageBy(1);
+    expect(controller.offset()).toBe(515);
+    expect(store.readManyCalls).toBeGreaterThan(callsAfterPrefetch);
+
+    await controller.scrollTo(99_999);
+    await controller.flushPrefetch();
+    expect(controller.atBottom()).toBe(true);
+    expect(controller.offset()).toBe(1_490);
+    expect(controller.source.lines.at(-1)?.text).toBe("value-1500");
+
+    await controller.setHeight(20);
+    expect(controller.height()).toBe(20);
+    expect(controller.offset()).toBe(1_480);
+    expect(controller.source.lines.at(-1)?.text).toBe("value-1500");
+
+    await controller.scrollTo(0);
+    expect(controller.atTop()).toBe(true);
   });
 });

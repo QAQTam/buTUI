@@ -28,7 +28,31 @@ export interface StreamWindowSource extends StreamSource {
   revision(): number;
   loading(): boolean;
   load(offset: number, count: number): Promise<StreamLineWindow>;
+  /** 读取并缓存窗口，但不改变当前显示内容。 */
+  prefetch(offset: number, count: number): Promise<StreamLineWindow>;
   refresh(): Promise<StreamLineWindow | undefined>;
+}
+
+export interface StreamWindowControllerOptions extends StreamWindowOptions {
+  /** 视口高度；默认 20。 */
+  height?: number;
+  /** 上下各预取多少页；默认 1。 */
+  prefetchPages?: number;
+}
+
+export interface StreamWindowController {
+  readonly source: StreamWindowSource;
+  height(): number;
+  setHeight(height: number): Promise<StreamLineWindow>;
+  offset(): number;
+  totalLines(): number;
+  atTop(): boolean;
+  atBottom(): boolean;
+  load(): Promise<StreamLineWindow>;
+  scrollTo(offset: number): Promise<StreamLineWindow>;
+  scrollBy(delta: number): Promise<StreamLineWindow>;
+  pageBy(pages: number): Promise<StreamLineWindow>;
+  flushPrefetch(): Promise<void>;
 }
 
 export function createStreamWindow(
@@ -62,8 +86,11 @@ export function createStreamWindow(
     currentRevision = window.revision;
   };
 
-  const cacheKey = (offset: number, count: number): string => {
-    const revision = ledger.project(streamId).revision;
+  const cacheKey = (
+    offset: number,
+    count: number,
+    revision = ledger.project(streamId).revision
+  ): string => {
     return `${revision}\u0000${offset}\u0000${count}`;
   };
 
@@ -76,6 +103,49 @@ export function createStreamWindow(
     }
   };
 
+  const findCachedWindow = (
+    offset: number,
+    count: number,
+    revision: number
+  ): StreamLineWindow | undefined => {
+    for (const window of cache.values()) {
+      if (window.revision !== revision) continue;
+      const start = clampWindowIndex(offset, window.totalLines);
+      const end = Math.min(window.totalLines, start + Math.max(0, Math.floor(count)));
+      const cachedEnd = window.offset + window.lines.length;
+      if (start < window.offset || end > cachedEnd) continue;
+
+      const lines = window.lines.slice(
+        start - window.offset,
+        end - window.offset
+      );
+      return {
+        streamId: window.streamId,
+        revision: window.revision,
+        offset: start,
+        totalLines: window.totalLines,
+        lines,
+      };
+    }
+    return undefined;
+  };
+
+  const readWindow = async (
+    offset: number,
+    count: number
+  ): Promise<StreamLineWindow> => {
+    const revision = ledger.project(streamId).revision;
+    const cached = findCachedWindow(offset, count, revision);
+    if (cached) return cached;
+
+    const window = await ledger.readStableRange(streamId, offset, count);
+    cacheWindow(
+      cacheKey(window.offset, window.lines.length, window.revision),
+      window
+    );
+    return window;
+  };
+
   const loadWindow = async (
     offset: number,
     count: number,
@@ -83,11 +153,10 @@ export function createStreamWindow(
   ): Promise<StreamLineWindow> => {
     const request = ++generation;
     lastCount = Math.max(0, Math.floor(count));
-    const key = cacheKey(Math.floor(offset), lastCount);
-    const cached = bypassCache ? undefined : cache.get(key);
+    const cached = bypassCache
+      ? undefined
+      : findCachedWindow(offset, count, ledger.project(streamId).revision);
     if (cached) {
-      cache.delete(key);
-      cache.set(key, cached);
       applyWindow(cached);
       setLoading(false);
       setVersion(value => value + 1);
@@ -102,7 +171,10 @@ export function createStreamWindow(
       if (request !== generation) return window;
 
       applyWindow(window);
-      cacheWindow(key, window);
+      cacheWindow(
+        cacheKey(window.offset, window.lines.length, window.revision),
+        window
+      );
       committed = true;
       return window;
     } finally {
@@ -151,9 +223,70 @@ export function createStreamWindow(
     revision: () => currentRevision,
     loading,
     load,
+    prefetch: readWindow,
     refresh() {
       if (lastCount === 0) return Promise.resolve(undefined);
       return loadWindow(currentOffset, lastCount, true);
+    },
+  };
+}
+
+export function createStreamWindowController(
+  options: StreamWindowControllerOptions
+): StreamWindowController {
+  const source = createStreamWindow(options);
+  let height = Math.max(0, Math.floor(options.height ?? 20));
+  const prefetchPages = Math.max(0, Math.floor(options.prefetchPages ?? 1));
+  let pendingPrefetch: Promise<void> = Promise.resolve();
+
+  const schedulePrefetch = (window: StreamLineWindow): void => {
+    if (height === 0 || prefetchPages === 0) return;
+    const page = Math.floor(window.offset / height);
+    const start = Math.max(0, (page - prefetchPages) * height);
+    const end = Math.min(
+      window.totalLines,
+      (page + prefetchPages + 1) * height
+    );
+    if (end <= start) return;
+
+    const run = source.prefetch(start, end - start).then(() => undefined);
+    pendingPrefetch = pendingPrefetch.then(() => run);
+  };
+
+  const loadVisible = async (): Promise<StreamLineWindow> => {
+    const maxOffset = Math.max(0, source.totalLines() - height);
+    const offset = Math.min(maxOffset, Math.max(0, source.offset()));
+    const window = await source.load(offset, height);
+    schedulePrefetch(window);
+    return window;
+  };
+
+  const scrollTo = async (offset: number): Promise<StreamLineWindow> => {
+    const maxOffset = Math.max(0, source.totalLines() - height);
+    const target = Math.min(maxOffset, Math.max(0, Math.floor(offset)));
+    const window = await source.load(target, height);
+    schedulePrefetch(window);
+    return window;
+  };
+
+  return {
+    source,
+    height: () => height,
+    async setHeight(nextHeight) {
+      height = Math.max(0, Math.floor(nextHeight));
+      return loadVisible();
+    },
+    offset: () => source.offset(),
+    totalLines: () => source.totalLines(),
+    atTop: () => source.offset() === 0,
+    atBottom: () =>
+      source.offset() >= Math.max(0, source.totalLines() - height),
+    load: loadVisible,
+    scrollTo,
+    scrollBy: delta => scrollTo(source.offset() + delta),
+    pageBy: pages => scrollTo(source.offset() + pages * height),
+    async flushPrefetch() {
+      await pendingPrefetch;
     },
   };
 }
@@ -166,4 +299,9 @@ function stableLineCount(projection: {
     projection.stableLines.length +
     projection.spilledSegments.reduce((sum, segment) => sum + segment.count, 0)
   );
+}
+
+function clampWindowIndex(value: number, total: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.min(total, Math.max(0, Math.floor(value)));
 }
