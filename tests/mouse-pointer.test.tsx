@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { type MouseEvent, createModifiers, eventTarget } from "@butui/core";
 import { SplitPane, createSplitPane } from "@butui/components";
 import { createTuiApp } from "@butui/runtime";
-import { TerminalSession, osc22 } from "@butui/terminal";
+import { CONTROL, TerminalSession, osc22 } from "@butui/terminal";
 import { FakeTerminal } from "./helpers/terminal.ts";
 
 function mouse(
@@ -72,7 +72,7 @@ describe("osc22", () => {
     expect(output.filter(chunk => chunk.startsWith("\x1b]22;"))).toEqual([
       sequence("pointer"),
       sequence("text"),
-      sequence("default"),
+      sequence("default") + CONTROL.cursorShow,
     ]);
   });
 });

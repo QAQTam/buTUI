@@ -52,6 +52,42 @@ describe("TerminalSession backpressure", () => {
     expect(session.outputArbiter.current()).toBeUndefined();
   });
 
+  test("mode journal 在 suspend / resume 逆序关闭并正序恢复", async () => {
+    const { stdin, stdout, output } = capturingStreams();
+    const session = new TerminalSession({
+      stdin,
+      stdout,
+      altScreen: true,
+      mouse: true,
+      bracketedPaste: true,
+      focusEvents: true,
+      kittyKeyboard: true,
+      recoverOnSignals: false,
+    });
+    session.start();
+
+    const beforeSuspend = output().length;
+    await session.suspend("child");
+    const suspended = output().slice(beforeSuspend);
+    expect(suspended).toContain("\x1b[<u");
+    expect(suspended).toContain("\x1b[?1004l");
+    expect(suspended).toContain("\x1b[?2004l");
+    expect(suspended).toContain("\x1b[?1000l");
+    expect(suspended).toContain("\x1b[?25h");
+    expect(suspended).toContain("\x1b[?1049l");
+
+    const beforeResume = output().length;
+    await session.resume();
+    const resumed = output().slice(beforeResume);
+    expect(resumed).toContain("\x1b[?1049h");
+    expect(resumed).toContain("\x1b[?25l");
+    expect(resumed).toContain("\x1b[?1000h");
+    expect(resumed).toContain("\x1b[?2004h");
+    expect(resumed).toContain("\x1b[?1004h");
+    expect(resumed).toContain("\x1b[>1u");
+    session.stop();
+  });
+
   test("suspend 让 raw lease 接管，resume 后要求 full damage", async () => {
     const { stdin, stdout } = streams(true);
     const session = new TerminalSession({

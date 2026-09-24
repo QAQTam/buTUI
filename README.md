@@ -11,7 +11,7 @@
 spring / timeline / Shimmer / Keymap chord / Command Palette / Command Menu /
 Slider / SplitPane / Toast / Tooltip / Popover / Portal / Dynamic / MultiSelect /
 Form / Autocomplete / Checkbox / RadioGroup / 高频 chunk 合帧 / smooth reveal 已跑通**，`bun test`
-801 个用例全绿。
+807 个用例全绿。
 
 ```
 应用（你的 agent / 工具 / TUI）
@@ -50,7 +50,9 @@ const app = createTuiApp({
 
 终端、备用屏、raw mode、重绘调度、resize、tab 焦点、鼠标 hit test、ctrl+c
 退出全在 `createTuiApp` 里。**不需要自己调 paint** —— 任何节点变更（signal、
-定时器、异步加载）都会自动合并到下一帧。
+定时器、异步加载）都会自动合并到下一帧。终端模式由 mode journal 统一恢复：
+正常 stop、SIGINT / SIGTERM / SIGHUP 和 uncaught exception 都会关闭 mouse /
+paste / focus / kitty、显示 cursor，并退出备用屏。
 
 组件里想读终端尺寸 / 订阅全局按键，用 `@butui/solid` 的 hook —— 不用把 runtime
 一路传下来：

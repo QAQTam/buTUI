@@ -3,9 +3,9 @@
 > 交接时间：2026-09-24
 > 仓库：`/home/qaqtamsy/项目/buTUI-v0.2-frontier`
 > 功能基线提交：`61d889b feat(components): add capability approval dialog`
-> 工作区状态：本文件与 Damage 最小闭环一并提交
-> 本轮能力：internal span damage + full fallback
-> 当前回归：`801 pass / 0 fail`，99 个测试文件，`tsc --noEmit` 通过
+> 工作区状态：本文件与 terminal recovery 一并提交
+> 本轮能力：mode journal + unified signal recovery
+> 当前回归：`807 pass / 0 fail`，101 个测试文件，`tsc --noEmit` 通过
 
 ## 1. 项目定位
 
@@ -536,6 +536,9 @@ const bar = createScrollBar({
 - Frame barrier：`paint()` 返回 frameId / accepted，`waitUntilFrameFlushed()` 支持
   accepted / drained；`write(false)` 明确为 accepted + blocked，dispose / suspend /
   raw / PTY 会终止未完成的 drained 等待。
+- Terminal recovery：`TerminalModeJournal` 记录 alt-screen / mouse / paste / focus /
+  kitty / cursor / pointer；suspend 逆序关闭，resume 正序恢复，stop / SIGINT /
+  SIGTERM / SIGHUP / uncaughtException 共用恢复路径。
 - Presented-frame hit test：慢 stdout 下仍按用户看到的 frame 路由输入。
 - StreamLedger：append / replace-tail / finish / cancel、gap / duplicate /
   conflict、revision 和 replay。

@@ -20,9 +20,11 @@ import {
   type TerminalLease,
   type WriteReceipt,
 } from "./arbiter.ts";
+import { TerminalModeJournal } from "./mode-journal.ts";
 
 export * from "./input.ts";
 export * from "./arbiter.ts";
+export * from "./mode-journal.ts";
 
 const ESC = "\x1b[";
 
@@ -164,6 +166,8 @@ export interface TerminalSessionOptions {
   arbiter?: TerminalArbiter;
   /** frame lease owner，默认 terminal-session。 */
   leaseOwner?: string;
+  /** 注册 SIGINT / SIGTERM / SIGHUP / uncaughtException 恢复钩子，默认 true。 */
+  recoverOnSignals?: boolean;
 }
 
 export interface TerminalWriteOptions {
@@ -190,6 +194,7 @@ export class TerminalSession {
   >;
   private readonly arbiter: TerminalArbiter;
   private readonly leaseOwner: string;
+  private readonly modes = new TerminalModeJournal();
   private lease: TerminalLease | undefined;
   private readonly decoder = new InputDecoder();
   private listeners = new Set<(event: ButuiEvent) => void>();
@@ -227,6 +232,7 @@ export class TerminalSession {
       kittyKeyboard: options.kittyKeyboard ?? false,
       mousePointer: options.mousePointer ?? true,
       escapeTimeout: options.escapeTimeout ?? 25,
+      recoverOnSignals: options.recoverOnSignals ?? true,
     };
   }
 
@@ -253,6 +259,8 @@ export class TerminalSession {
   async suspend(reason = "suspend"): Promise<void> {
     if (!this.lease) return;
     this.resetInputDecoder();
+    const restore = this.modes.suspend();
+    if (restore) this.write(restore, { kind: "control" });
     await this.arbiter.suspend(this.lease, reason);
   }
 
@@ -260,11 +268,18 @@ export class TerminalSession {
   async resume(): Promise<void> {
     if (!this.lease) return;
     await this.arbiter.resume(this.lease);
+    const restore = this.modes.resume();
+    if (restore) this.write(restore, { kind: "control" });
     this.resetInputDecoder();
   }
 
   requiresFullDamage(): boolean {
     return this.arbiter.requiresFullDamage();
+  }
+
+  /** best-effort：调用方检测到 arbiter 之外的 stdout 写入时标记 full damage。 */
+  noteExternalWrite(): void {
+    this.arbiter.noteExternalWrite();
   }
 
   /**
@@ -333,19 +348,32 @@ export class TerminalSession {
       reason: "terminal-session",
     });
 
-    if (this.options.altScreen) this.write(CONTROL.altScreenOn, { kind: "control" });
+    if (this.options.altScreen) {
+      this.modes.activate("altScreen", CONTROL.altScreenOn, CONTROL.altScreenOff);
+      this.write(CONTROL.altScreenOn, { kind: "control" });
+    }
+    this.modes.activate("cursor", CONTROL.cursorHide, CONTROL.cursorShow);
     this.write(CONTROL.cursorHide, { kind: "control" });
     if (this.options.mouse) {
-      this.write(
+      const on =
         this.options.mouseMotion === "hover"
           ? CONTROL.mouseHoverOn
-          : CONTROL.mouseOn,
-        { kind: "control" }
-      );
+          : CONTROL.mouseOn;
+      this.modes.activate("mouse", on, CONTROL.mouseOff);
+      this.write(on, { kind: "control" });
     }
-    if (this.options.bracketedPaste) this.write(CONTROL.pasteOn, { kind: "control" });
-    if (this.options.focusEvents) this.write(CONTROL.focusOn, { kind: "control" });
-    if (this.options.kittyKeyboard) this.write(CONTROL.kittyKeysOn, { kind: "control" });
+    if (this.options.bracketedPaste) {
+      this.modes.activate("paste", CONTROL.pasteOn, CONTROL.pasteOff);
+      this.write(CONTROL.pasteOn, { kind: "control" });
+    }
+    if (this.options.focusEvents) {
+      this.modes.activate("focus", CONTROL.focusOn, CONTROL.focusOff);
+      this.write(CONTROL.focusOn, { kind: "control" });
+    }
+    if (this.options.kittyKeyboard) {
+      this.modes.activate("kittyKeyboard", CONTROL.kittyKeysOn, CONTROL.kittyKeysOff);
+      this.write(CONTROL.kittyKeysOn, { kind: "control" });
+    }
 
     this.setRawMode(true);
 
@@ -381,6 +409,24 @@ export class TerminalSession {
     const onExit = () => this.stop();
     process.on("exit", onExit);
     this.disposers.push(() => process.off("exit", onExit));
+
+    if (this.options.recoverOnSignals) {
+      const onSignal = (signal: NodeJS.Signals) => {
+        this.stop();
+        process.kill(process.pid, signal);
+      };
+      for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
+        process.on(signal, onSignal);
+        this.disposers.push(() => process.off(signal, onSignal));
+      }
+
+      const onUncaught = (error: unknown) => {
+        this.stop();
+        throw error;
+      };
+      process.on("uncaughtException", onUncaught);
+      this.disposers.push(() => process.off("uncaughtException", onUncaught));
+    }
   }
 
   stop(): void {
@@ -389,13 +435,12 @@ export class TerminalSession {
     for (const dispose of this.disposers.splice(0)) dispose();
     if (this.escapeTimer) clearTimeout(this.escapeTimer);
 
-    if (this.options.kittyKeyboard) this.write(CONTROL.kittyKeysOff, { kind: "control" });
-    if (this.options.focusEvents) this.write(CONTROL.focusOff, { kind: "control" });
-    if (this.options.bracketedPaste) this.write(CONTROL.pasteOff, { kind: "control" });
-    if (this.options.mouse) this.write(CONTROL.mouseOff, { kind: "control" });
-    if (this.mousePointerStyle !== undefined) this.setMousePointer("default");
-    this.write(CONTROL.cursorShow, { kind: "control" });
-    if (this.options.altScreen) this.write(CONTROL.altScreenOff, { kind: "control" });
+    const restore = this.modes.restore();
+    if (restore) {
+      const receipt = this.writeWithReceipt(restore, { kind: "control" });
+      if (!receipt.accepted && !receipt.blocked) this.stdout.write(restore);
+    }
+    this.mousePointerStyle = undefined;
     const lease = this.lease;
     this.lease = undefined;
     if (lease) void this.arbiter.release(lease);
@@ -447,9 +492,16 @@ export class TerminalSession {
   setMousePointer(style: MousePointerStyle): void {
     if (!this.options.mousePointer) return;
     const normalized = style === "auto" ? "default" : style;
-    if (this.mousePointerStyle === normalized) return;
+    const changed = this.mousePointerStyle !== normalized;
     this.mousePointerStyle = normalized;
-    this.write(osc22(normalized, { multiplexer: "auto" }), { kind: "control" });
+    this.modes.activate(
+      "mousePointer",
+      osc22(normalized, { multiplexer: "auto" }),
+      osc22("default", { multiplexer: "auto" })
+    );
+    if (changed && !this.modes.isSuspended) {
+      this.write(osc22(normalized, { multiplexer: "auto" }), { kind: "control" });
+    }
   }
 
   /**

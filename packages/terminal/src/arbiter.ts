@@ -245,6 +245,16 @@ export class TerminalArbiter {
     return this.needsFullDamage;
   }
 
+  /**
+   * 标记 arbiter 之外的 stdout 写入。
+   *
+   * 直接写 process.stdout 无法可靠拦截；调用方如果知道发生了 external write，
+   * 可用这个 best-effort 钩子要求下一帧 full damage。
+   */
+  noteExternalWrite(): void {
+    this.needsFullDamage = true;
+  }
+
   onEvent(listener: (event: ArbiterEvent) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);

@@ -155,6 +155,22 @@ describe("TerminalArbiter", () => {
     h.arbiter.dispose();
   });
 
+  test("external write 只能 best-effort 标记 full damage", async () => {
+    const h = harness();
+    const lease = await h.arbiter.acquire({
+      owner: "runtime",
+      kind: "frame",
+      reason: "main",
+    });
+    h.arbiter.noteExternalWrite();
+    expect(h.arbiter.requiresFullDamage()).toBe(true);
+    expect(
+      h.arbiter.write(lease, { kind: "frame", frameId: 1, bytes: "frame" })
+    ).toMatchObject({ accepted: true, requiresFullDamage: true });
+    expect(h.arbiter.requiresFullDamage()).toBe(false);
+    h.arbiter.dispose();
+  });
+
   test("raw suspend / resume 后要求 full damage", async () => {
     const h = harness();
     const frame = await h.arbiter.acquire({
