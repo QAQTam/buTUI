@@ -789,7 +789,8 @@ const popover = createPopoverController();
 - controller 与 layer 分离，目标节点负责 show / toggle / hide。
 - 四向定位并夹取到终端视口；固定 width / height。
 - 内容可交互；Esc 关闭并触发 `onDismiss`。
-- 不劫持全局点击，不自动实现 click-outside。
+- 点击 outside 默认关闭；`ignore` 可排除 anchor。
+- `useMouse()` 可观察已经完成 hit test / local 坐标计算的全局鼠标事件。
 
 ### 4.32 Form：`createForm` / `<Form>` / `<FormField>`
 

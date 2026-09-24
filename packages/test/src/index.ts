@@ -81,6 +81,7 @@ export function mount(component: () => unknown, options: MountOptions = {}): Mou
   });
   /** 组件级全局按键（`useKeyboard`）—— 和 runtime 同一套语义 */
   const keyListeners = new Set<(event: KeyEvent) => boolean | void>();
+  const mouseListeners = new Set<(event: MouseEvent) => void>();
   const dispose = render(
     () =>
       provideAppScope(
@@ -91,6 +92,10 @@ export function mount(component: () => unknown, options: MountOptions = {}): Mou
           onKey: listener => {
             keyListeners.add(listener);
             return () => keyListeners.delete(listener);
+          },
+          onMouse: listener => {
+            mouseListeners.add(listener);
+            return () => mouseListeners.delete(listener);
           },
           rootNode: () => root,
         },
@@ -158,7 +163,9 @@ export function mount(component: () => unknown, options: MountOptions = {}): Mou
         y,
         modifiers: createModifiers(),
       }) as MouseEvent;
-      return dispatchEvent(target, event);
+      const delivered = dispatchEvent(target, event);
+      for (const listener of [...mouseListeners]) listener(event);
+      return delivered;
     },
     wheel(x, y) {
       const current = frame();
@@ -171,7 +178,9 @@ export function mount(component: () => unknown, options: MountOptions = {}): Mou
         y,
         modifiers: createModifiers(),
       }) as MouseEvent;
-      return dispatchEvent(target, event);
+      const delivered = dispatchEvent(target, event);
+      for (const listener of [...mouseListeners]) listener(event);
+      return delivered;
     },
     resize(nextWidth, nextHeight) {
       columns = nextWidth;

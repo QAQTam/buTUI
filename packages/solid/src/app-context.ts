@@ -16,7 +16,7 @@
  * `createTuiApp({ keymap })` → 组件的 `useKeyboard` → 内建（ctrl+c / tab）→
  * 焦点节点冒泡。应用永远是第一优先级，组件只能在「应用没要」的前提下抢键。
  */
-import type { ColorDepth, FrameClock, KeyEvent, Node } from "@butui/core";
+import type { ColorDepth, FrameClock, KeyEvent, MouseEvent, Node } from "@butui/core";
 import { createContext, onCleanup, useContext } from "solid-js";
 import type { AnimationScheduler } from "./animation.ts";
 
@@ -40,6 +40,8 @@ export interface AppScope {
   requestPaint(): void;
   /** 订阅全局按键；返回退订函数。返回 `true` 表示消费掉这个键 */
   onKey(listener: (event: KeyEvent) => boolean | void): () => void;
+  /** 观察所有已命中节点的鼠标事件；返回退订函数。 */
+  onMouse?(listener: (event: MouseEvent) => void): () => void;
   /** runtime 提供的鼠标捕获能力；headless mount 可能没有。 */
   captureMouse?(node: Node): void;
   releaseMouse?(): void;
@@ -132,4 +134,11 @@ export function useKeyboard(
     return listener(event);
   });
   onCleanup(dispose);
+}
+
+/** 订阅全局鼠标事件；组件卸载时自动退订。 */
+export function useMouse(listener: (event: MouseEvent) => void): void {
+  const scope = useContext(AppContext);
+  if (!scope?.onMouse) return;
+  onCleanup(scope.onMouse(listener));
 }

@@ -692,6 +692,8 @@ const popover = createPopoverController();
 - 支持四向 placement 和视口夹取。
 - 内容可放任意交互组件。
 - Esc 关闭并触发 `onDismiss`。
+- 点击 outside 自动关闭；`ignore` 可排除 anchor。
+- `useMouse()` 可观察全局已命中鼠标事件。
 
 ## Form
 

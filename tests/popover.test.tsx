@@ -50,6 +50,7 @@ describe("<Popover>", () => {
           <box
             width={10}
             height={1}
+            semantic="popover-trigger"
             onClick={event =>
               controller.toggle({ x: event.x, y: event.y })
             }
@@ -60,6 +61,7 @@ describe("<Popover>", () => {
             controller={controller}
             width={24}
             height={5}
+            ignore={target => target?.semantic === "popover-trigger"}
             onDismiss={() => dismissed.push("dismiss")}
           >
             <Button onPress={() => pressed.push("action")}>执行</Button>
@@ -86,6 +88,45 @@ describe("<Popover>", () => {
     expect(controller.open()).toBe(false);
     expect(app.text()).not.toContain("执行");
     expect(dismissed).toEqual(["dismiss"]);
+    app.unmount();
+    controller.dispose();
+  });
+
+  test("点击 outside dismiss，ignore anchor 不误关", () => {
+    const controller = createPopoverController();
+    const app = mount(
+      () => (
+        <>
+          <box
+            width={10}
+            height={1}
+            semantic="popover-trigger"
+            onClick={event =>
+              controller.toggle({ x: event.x, y: event.y })
+            }
+          >
+            <text>open</text>
+          </box>
+          <Popover
+            controller={controller}
+            width={20}
+            height={4}
+            ignore={target => target?.semantic === "popover-trigger"}
+          >
+            <text>content</text>
+          </Popover>
+        </>
+      ),
+      { width: 40, height: 10 }
+    );
+
+    app.click(0, 0);
+    app.flush();
+    expect(controller.open()).toBe(true);
+
+    app.click(20, 9);
+    app.flush();
+    expect(controller.open()).toBe(false);
     app.unmount();
     controller.dispose();
   });

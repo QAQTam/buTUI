@@ -583,6 +583,7 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
    * 焦点节点。应用永远第一优先级；组件返回 true 就吃掉这个键。
    */
   const keyListeners = new Set<(event: KeyEvent) => boolean | void>();
+  const mouseListeners = new Set<(event: MouseEvent) => void>();
 
   const writeSelectionClipboard = (text: string): boolean => {
     if (text.length === 0) return false;
@@ -1076,6 +1077,7 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
       const delivered = dispatchEvent(target, event);
       const dragEndDelivered =
         event.action === "release" ? endMouseDrag(event, presented?.layout) : 0;
+      for (const listener of [...mouseListeners]) listener(event);
       if (delivered === 0 && dragDelivered === 0 && dragEndDelivered === 0) {
         options.onMouse?.(event);
       }
@@ -1124,6 +1126,10 @@ export function createTuiApp(options: TuiAppOptions): TuiApp {
             onKey: listener => {
               keyListeners.add(listener);
               return () => keyListeners.delete(listener);
+            },
+            onMouse: listener => {
+              mouseListeners.add(listener);
+              return () => mouseListeners.delete(listener);
             },
             captureMouse,
             releaseMouse,

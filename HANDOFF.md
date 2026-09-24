@@ -3,9 +3,9 @@
 > 交接时间：2026-09-24
 > 仓库：`/home/qaqtamsy/项目/buTUI-v0.2-frontier`
 > 功能基线提交：`61d889b feat(components): add capability approval dialog`
-> 工作区状态：本文件与 Checkbox / RadioGroup 一并提交
-> 本轮能力：boolean / single-choice form controls
-> 当前回归：`781 pass / 0 fail`，95 个测试文件，`tsc --noEmit` 通过
+> 工作区状态：本文件与 Popover click-outside 一并提交
+> 本轮能力：global mouse observation + outside dismiss
+> 当前回归：`782 pass / 0 fail`，95 个测试文件，`tsc --noEmit` 通过
 
 ## 1. 项目定位
 
@@ -443,7 +443,9 @@ const bar = createScrollBar({
 ### 5.14.6 Popover
 
 - `createPopoverController()`：show / toggle / hide、锚点更新与 onChange。
-- `<Popover>`：根 `<layer>` 四向定位、固定宽高、交互内容和 Esc dismiss。
+- `<Popover>`：根 `<layer>` 四向定位、固定宽高、交互内容、Esc 和 click-outside
+  dismiss；`ignore` 可排除 anchor。
+- `useMouse()`：观察已命中节点的全局鼠标事件，组件卸载自动退订。
 - 目标节点自行绑定 click / key 事件调用 controller。
 - 已有 `tests/popover.test.tsx`。
 

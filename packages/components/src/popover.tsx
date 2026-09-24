@@ -1,7 +1,7 @@
-import type { KeyEvent } from "@butui/core";
-import { useSize } from "@butui/solid";
+import type { KeyEvent, Node } from "@butui/core";
+import { useMouse, useSize } from "@butui/solid";
 import type { JSX } from "@butui/solid/jsx-runtime";
-import { Show } from "solid-js";
+import { Show, createSignal } from "solid-js";
 import type { PopoverController } from "./popover.ts";
 import {
   tooltipPosition,
@@ -17,6 +17,8 @@ export interface PopoverProps {
   width?: number;
   height?: number;
   onDismiss?: () => void;
+  /** 点击这些节点时不触发 outside dismiss，例如 Popover anchor。 */
+  ignore?: (target: Node | undefined) => boolean;
   semantic?: string;
 }
 
@@ -28,6 +30,13 @@ export interface PopoverProps {
  */
 export function Popover(props: PopoverProps) {
   const size = useSize();
+  const [node, setNode] = createSignal<Node>();
+  useMouse(event => {
+    if (!props.controller.open() || event.action !== "press") return;
+    const target = event.target;
+    if (containsNode(node(), target) || props.ignore?.(target)) return;
+    dismiss();
+  });
   const width = (): number => Math.max(4, Math.floor(props.width ?? 32));
   const height = (): number => Math.max(1, Math.floor(props.height ?? 8));
   const position = (): TooltipPoint => {
@@ -52,6 +61,7 @@ export function Popover(props: PopoverProps) {
     <Show when={props.controller.open()}>
       <layer x={position().x} y={position().y}>
         <box
+          ref={setNode}
           width={width()}
           height={height()}
           border="round"
@@ -72,4 +82,13 @@ export function Popover(props: PopoverProps) {
       </layer>
     </Show>
   );
+}
+
+function containsNode(root: Node | undefined, target: Node | undefined): boolean {
+  let current = target;
+  while (current) {
+    if (current === root) return true;
+    current = current.parent ?? undefined;
+  }
+  return false;
 }

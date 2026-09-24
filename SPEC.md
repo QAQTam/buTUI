@@ -1263,7 +1263,8 @@ const popover = createPopoverController();
 - controller 管 show / toggle / hide、锚点与 onChange。
 - `<Popover>` 使用根 `<layer>`，四向定位并夹取到视口。
 - 内容可放 Button / Input 等交互组件；Esc 关闭并触发 onDismiss。
-- Popover 不提供点击外部自动关闭，避免全局事件劫持。
+- 点击 outside 默认关闭；`ignore` 可排除 anchor 节点。
+- Popover 不劫持未命中节点的全局鼠标事件。
 
 ---
 
@@ -1337,13 +1338,13 @@ const form = createForm({
 
 ```text
 runtime   provideAppScope({ size, colorDepth, requestPaint, onKey })
-组件      useSize() / useColorDepth() / useKeyboard(fn)
+组件      useSize() / useColorDepth() / useKeyboard(fn) / useMouse(fn)
 ```
 
 `useSize()` 是响应式的（resize 后自动更新），`useKeyboard` 返回 `true` 就消费
-这个键。**按键顺序固定**：应用 `onKey` → `keymap` → 组件 `useKeyboard` →
-内建（ctrl+c / tab）→ 焦点节点 —— 应用永远第一优先级，组件只能在应用没要的
-前提下抢键。
+这个键，`useMouse()` 观察已经命中节点并完成局部坐标计算的鼠标事件。**按键顺序
+固定**：应用 `onKey` → `keymap` → 组件 `useKeyboard` → 内建（ctrl+c / tab）→
+焦点节点 —— 应用永远第一优先级，组件只能在应用没要的前提下抢键。
 
 没有 runtime 上下文时两个 hook 都安全退化（`0x0` / `truecolor` / 不订阅），
 所以组件单独渲染、写文档示例都不会炸。
