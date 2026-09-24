@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { StreamWindow } from "@butui/components";
-import { createModifiers, MemoryLedger, type MouseEvent } from "@butui/core";
+import {
+  createModifiers,
+  FrameClock,
+  MemoryLedger,
+  type MouseEvent,
+} from "@butui/core";
 import { createTuiApp } from "@butui/runtime";
 import {
   MemorySpillStore,
@@ -72,11 +77,33 @@ async function waitFor(
   }
 }
 
+function manualFrameClock() {
+  const microtasks: Array<() => void> = [];
+  const clock = new FrameClock(
+    { fps: 120 },
+    {
+      now: () => 0,
+      queueMicrotask: callback => {
+        microtasks.push(callback);
+      },
+      setTimeout: () => 0 as unknown as ReturnType<typeof setTimeout>,
+      clearTimeout: () => {},
+    }
+  );
+  return {
+    clock,
+    runMicrotasks() {
+      for (const callback of microtasks.splice(0)) callback();
+    },
+  };
+}
+
 describe("StreamWindow runtime integration", () => {
   test("冷窗口经 createTuiApp 加载，并在 FrameClock 下合并滚轮", async () => {
     const ledger = await createLedger(1_000);
     const terminal = new FakeTerminal();
     terminal.size = { columns: 40, rows: 12 };
+    const frame = manualFrameClock();
     const app = createTuiApp({
       terminal,
       size: terminal.size,
@@ -87,6 +114,7 @@ describe("StreamWindow runtime integration", () => {
           height={10}
           width={40}
           scrollbar
+          clock={frame.clock}
         />
       ),
       onQuit: () => {},
@@ -99,6 +127,7 @@ describe("StreamWindow runtime integration", () => {
     for (let index = 0; index < 5; index++) {
       expect(app.send(wheel("down"))).toBeGreaterThan(0);
     }
+    frame.runMicrotasks();
     await waitFor(() => app.frame().text().includes("value-15"));
 
     const text = app.frame().text();

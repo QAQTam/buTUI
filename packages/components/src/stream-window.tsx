@@ -12,6 +12,7 @@ import {
   type StreamLedger,
 } from "@butui/stream";
 import { useAppScope, useFocusScope } from "@butui/solid";
+import type { FrameClock } from "@butui/core";
 import { createEffect, Show } from "solid-js";
 import { ScrollBar } from "./scrollbar.tsx";
 import {
@@ -32,6 +33,8 @@ export interface StreamWindowProps {
   smooth?: boolean | SmoothStreamOptions;
   color?: string;
   semantic?: string;
+  /** 覆盖 runtime 共享 FrameClock；测试 / 嵌入方使用。 */
+  clock?: FrameClock;
   /** 点击窗口时自动聚焦；默认 true。 */
   focusOnClick?: boolean;
 }
@@ -39,11 +42,12 @@ export interface StreamWindowProps {
 export function StreamWindow(props: StreamWindowProps) {
   const height = (): number => Math.max(0, Math.floor(props.height));
   const scope = useAppScope();
+  const clock = props.clock ?? scope?.frameClock;
   const controller = createStreamWindowController({
     ledger: props.ledger,
     streamId: props.streamId,
     height: height(),
-    ...(scope?.frameClock ? { clock: scope.frameClock } : {}),
+    ...(clock ? { clock } : {}),
     ...(props.prefetchPages !== undefined
       ? { prefetchPages: props.prefetchPages }
       : {}),

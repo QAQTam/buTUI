@@ -1,11 +1,11 @@
 # buTUI Handoff
 
-> 交接时间：2026-09-24  
-> 仓库：`/home/qaqtamsy/项目/buTUI`  
-> 功能基线提交：`6902cf2 feat(runtime): handle terminal backpressure`
-> 工作区状态：功能提交后干净，本文件为对应交接刷新
-> 本轮能力：stdout backpressure + bugent v1 接入清单
-> 当前回归：`610 pass / 0 fail`，64 个测试文件，`tsc --noEmit` 通过
+> 交接时间：2026-09-24
+> 仓库：`/home/qaqtamsy/项目/buTUI-v0.2-frontier`
+> 功能基线提交：`c572621 test(stream): cover window runtime integration`
+> 工作区状态：功能提交后干净，本文件为 v0.2 Frontier 交接刷新
+> 本轮能力：cold retention + viewport window + FrameClock scroll coalescing
+> 当前回归：`692 pass / 0 fail`，75 个测试文件，`tsc --noEmit` 通过
 
 ## 1. 项目定位
 
@@ -26,6 +26,9 @@ buTUI 是基于 Bun + TypeScript 的通用 TUI Runtime。参考 OpenTUI 的接�
 - `STABILITY.md`：稳定 API、兼容规则、明确缺口。
 - `README.md`：快速开始、组件用法、实测说明。
 - `BUGENT_V1.md`：bugent 第一版接入、验收和冻结边界。
+- `V0.2_FRONTIER.md`：v0.2 会话运行时边界与原型进度。
+- `V0.2_CONTRACTS.md`：FrameClock / StreamLedger / MemoryLedger 接口。
+- `V0.2_RETENTION_REPORT.md`：cold spill、viewport、apply metadata 实测。
 - 本文件：接手工作必须知道的上下文与下一步。
 
 ## 2. 环境与参考源码
@@ -72,6 +75,9 @@ bun --conditions=browser run scripts/stream-bench.tsx
 bun --conditions=browser run scripts/render-bench.tsx
 bun --conditions=browser run scripts/smooth-stream-demo.tsx
 bun --conditions=browser run scripts/smooth-bench.tsx
+bun --conditions=browser run scripts/stream-retention-bench.ts --lines=1000000 --batch=500
+bun --conditions=browser run scripts/stream-window-scroll-bench.ts --lines=1000000 --frames=1000 --events=20
+bun --conditions=browser run scripts/stream-apply-bench.ts --events=5000000
 ```
 
 真实 PTY 冒烟可参考之前的模式：
@@ -415,6 +421,47 @@ const bar = createScrollBar({
 - 通过 workspace package exports 使用，不复制源码。
 - 新公共 API 进入 v0.2；v0.1 只接受 bugfix / 兼容性补丁。
 
+### 5.19 v0.2 Frontier 已实现
+
+- FrameClock：critical / reveal / decorative / maintenance lane、coalesceKey、
+  budget、backpressure 和 fake-clock 确定性。
+- TerminalArbiter：frame / append / raw lease、supersede、suspend / resume。
+- Presented-frame hit test：慢 stdout 下仍按用户看到的 frame 路由输入。
+- StreamLedger：append / replace-tail / finish / cancel、gap / duplicate /
+  conflict、revision 和 replay。
+- MemoryLedger：allocation admission、spill candidates、class / pinned limits。
+- FileSpillStore：append-only cold file、delete tombstone、streaming reopen、
+  streaming compact、numeric chunk index、批量 write / read。
+- Retention：按 bytes / tail lines spill；连续 LineId 使用范围，多 stream
+  交错使用 `lineRuns`，不规则时回退显式 `lineIds`。
+- Viewport：`readCold()`、`readStableRange()`、`createStreamWindow()`、
+  `createStreamWindowController()`、键盘 / 滚轮 / ScrollBar adapter 和
+  `<StreamWindow>`。
+- FrameClock 滚动合并：同一帧只提交最新 offset，预取按 viewport page 对齐，
+  revision-aware LRU 避免重复 cold read。
+- Applied replay：`applied` digest 使用 chunked `Uint32Array + present bitmap`，
+  保留精确 duplicate / conflict 历史。
+
+关键实测：
+
+| 场景 | 结果 |
+|---|---:|
+| 1M spill + write | 10.5s / heap 17.5MB / cold 145.6MB |
+| 1M reopen | 1.84s / 流式扫描 |
+| 1M full hydrate | 3.04s / heap 142MB |
+| 1M 随机 1,000 cold lines | 5.0ms / heap 0 |
+| 跨冷热边界 1,000 lines | 2.2ms |
+| 20k 滚动事件 / 1,000 帧 | frame p95 0.78ms / cold calls 500 |
+| 5M apply metadata | 2.16M events/s / 5.28 bytes/event |
+
+相关文件：
+
+- `packages/core/src/frame-clock.ts`
+- `packages/stream/src/{ledger,spill,spill-file,window}.ts`
+- `packages/components/src/{stream-window.ts,stream-window.tsx}`
+- `scripts/stream-{retention,multiplex,window-scroll,apply}-bench.ts`
+- `tests/stream-{ledger,spill-file,window,window-runtime}.test.*`
+
 ## 6. 稳定接口入口
 
 | 入口 | 文件 |
@@ -518,8 +565,8 @@ bridge、真实 tool event 对接或 bugent 快捷键迁移。
 当前：
 
 ```text
-610 pass / 0 fail
-64 test files
+692 pass / 0 fail
+75 test files
 tsc --noEmit pass
 ```
 
@@ -546,6 +593,10 @@ tsc --noEmit pass
 - `tests/slider.test.tsx`
 - `tests/splitpane.test.tsx`
 - `tests/terminal-backpressure.test.ts`
+- `tests/stream-ledger.test.ts`
+- `tests/stream-spill-file.test.ts`
+- `tests/stream-window.test.tsx`
+- `tests/stream-window-runtime.test.tsx`
 - `tests/solid-cleanup-contract.test.tsx`
 
 提交前至少跑：
@@ -577,21 +628,27 @@ git diff --check
 - 文本选择是视口坐标，滚动后不保持内容锚点，也不会拖到边缘自动滚。
 - WebUI 是实验层，尚未渲染 `tool.diff`。
 - Kitty keyboard protocol 发送侧未实现。
+- v0.2 cold metadata 仍保留约 9 bytes/line 的直接寻址索引；极不规则多 stream
+  交错仍可能回退显式 `lineIds`。
+- applied digest 仍保留完整历史；5M 事件约 26MB，10M 级需要 checkpoint / ring。
+- `<StreamWindow>` 已有 runtime 集成测试，但尚未接入真实 agent transcript 页面；
+  FrameClock 滚动合并已通过 FakeTerminal，端到端真实 PTY 数据仍待采集。
 
 ## 11. 推荐下一步
 
-按通用 TUI 收益排序：
+按 v0.2 与通用 TUI 收益排序：
 
-1. **Keymap 扩展**：用户自定义绑定持久化、Command Palette result metadata /
-   权限过滤。
-2. **插件运行时约束 / 审批**：capability 目前只是 import 前门控，下一步做权限
+1. **真实 transcript 接入**：让 bugent / agent-demo 消费 `<StreamWindow>`，
+   采集真实 PTY 下输入到 presented frame 的 p95、cold-read 和 cache hit。
+2. **10M replay 策略**：applied digest checkpoint / ring，或磁盘索引；
+   当前 typed array 约 5.28 bytes/event。
+3. **cold metadata 进一步压缩**：评估 sparse checkpoint + file scan，
+   替换约 9 bytes/line 的直接寻址索引。
+4. **插件运行时约束 / 审批**：capability 目前只是 import 前门控，下一步做权限
    审批 UI 或 worker 隔离。
-3. **Portal / Dynamic / Toast / Tooltip**：补齐 OpenTUI 已有的通用组件接口。
-4. **动画编排增强**：更复杂的 stagger、滚动回弹和动画调试工具。
-5. **自定义 renderable / component catalogue**：保持 Bun/TS 的 tag→节点映射，
-   不照搬 OpenTUI 的 Zig Renderable 类层次。
-6. **WebUI diff**：等 WebUI 重新成为优先级再做。
-7. **水平 ScrollBar**：暂无明确使用场景，暂不优先。
+5. **Portal / Dynamic / Toast / Tooltip**：补齐 OpenTUI 已有的通用组件接口。
+6. **动画编排增强**：更复杂的 stagger、滚动回弹和动画调试工具。
+7. **WebUI diff / 水平 ScrollBar**：等真实需求出现后再做。
 
 ## 12. 协作约定
 
@@ -625,6 +682,9 @@ git -c user.name=AnyBuddy -c user.email=anybuddy@local commit
 [ ] 修改 runtime 合帧时看 render-scheduler + runtime
 [ ] 修改鼠标时看 selection + scrollbar 回归
 [ ] 修改 agent 协议时看 agent-protocol + agent-replay
+[ ] 修改 retention / spill 时看 stream-ledger + stream-spill-file
+[ ] 修改 viewport / scroll 时看 stream-window + stream-window-runtime
+[ ] 修改 applied replay 时看 stream-ledger 的跨 chunk duplicate / conflict
 [ ] 修改插件 / Slot 时看 plugins + plugin-slot + plugin-loader
 [ ] 修改命令 / Keymap 时看 keymap + keymap-runtime + input
 [ ] 修改鼠标时看 mouse-interaction + text-selection + scrollbar
