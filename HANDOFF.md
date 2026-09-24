@@ -2,7 +2,8 @@
 
 > 交接时间：2026-09-24  
 > 仓库：`/home/qaqtamsy/项目/buTUI`  
-> 功能基线提交：`ec76a3f feat(scrollbar): 精确轨道映射与拖拽定位`  
+> 功能基线提交：`5dbec0e feat(plugins): 通用 Slot 注册表与 Solid 插件适配`
+> 工作区状态：插件能力提交处干净
 > 本轮能力：通用插件 / Slot 包（`@butui/plugins`）
 > 当前回归：`517 pass / 0 fail`，`tsc --noEmit` 通过
 
