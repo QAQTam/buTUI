@@ -2,8 +2,8 @@
 
 > 交接时间：2026-09-24  
 > 仓库：`/home/qaqtamsy/项目/buTUI`  
-> 功能基线提交：`cec2441 feat(mouse): 本地坐标与 drag 生命周期`
-> 工作区状态：鼠标本地坐标 / drag 提交处干净
+> 功能基线提交：`ee61960 feat(components): Slider 与跨区域拖动`
+> 工作区状态：Slider / ScrollBar 跨区域拖动提交处干净
 > 本轮能力：ScrollBar 跨区域拖动 + Slider 组件
 > 当前回归：`550 pass / 0 fail`，`tsc --noEmit` 通过
 
