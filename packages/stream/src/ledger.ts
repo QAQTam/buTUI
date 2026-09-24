@@ -10,6 +10,7 @@
  *   - replace-tail 不允许越过 volatile tail 覆盖 stable line；
  *   - finish / cancel 后拒绝后续写入。
  */
+import type { MemoryLedger, MemoryReservation } from "@butui/core";
 
 export type StreamId = string;
 export type LineId = string;
@@ -90,6 +91,7 @@ export interface StreamLedgerStats {
   stableLines: number;
   tailLines: number;
   tombstones: number;
+  reservedBytes: number;
 }
 
 export interface OpenStreamMeta {
@@ -97,6 +99,13 @@ export interface OpenStreamMeta {
   kind: StreamKind;
   priority: StreamPriority;
   createdAt: number;
+}
+
+export interface StreamLedgerOptions {
+  /** 可选内存预算；不传时保持无预算行为。 */
+  memory?: MemoryLedger;
+  /** MemoryLedger owner，默认 butui-stream。 */
+  memoryOwner?: string;
 }
 
 interface StreamState {
@@ -108,11 +117,19 @@ interface StreamState {
   tailLines: StreamTailLine[];
   tombstones: StreamTombstone[];
   applied: Map<number, string>;
+  memoryReservations: MemoryReservation[];
 }
 
 export class StreamLedger {
   private readonly streams = new Map<StreamId, StreamState>();
+  private readonly memory?: MemoryLedger;
+  private readonly memoryOwner: string;
   private nextLineId = 1;
+
+  constructor(options: StreamLedgerOptions = {}) {
+    this.memory = options.memory;
+    this.memoryOwner = options.memoryOwner ?? "butui-stream";
+  }
 
   open(meta: OpenStreamMeta): void {
     if (this.streams.has(meta.streamId)) return;
@@ -125,6 +142,7 @@ export class StreamLedger {
       tailLines: [],
       tombstones: [],
       applied: new Map(),
+      memoryReservations: [],
     });
   }
 
@@ -151,6 +169,23 @@ export class StreamLedger {
 
     const revision = Math.max(stream.revision + 1, envelope.baseRevision + 1);
     let linesAdded = 0;
+    const bytes = operationBytes(envelope.op);
+    let memoryReservation: MemoryReservation | undefined;
+    if (this.memory && bytes > 0) {
+      const decision = this.memory.reserve({
+        owner: this.memoryOwner,
+        class: "hot",
+        bytes,
+        priority: 1,
+        spillable: true,
+        reconstructible: true,
+      });
+      if (decision.status !== "granted") {
+        return { status: "rejected", reason: "budget-exceeded" };
+      }
+      memoryReservation = decision.reservation;
+      stream.memoryReservations.push(memoryReservation);
+    }
 
     switch (envelope.op.type) {
       case "append":
@@ -165,6 +200,10 @@ export class StreamLedger {
           revision
         );
         if (replaced === undefined) {
+          memoryReservation?.release();
+          stream.memoryReservations = stream.memoryReservations.filter(
+            reservation => reservation !== memoryReservation
+          );
           return {
             status: "rejected",
             reason: "anchor-outside-volatile-tail",
@@ -221,11 +260,15 @@ export class StreamLedger {
     let stableLines = 0;
     let tailLines = 0;
     let tombstones = 0;
+    let reservedBytes = 0;
     for (const stream of this.streams.values()) {
       if (stream.status === "open") openStreams++;
       stableLines += stream.stableLines.length;
       tailLines += stream.tailLines.length;
       tombstones += stream.tombstones.length;
+      for (const reservation of stream.memoryReservations) {
+        reservedBytes += reservation.bytes;
+      }
     }
     return {
       streams: this.streams.size,
@@ -233,7 +276,16 @@ export class StreamLedger {
       stableLines,
       tailLines,
       tombstones,
+      reservedBytes,
     };
+  }
+
+  dispose(): void {
+    for (const stream of this.streams.values()) {
+      for (const reservation of stream.memoryReservations) reservation.release();
+      stream.memoryReservations = [];
+    }
+    this.streams.clear();
   }
 
   lineId(): LineId {
@@ -336,8 +388,18 @@ function splitGraphemes(text: string): string[] {
   );
 }
 
-function digestEnvelope(envelope: StreamEnvelope): string {
-  return digestText(
+function operationBytes(op: StreamOperation): number {
+  switch (op.type) {
+    case "append":
+      return Buffer.byteLength(op.delta);
+    case "replace-tail":
+      return Buffer.byteLength(op.text);
+    default:
+      return 0;
+  }
+}
+
+function digestEnvelope(envelope: StreamEnvelope): string {  return digestText(
     JSON.stringify({
       streamId: envelope.streamId,
       seq: envelope.seq,

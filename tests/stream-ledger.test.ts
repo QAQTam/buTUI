@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { MemoryLedger } from "@butui/core";
 import {
   StreamLedger,
   type StreamEnvelope,
@@ -143,6 +144,29 @@ describe("StreamLedger", () => {
     ).toEqual({ status: "rejected", reason: "cancelled" });
   });
 
+  test("可选 MemoryLedger 预算不足时拒绝 op，dispose 释放 reservation", () => {
+    const memory = new MemoryLedger({ totalBytes: 5 });
+    const streams = new StreamLedger({ memory, memoryOwner: "test-stream" });
+    streams.open({
+      streamId: "stream-1",
+      kind: "text",
+      priority: 1,
+      createdAt: 0,
+    });
+
+    expect(
+      streams.apply(envelope(1, { type: "append", delta: "hello" })).status
+    ).toBe("applied");
+    expect(streams.stats().reservedBytes).toBe(5);
+    expect(
+      streams.apply(envelope(2, { type: "append", delta: "!" }))
+    ).toEqual({ status: "rejected", reason: "budget-exceeded" });
+    expect(streams.project("stream-1").volatileTail[0]?.text).toBe("hello");
+
+    streams.dispose();
+    expect(memory.stats().usedBytes).toBe(0);
+  });
+
   test("stats 汇总 streams / lines / tombstones", () => {
     const streams = ledger();
     streams.apply(envelope(1, { type: "append", delta: "a\nb" }));
@@ -153,6 +177,7 @@ describe("StreamLedger", () => {
       stableLines: 1,
       tailLines: 0,
       tombstones: 1,
+      reservedBytes: 0,
     });
   });
 });
