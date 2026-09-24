@@ -19,6 +19,7 @@
     "@butui/example-web-demo": "workspace:*",
     "@butui/image": "workspace:*",
     "@butui/layout": "workspace:*",
+    "@butui/plugins": "workspace:*",
     "@butui/renderer": "workspace:*",
     "@butui/runtime": "workspace:*",
     "@butui/solid": "workspace:*",

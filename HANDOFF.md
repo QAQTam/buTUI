@@ -3,8 +3,8 @@
 > 交接时间：2026-09-24  
 > 仓库：`/home/qaqtamsy/项目/buTUI`  
 > 功能基线提交：`ec76a3f feat(scrollbar): 精确轨道映射与拖拽定位`  
-> 工作区状态：功能基线处干净，22 个提交  
-> 当前回归：`505 pass / 0 fail`，`tsc --noEmit` 通过
+> 本轮能力：通用插件 / Slot 包（`@butui/plugins`）
+> 当前回归：`517 pass / 0 fail`，`tsc --noEmit` 通过
 
 ## 1. 项目定位
 
@@ -56,6 +56,7 @@ bun --conditions=browser x tsc --noEmit
 bun --conditions=browser run examples/agent-demo/src/main.tsx
 bun --conditions=browser run scripts/diff-demo.tsx
 bun --conditions=browser run scripts/scrollbar-demo.tsx
+bun --conditions=browser run scripts/plugin-demo.tsx
 bun --conditions=browser run scripts/scroll-demo.tsx
 bun --conditions=browser run scripts/list-demo.tsx
 bun --conditions=browser run scripts/stream-bench.tsx
@@ -89,6 +90,7 @@ bun --conditions=browser run scripts/stream-bench.tsx
 | `@butui/renderer` | cell → ANSI、逐行差分、SGR / 选区状态机 |
 | `@butui/terminal` | raw mode、resize、输入解码、能力探测、OSC 52 |
 | `@butui/components` | 编辑器、Input、Textarea、List、Diff、ScrollBar、弹窗等 |
+| `@butui/plugins` | 通用 SlotRegistry / Plugin / 错误隔离；Solid `<Slot>` 适配 |
 | `@butui/stream` | `LineBuffer`、MarkdownStream、DiffStream |
 | `@butui/agent` | AgentEvent / UiCommand、Session、agent 组件 |
 | `@butui/undo` | journal、行级 patch、undo 计划 |
@@ -247,6 +249,20 @@ const bar = createScrollBar({
 - `<Diff scrollbar>` 已接入。
 - 当前仅垂直轴。
 
+### 5.8 通用插件 / Slot
+
+参考 OpenTUI 的 `Plugin` / `SlotRegistry` 接口，但保持纯 Bun/TS、零 native。
+
+- `@butui/plugins`：`Plugin` / `SlotRegistry` / `createSlotRegistry`。
+- `@butui/plugins/solid`：`createSolidSlotRegistry` / `createSlot` / `<Slot>`。
+- 排序：`order` → 注册顺序 → `id`。
+- 模式：`append` / `replace` / `single_winner`。
+- 生命周期：`setup`（可返回 cleanup）→ `dispose`。
+- 错误隔离：setup / render / dispose 失败进错误缓存，单插件失败不影响其它插件。
+- `createSlotRegistry(host, key, context)` 同一 key 必须复用同一个 context 对象。
+- 已有 `scripts/plugin-demo.tsx` 和 `tests/plugins.test.ts` /
+  `tests/plugin-slot.test.tsx`。
+
 ## 6. 稳定接口入口
 
 | 入口 | 文件 |
@@ -258,6 +274,8 @@ const bar = createScrollBar({
 | `<Diff>` | `packages/components/src/diff.tsx` |
 | ScrollBar 几何模型 | `packages/components/src/scrollbar.ts` |
 | `<ScrollBar>` | `packages/components/src/scrollbar.tsx` |
+| Plugin / SlotRegistry | `packages/plugins/src/{types,registry}.ts` |
+| Solid `<Slot>` | `packages/plugins/src/solid.tsx` |
 | 动画调度 | `packages/solid/src/animation.ts` |
 | 布局 / Frame / selectionText | `packages/layout/src/index.ts` |
 | 渲染器 | `packages/renderer/src/index.ts` |
@@ -265,27 +283,11 @@ const bar = createScrollBar({
 
 ## 7. bugent 接入状态
 
-**尚未实现 bugent bridge。** 目前只有协议和组件层，没有在 bugent 仓库写适配器。
+**已按用户决策跳过 bugent 联合调测。** 当前主线是做通用 TUI 能力，对标
+OpenTUI 的接口设计，但保持 Bun + TypeScript、默认零 native core。
 
-建议桥接点：
-
-```text
-bugent LoopHooks / ToolExecution
-  → AgentEvent
-    → createSession()
-      → AgentView / ToolCard / Diff
-```
-
-此前分析出的缺口：
-
-- `ToolExecution` 需要可选 `workspace?: { path, before, after }[]`，供 undo / 最终 diff。
-- 流式修改应由 bugent 后端做 diff 算法，并发出 `tool.diff`；不要让前端解析半截
-  unified diff。
-- 工具是否可逆目前需要 bridge 用静态表兜底，最好后端直接提供。
-- bugent 引入 `@butui/*` 后，运行命令必须处理 `--conditions=browser`。
-
-推荐先做只读桥接：真实 `tool.start` / `tool.progress` / `tool.diff` / `tool.result`
-跑通一屏，再扩交互。不要一次性把 bugent 全部 UI 搬过来。
+`@butui/agent` 仍作为上层用例保留；除非用户重新指定，不再优先投入 bugent
+bridge、真实 tool event 对接或 bugent 快捷键迁移。
 
 ## 8. 关键坑
 
@@ -330,8 +332,8 @@ bugent LoopHooks / ToolExecution
 当前：
 
 ```text
-505 pass / 0 fail
-48 test files
+517 pass / 0 fail
+50 test files
 tsc --noEmit pass
 ```
 
@@ -344,6 +346,8 @@ tsc --noEmit pass
 - `tests/agent-diff.test.tsx`
 - `tests/scrollbar.test.tsx`
 - `tests/animation.test.tsx`
+- `tests/plugins.test.ts`
+- `tests/plugin-slot.test.tsx`
 - `tests/solid-cleanup-contract.test.tsx`
 
 提交前至少跑：
@@ -358,7 +362,7 @@ git diff --check
 
 ## 10. 已知缺口
 
-- bugent bridge 未实现。
+- 插件只有运行时注册表；无包发现 / manifest / 配置加载 / 权限 / 跨进程隔离。
 - Diff 没有 word-level diff、任意位置删除、hunk 折叠、“滚开后有新行”提示。
 - ScrollBar 只有垂直轴；无自动隐藏、hover 展开、水平轴、惯性。
 - 动画只有共享时钟和 Diff 游标；无 tween / spring / timeline / shimmer。
@@ -371,15 +375,15 @@ git diff --check
 
 ## 11. 推荐下一步
 
-按收益排序：
+按通用 TUI 收益排序：
 
-1. **bugent 只读 bridge 冒烟**：真实 tool events 接 `Session` + `AgentView`。
-2. **Diff 协议对齐**：让后端确认 `tool.diff` 的 id 规则、`stable` 生命周期、
-   `replaceTail` 边界。
-3. **Keymap / Command Registry**：bugent 真实快捷键、冲突检测、scope、帮助页。
-4. **ScrollBar 扩展**：水平轴、自动隐藏或 hover，只有在真实 UI 需要时做。
-5. **Shimmer / tween**：建立在现有 `AnimationScheduler` 上，只用于局部状态。
-6. **Portal / Dynamic / Toast / Tooltip**：组件生态补齐。
+1. **插件发现 / manifest / 配置加载**：把显式 `register()` 提升为可配置插件包。
+2. **Keymap / Command Registry**：通用快捷键、冲突检测、scope、帮助页。
+3. **Portal / Dynamic / Toast / Tooltip**：补齐 OpenTUI 已有的通用组件接口。
+4. **Timeline / tween / spring**：建立在现有 `AnimationScheduler` 上。
+5. **ScrollBar 扩展**：水平轴、自动隐藏或 hover，只有在真实 UI 需要时做。
+6. **自定义 renderable / component catalogue**：保持 Bun/TS 的 tag→节点映射，
+   不照搬 OpenTUI 的 Zig Renderable 类层次。
 7. **WebUI diff**：等 WebUI 重新成为优先级再做。
 
 ## 12. 协作约定
@@ -412,6 +416,7 @@ git -c user.name=AnyBuddy -c user.email=anybuddy@local commit
 [ ] 修改流式路径时看 stream-o1
 [ ] 修改鼠标时看 selection + scrollbar 回归
 [ ] 修改 agent 协议时看 agent-protocol + agent-replay
+[ ] 修改插件 / Slot 时看 plugins + plugin-slot
 [ ] 完成后更新 README / SPEC / STABILITY
 ```
 

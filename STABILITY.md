@@ -37,6 +37,7 @@ const app = createTuiApp({
 | 渲染 | `@butui/renderer` | **稳定**（`Renderer` / `plainText` / `paintLine`） |
 | 终端 | `@butui/terminal` | **稳定**（`TerminalSession` / 输入解码 / 能力探测） |
 | 基础组件 | `@butui/components` | **稳定**（编辑器 / 选择 / 列表 / 滚动 / ScrollBar / Diff / 弹窗 / 展示组件） |
+| 插件 / Slot | `@butui/plugins` | **稳定**（`Plugin` / `SlotRegistry`；Solid 适配在 `@butui/plugins/solid`） |
 | 流式文本 | `@butui/stream` | **稳定**（`StreamSource` / `DiffStream` / `<stream>`） |
 | 图片 | `@butui/image` | **稳定**（`createImage` / `ImageLayer` / `renderImage`） |
 | Agent 协议与组件 | `@butui/agent` | **稳定**（`AgentEvent` / `UiCommand` / `Session` / `tool.diff`） |
@@ -443,6 +444,34 @@ const bar = createScrollBarFor(view);
   不启动全局文本选择，因此拖拽不会被选区吃掉。
 - `<Diff scrollbar>` 与 `createScrollBarFor(view)` 使用同一几何模型。
 
+### 4.19 插件与 Slot：`SlotRegistry` / `<Slot>`
+
+```tsx
+import { createSlot, createSolidSlotRegistry } from "@butui/plugins/solid";
+
+const registry = createSolidSlotRegistry<Slots, Ctx>(host, context);
+const Header = createSlot(registry);
+
+registry.register({
+  id: "my-plugin",
+  order: 10,
+  slots: { header: (ctx, props) => <text>{props.title}</text> },
+});
+```
+
+- `@butui/plugins` 是 renderer-agnostic 的核心注册表；`@butui/plugins/solid`
+  才依赖 Solid。
+- 插件排序稳定为 `order` → 注册顺序 → `id`；`updateOrder()` 会触发通知。
+- Slot 模式为 `append` / `replace` / `single_winner`。
+- `register()` 返回只卸载本次注册的函数；同一 id 重注册后旧 disposer 不会
+  误删新插件。
+- `setup` 可返回 cleanup，卸载顺序是 cleanup → `dispose`。
+- 插件错误通过 `onPluginError` / `getPluginErrors()` 观测；每个贡献有独立
+  错误边界，单个插件失败不会影响兄弟插件。
+- `createSlotRegistry(host, key, context)` 要求同一 key 使用同一个 context
+  对象；违反时直接抛错。
+- 当前没有插件包发现 / manifest / 动态安装协议，应用需要显式注册。
+
 ## 5. 已知缺口（不要依赖，也不建议自己绕）
 
 - **列表只有单列 + 固定行高**：`itemHeight` 是常数，变高行（折行文本、展开的
@@ -467,6 +496,8 @@ const bar = createScrollBarFor(view);
 - **没有布局调试工具**（类似 flexbox inspector）。
 - **焦点不会自动清理**：被移除的节点如果还是焦点，`focusedId()` 会保留它的
   id（下一次 tab 会自动跳到活着的节点）。组件里用 `isFocused` 不受影响。
+- **插件只有运行时注册表**：没有包发现、manifest、配置加载、权限或跨进程隔离；
+  应用必须显式 `register()` / `unregister()`。
 - **`@butui/web` 是实验层**：接口可能变。
 
 ## 6. 版本

@@ -790,6 +790,41 @@ scrollbar>` 也使用同一模型，因此根转录、列表、diff 的 thumb �
 
 ---
 
+### 5.21 通用插件 / Slot（v0.1 实现）
+
+插件层参考 OpenTUI 的 `Plugin` / `SlotRegistry` 接口命名，但不引入它的 Zig
+运行时：`@butui/plugins` 是纯 TypeScript，宿主可以是任何稳定对象，Solid
+适配单独放在 `@butui/plugins/solid`。
+
+```text
+应用壳
+  createSolidSlotRegistry(host, context)
+  createSlot(registry) → <Header name="header" … />
+
+插件
+  { id, order?, setup?, dispose?, slots: { header(ctx, props) { … } } }
+```
+
+解析顺序固定为 `order` → 注册顺序 → `id`。Slot 有三种合成模式：
+
+- `append`：先 fallback，再按顺序追加所有插件贡献；
+- `replace`：有插件贡献时隐藏 fallback；
+- `single_winner`：只取第一个插件，贡献为空时回退。
+
+注册表提供 `register / unregister / updateOrder / clear / batch / subscribe /
+onPluginError`。每个插件有独立错误边界：`setup` 失败不会留下半注册状态；
+render / dispose 失败会进入错误缓存并通知监听器，但不会阻止其它插件。
+`setup` 返回的函数作为插件自己的 cleanup，在 `dispose` 前执行。
+
+`createSlotRegistry(host, key, context)` 以 host + key 复用实例；同一个 key
+传不同 context 对象会抛错，避免两份注册表看似相同却互不通知。
+
+**与 OpenTUI 的边界：** 不实现 `createRuntimePlugin` 那类 native module
+rewrite —— buTUI 默认零 native core，不需要替换 Zig ABI 模块。插件发现 /
+manifest / 配置加载也暂不在核心内。
+
+---
+
 ### 5.17 应用上下文（v0.1 实现）
 
 组件要能问「现在多宽 / 什么色深 / 我想订一个全局键」，但既不该认识 runtime，
@@ -1675,6 +1710,23 @@ type UiCommand =
 - layout primitives
 - plugin API
 - JSX intrinsic elements
+
+### 14.1 Plugin / Slot API（v0.1 实现）
+
+- 核心协议：`@butui/plugins`
+- Solid 适配：`@butui/plugins/solid`
+- 应用壳声明 Slot；插件以 `{ id, order, setup, dispose, slots }` 注册。
+- 三种合成模式：`append` / `replace` / `single_winner`。
+- 注册表支持 batch、响应式订阅、错误缓存和错误监听。
+- 插件之间必须有错误隔离；单个插件抛错不能让整屏失效。
+- 插件 API 不硬编码任何工具名；工具卡片、状态栏、帮助面板都只是 Slot 的
+  普通消费者。
+
+当前不做的：
+
+- native runtime module rewrite；
+- 插件包发现、manifest、权限或动态安装；
+- 跨进程插件隔离。
 
 不能把：
 

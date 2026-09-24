@@ -1,12 +1,13 @@
 # buTUI
 
-> 面向 coding agent 的 Agent UI Runtime。设计文档见 [SPEC.md](./SPEC.md)。
+> 基于 Bun + TypeScript + SolidJS 的通用 TUI Runtime。Agent UI 是一个上层用例，
+> 不是核心边界。设计文档见 [SPEC.md](./SPEC.md)。
 
 当前状态：**M1/M2 骨架 + 流式渲染 O(1) + 事件协议驱动的 agent UI +
 分支式 Undo + WebUI remote attach + 图片子系统（Kitty / iTerm2 / Sixel /
 半块 / 占位符）+ Artifact Canvas + 列表 / 虚拟列表 / 滚动视口 / 弹窗 / 表格 /
-树 + 鼠标选区 / OSC 52 + 流式 Diff / 共享动画时钟 / 精确 ScrollBar 已跑通**，
-`bun test` 505 个用例全绿。
+树 + 鼠标选区 / OSC 52 + 流式 Diff / 共享动画时钟 / 精确 ScrollBar +
+通用插件 / Slot 已跑通**，`bun test` 517 个用例全绿。
 
 ```
 应用（你的 agent / 工具 / TUI）
@@ -20,6 +21,7 @@
 
 按需叠加：
   @butui/components  编辑器 / Input / List / Tree / Table / Tabs / 滚动 / 弹窗 / 展示组件
+  @butui/plugins  通用 SlotRegistry + Solid <Slot> 插件扩展
   @butui/stream  增量折行 + 增量 markdown（O(delta) 定稿）
   @butui/image   Kitty / iTerm2 / Sixel / 半块 / 占位符 + 安全加载
   @butui/agent   事件协议 + Session + SPEC §10.2 组件 + Artifact Canvas
@@ -225,6 +227,49 @@ const bar = createScrollBar({
 - `<Diff scrollbar>` 已接入，多出来的宽度固定为 1 cell。
 
 `bun --conditions=browser run scripts/diff-demo.tsx` 可直接拖动右侧轨道。
+
+## 通用插件与 Slot
+
+应用壳只声明扩展位置，插件负责贡献内容。接口参考 OpenTUI 的
+`Plugin` / `SlotRegistry` 命名，但核心是纯 TypeScript，不依赖 Zig 或原生 ABI。
+
+```tsx
+import { createSlot, createSolidSlotRegistry } from "@butui/plugins/solid";
+
+interface Slots {
+  header: { title: string };
+  status: { text: string };
+}
+
+const context = { theme: "dark" };
+const registry = createSolidSlotRegistry<Slots, typeof context>(host, context);
+const Header = createSlot(registry);
+
+registry.register({
+  id: "git.header",
+  order: 0,
+  slots: {
+    header: (ctx, props) => <text>{`${props.title} · ${ctx.theme}`}</text>,
+  },
+});
+
+<Header name="header" title="buTUI" mode="append">
+  <text>fallback</text>
+</Header>;
+```
+
+保证：
+
+- 插件按 `order` → 注册顺序 → `id` 稳定排序，`updateOrder()` 可动态调整。
+- `append` 先渲染 fallback 再追加；`replace` 有贡献时隐藏 fallback；
+  `single_winner` 只取第一个插件。
+- 注册、卸载和 props 更新都会触发 Solid 响应式重渲染。
+- 每个插件贡献有独立错误边界；同步 / 响应式抛错不会拖垮其它插件。
+- `setup` 失败不会留下半注册状态；卸载按 `setup cleanup` → `dispose` 顺序执行。
+- `createSlotRegistry(host, key, context)` 按 host + key 复用实例，同一 key
+  必须复用同一个 context 对象。
+
+`bun --conditions=browser run scripts/plugin-demo.tsx` 可运行最小示例。
 
 ## 流式渲染 O(1)
 
@@ -555,6 +600,9 @@ bun --conditions=browser run scripts/diff-demo.tsx
 # 精确 ScrollBar（拖 thumb / 点轨道）
 bun --conditions=browser run scripts/scrollbar-demo.tsx
 
+# 通用插件 / Slot
+bun --conditions=browser run scripts/plugin-demo.tsx
+
 # 图片子系统自检（不需要真终端）
 bun --conditions=browser run scripts/image-demo.tsx
 
@@ -585,6 +633,7 @@ Demo 的工作区是**内存实现**，但走的是完全一样的 journal / dif
 | `@butui/solid` | `@solidjs/universal` host ops、JSX 类型、Bun 编译插件、共享动画帧时钟 |
 | `@butui/runtime` | `createTuiApp`：终端、合帧重绘、事件分发、鼠标选区 / OSC 52 —— 应用作者的唯一入口 |
 | `@butui/components` | `createTextEditor` / `<Input>` / `<Textarea>` / `<Markdown>` / `<Code>` / `<Diff>` / `<ScrollBar>`、`createSelection` / `<List>` / `<VirtualList>`、`createScrollView`、`<Select>` / `<Tabs>` / `<Table>` / `<Tree>`、`<Button>` / `<Dialog>` / `<Modal>`、`ProgressBar` / `Spinner` / `Badge` / `Divider` / `KeyHint` |
+| `@butui/plugins` | 通用 `SlotRegistry` / `Plugin` / 错误隔离；`@butui/plugins/solid` 提供 `createSlot` / `<Slot>` |
 | `@butui/agent` | 事件协议（NDJSON）、Session reducer、流式 diff 事件、SPEC §10.2 组件、Artifact Canvas |
 | `@butui/undo` | 工作区变更日志、行级 patch、undo 预览与执行（SPEC §8） |
 | `@butui/web` | WebUI：ANSI→HTML、DOM 组件、`mountWebUI`（复用同一个 Session） |
@@ -756,6 +805,8 @@ Bun.plugin(onLoad)
 
 ## 还没做
 
+- 插件系统还缺包发现 / manifest / 配置加载；目前是应用显式 `register()`，
+  没有动态安装协议
 - `@butui/components` 继续长：Slider / ASCIIFont / LineNumberRenderable、
   水平 ScrollBar 等；CommandPalette 用 `<Input onKey={e => sel.handleKey(e)}>`
   + `<List>` 组合就够，不必再包一层
